@@ -108,6 +108,72 @@ config = ClientAssertionConfig(
 token = create_client_assertion(config)
 ```
 
+### From Environment Variables (.env file)
+
+The SDK supports loading configuration from environment variables or a `.env` file using `ClientAssertionSettings`:
+
+```python
+from anncsu.common.config import ClientAssertionSettings
+from anncsu.common import create_client_assertion
+
+# Loads configuration from environment variables or .env file
+settings = ClientAssertionSettings()
+config = settings.to_config()
+token = create_client_assertion(config)
+```
+
+#### Environment Variables
+
+All environment variables use the `PDND_` prefix:
+
+| Environment Variable | Required | Description |
+|---------------------|----------|-------------|
+| `PDND_KID` | Yes | Key ID (kid) header parameter |
+| `PDND_ISSUER` | Yes | Issuer (iss) claim - your client_id |
+| `PDND_SUBJECT` | Yes | Subject (sub) claim - your client_id |
+| `PDND_AUDIENCE` | Yes | Audience (aud) claim - PDND token endpoint URL |
+| `PDND_PURPOSE_ID` | Yes | Purpose ID for the PDND request |
+| `PDND_PRIVATE_KEY` | One required | RSA private key content in PEM format (string) |
+| `PDND_KEY_PATH` | One required | Path to the RSA private key file |
+| `PDND_ALG` | No | Algorithm (default: "RS256") |
+| `PDND_TYP` | No | Token type (default: "JWT") |
+| `PDND_VALIDITY_MINUTES` | No | JWT validity in minutes (default: 43200) |
+
+#### Example .env File
+
+```bash
+# .env
+PDND_KID=my-key-id
+PDND_ISSUER=my-client-id
+PDND_SUBJECT=my-client-id
+PDND_AUDIENCE=https://auth.interop.pagopa.it/token.oauth2
+PDND_PURPOSE_ID=my-purpose-id
+PDND_KEY_PATH=./private_key.pem
+# Or use PDND_PRIVATE_KEY for inline key content
+```
+
+#### Shell Environment Variables
+
+```bash
+export PDND_KID="my-key-id"
+export PDND_ISSUER="my-client-id"
+export PDND_SUBJECT="my-client-id"
+export PDND_AUDIENCE="https://auth.interop.pagopa.it/token.oauth2"
+export PDND_PURPOSE_ID="my-purpose-id"
+export PDND_KEY_PATH="./private_key.pem"
+```
+
+Then in Python:
+
+```python
+from anncsu.common.config import ClientAssertionSettings
+from anncsu.common import create_client_assertion
+
+# Automatically loads from environment
+settings = ClientAssertionSettings()
+token = create_client_assertion(settings.to_config())
+```
+
 ### Configuration Parameters
 
 | Parameter | Type | Required | Description |

@@ -223,6 +223,47 @@ security = Security(bearer=token)
 sdk = Anncsu(security=security)
 ```
 
+### Loading Configuration from Environment Variables
+
+The SDK supports loading configuration from environment variables or a `.env` file:
+
+```python
+from anncsu.common.config import ClientAssertionSettings
+from anncsu.common import create_client_assertion, Security
+from anncsu.pa import Anncsu
+
+# Automatically loads from environment variables or .env file
+settings = ClientAssertionSettings()
+token = create_client_assertion(settings.to_config())
+
+# Use with SDK
+security = Security(bearer=token)
+sdk = Anncsu(security=security)
+```
+
+#### Required Environment Variables (prefix: `PDND_`)
+
+| Variable | Description |
+|----------|-------------|
+| `PDND_KID` | Key ID (kid) header parameter |
+| `PDND_ISSUER` | Issuer claim - your client_id |
+| `PDND_SUBJECT` | Subject claim - your client_id |
+| `PDND_AUDIENCE` | Audience claim - PDND token endpoint |
+| `PDND_PURPOSE_ID` | Purpose ID for the request |
+| `PDND_PRIVATE_KEY` | Private key content (or use `PDND_KEY_PATH`) |
+| `PDND_KEY_PATH` | Path to private key file (or use `PDND_PRIVATE_KEY`) |
+
+#### Example .env file
+
+```bash
+PDND_KID=my-key-id
+PDND_ISSUER=my-client-id
+PDND_SUBJECT=my-client-id
+PDND_AUDIENCE=https://auth.interop.pagopa.it/token.oauth2
+PDND_PURPOSE_ID=my-purpose-id
+PDND_KEY_PATH=./private_key.pem
+```
+
 ### Documentation
 
 For comprehensive security documentation including:
