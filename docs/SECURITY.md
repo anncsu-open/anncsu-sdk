@@ -70,6 +70,126 @@ PDND vouchers have three parts separated by dots:
 2. **Payload**: Claims (issuer, subject, audience, expiration, etc.)
 3. **Signature**: Cryptographic signature
 
+## Generating Client Assertions
+
+The SDK includes a built-in module for generating PDND client assertions (JWT tokens). This allows you to create the JWT needed to obtain a PDND voucher programmatically.
+
+### Basic Usage
+
+```python
+from anncsu.common import ClientAssertionConfig, create_client_assertion
+
+# With private key as bytes
+config = ClientAssertionConfig(
+    kid="your-key-id",
+    issuer="your-client-id",
+    subject="your-client-id",
+    audience="https://auth.interop.pagopa.it/token.oauth2",
+    purpose_id="your-purpose-id",
+    private_key=b"-----BEGIN RSA PRIVATE KEY-----\n...",
+)
+token = create_client_assertion(config)
+```
+
+### With Key File Path
+
+```python
+from pathlib import Path
+from anncsu.common import ClientAssertionConfig, create_client_assertion
+
+config = ClientAssertionConfig(
+    kid="your-key-id",
+    issuer="your-client-id",
+    subject="your-client-id",
+    audience="https://auth.interop.pagopa.it/token.oauth2",
+    purpose_id="your-purpose-id",
+    key_path=Path("./private_key.pem"),
+)
+token = create_client_assertion(config)
+```
+
+### Configuration Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `kid` | `str` | Yes | Key ID (kid) header parameter - identifies which key was used |
+| `issuer` | `str` | Yes | Issuer (iss) claim - typically your client_id from PDND |
+| `subject` | `str` | Yes | Subject (sub) claim - typically your client_id from PDND |
+| `audience` | `str` | Yes | Audience (aud) claim - the PDND token endpoint URL (must be HTTPS) |
+| `purpose_id` | `str` | Yes | Purpose ID for the PDND request |
+| `private_key` | `bytes` | One of these | RSA private key content in PEM format |
+| `key_path` | `Path` | is required | Path to the RSA private key file |
+| `alg` | `str` | No | Algorithm (default: "RS256") |
+| `typ` | `str` | No | Token type (default: "JWT") |
+| `validity_minutes` | `int` | No | JWT validity period in minutes (default: 43200 = 30 days, max: 43200) |
+
+### Custom Timestamps (for Testing)
+
+```python
+import datetime
+from anncsu.common import ClientAssertionConfig, create_client_assertion
+
+config = ClientAssertionConfig(
+    kid="your-key-id",
+    issuer="your-client-id",
+    subject="your-client-id",
+    audience="https://auth.interop.pagopa.it/token.oauth2",
+    purpose_id="your-purpose-id",
+    private_key=private_key_bytes,
+    validity_minutes=60,  # 1 hour
+)
+
+# Custom issued_at and jti for deterministic testing
+token = create_client_assertion(
+    config,
+    issued_at=datetime.datetime(2024, 1, 1, 12, 0, 0, tzinfo=datetime.UTC),
+    jti="custom-jti-for-testing",
+)
+```
+
+### Error Handling
+
+```python
+from anncsu.common import (
+    ClientAssertionConfig,
+    create_client_assertion,
+    ClientAssertionError,
+    KeyFileError,
+    JWTGenerationError,
+)
+
+try:
+    config = ClientAssertionConfig(
+        kid="your-key-id",
+        issuer="your-client-id",
+        subject="your-client-id",
+        audience="https://auth.interop.pagopa.it/token.oauth2",
+        purpose_id="your-purpose-id",
+        key_path=Path("./private_key.pem"),
+    )
+    token = create_client_assertion(config)
+except KeyFileError as e:
+    print(f"Error reading key file: {e}")
+except JWTGenerationError as e:
+    print(f"Error generating JWT: {e}")
+except ClientAssertionError as e:
+    print(f"Client assertion error: {e}")
+```
+
+### CLI Tool
+
+For command-line usage, a CLI tool is also available:
+
+```bash
+python scripts/create_client_assertion.py create \
+    --kid "your-key-id" \
+    --issuer "your-client-id" \
+    --subject "your-client-id" \
+    --audience "https://auth.interop.pagopa.it/token.oauth2" \
+    --purpose-id "your-purpose-id" \
+    --key-path ./private_key.pem
+```
+
 ## Authentication Flow
 
 ### 1. Obtain PDND Voucher
@@ -79,9 +199,10 @@ Before using the SDK, you need to obtain a PDND voucher from the PDND platform:
 1. Register your organization on PDND
 2. Request access to ANNCSU APIs
 3. Obtain client credentials (client ID and secret)
-4. Exchange credentials for a voucher token
+4. Generate a client assertion using the SDK or CLI
+5. Exchange the client assertion for a voucher token
 
-*Note: Voucher acquisition is outside the scope of this SDK. Refer to PDND documentation.*
+*Note: The final exchange step is outside the scope of this SDK. Refer to PDND documentation.*
 
 ### 2. Configure SDK with Security
 

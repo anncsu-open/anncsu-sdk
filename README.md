@@ -185,10 +185,49 @@ response = sdk.queryparam.esiste_odonimo_get_query_param(
 - **Common Security**: Same `Security` class works across all ANNCSU APIs
 - **Type-Safe**: Full type hints with modern Python syntax
 
+### Generating Client Assertions Programmatically
+
+The SDK includes a built-in module for generating PDND client assertions (JWT tokens) at runtime:
+
+```python
+from anncsu.common import ClientAssertionConfig, create_client_assertion
+
+# Option 1: With private key as bytes
+config = ClientAssertionConfig(
+    kid="your-key-id",
+    issuer="your-client-id",
+    subject="your-client-id",
+    audience="https://auth.interop.pagopa.it/token.oauth2",
+    purpose_id="your-purpose-id",
+    private_key=b"-----BEGIN RSA PRIVATE KEY-----\n...",
+)
+token = create_client_assertion(config)
+
+# Option 2: With private key file path
+from pathlib import Path
+
+config = ClientAssertionConfig(
+    kid="your-key-id",
+    issuer="your-client-id",
+    subject="your-client-id",
+    audience="https://auth.interop.pagopa.it/token.oauth2",
+    purpose_id="your-purpose-id",
+    key_path=Path("./private_key.pem"),
+)
+token = create_client_assertion(config)
+
+# Use the token with the SDK
+from anncsu.common import Security
+
+security = Security(bearer=token)
+sdk = Anncsu(security=security)
+```
+
 ### Documentation
 
 For comprehensive security documentation including:
 - PDND voucher format and JWT structure
+- Client assertion generation
 - Token refresh strategies
 - Error handling (401/403)
 - Best practices and security checklist
