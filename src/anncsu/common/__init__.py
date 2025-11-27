@@ -1,5 +1,6 @@
 """ANNCSU Common - Shared primitives for all ANNCSU API SDKs."""
 
+from anncsu.common.config import ClientAssertionSettings
 from anncsu.common.pdnd_assertion import (
     ClientAssertionConfig,
     ClientAssertionError,
@@ -23,6 +24,7 @@ __all__ = [
     "belfiore_code_validator",
     # PDND Client Assertion
     "ClientAssertionConfig",
+    "ClientAssertionSettings",
     "ClientAssertionError",
     "KeyFileError",
     "JWTGenerationError",

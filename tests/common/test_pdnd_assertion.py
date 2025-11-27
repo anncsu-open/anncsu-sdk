@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
+from anncsu.common.config import ClientAssertionSettings
 from anncsu.common.pdnd_assertion import (
     ClientAssertionConfig,
     ClientAssertionError,
@@ -583,13 +584,256 @@ class TestPackageExports:
         from anncsu.common import (
             ClientAssertionConfig,
             ClientAssertionError,
+            ClientAssertionSettings,
             JWTGenerationError,
             KeyFileError,
             create_client_assertion,
         )
 
         assert ClientAssertionConfig is not None
+        assert ClientAssertionSettings is not None
         assert ClientAssertionError is not None
         assert KeyFileError is not None
         assert JWTGenerationError is not None
         assert create_client_assertion is not None
+
+
+class TestClientAssertionSettings:
+    """Tests for ClientAssertionSettings class."""
+
+    def test_settings_from_env_with_private_key(self, monkeypatch):
+        """Test loading settings from environment variables with private key."""
+        monkeypatch.setenv("PDND_KID", "test-key-id")
+        monkeypatch.setenv("PDND_ISSUER", "test-issuer")
+        monkeypatch.setenv("PDND_SUBJECT", "test-subject")
+        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+        monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
+
+        settings = ClientAssertionSettings()
+
+        assert settings.kid == "test-key-id"
+        assert settings.issuer == "test-issuer"
+        assert settings.subject == "test-subject"
+        assert settings.audience == "https://auth.example.com/token"
+        assert settings.purpose_id == "test-purpose"
+        assert settings.private_key == TEST_PRIVATE_KEY.decode("utf-8")
+        assert settings.key_path is None
+        assert settings.alg == "RS256"
+        assert settings.typ == "JWT"
+        assert settings.validity_minutes == 43200
+
+    def test_settings_from_env_with_key_path(self, monkeypatch):
+        """Test loading settings from environment variables with key path."""
+        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as f:
+            f.write(TEST_PRIVATE_KEY)
+            key_path = f.name
+
+        try:
+            monkeypatch.setenv("PDND_KID", "test-key-id")
+            monkeypatch.setenv("PDND_ISSUER", "test-issuer")
+            monkeypatch.setenv("PDND_SUBJECT", "test-subject")
+            monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+            monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+            monkeypatch.setenv("PDND_KEY_PATH", key_path)
+
+            settings = ClientAssertionSettings()
+
+            assert settings.key_path == key_path
+            assert settings.private_key is None
+        finally:
+            Path(key_path).unlink()
+
+    def test_settings_custom_alg_typ_validity(self, monkeypatch):
+        """Test loading custom algorithm, type, and validity from env."""
+        monkeypatch.setenv("PDND_KID", "test-key-id")
+        monkeypatch.setenv("PDND_ISSUER", "test-issuer")
+        monkeypatch.setenv("PDND_SUBJECT", "test-subject")
+        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+        monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
+        monkeypatch.setenv("PDND_ALG", "RS256")
+        monkeypatch.setenv("PDND_TYP", "JWT")
+        monkeypatch.setenv("PDND_VALIDITY_MINUTES", "1440")
+
+        settings = ClientAssertionSettings()
+
+        assert settings.alg == "RS256"
+        assert settings.typ == "JWT"
+        assert settings.validity_minutes == 1440
+
+    def test_settings_requires_key_source(self, monkeypatch):
+        """Test that either PDND_PRIVATE_KEY or PDND_KEY_PATH is required."""
+        monkeypatch.setenv("PDND_KID", "test-key-id")
+        monkeypatch.setenv("PDND_ISSUER", "test-issuer")
+        monkeypatch.setenv("PDND_SUBJECT", "test-subject")
+        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+        # No PDND_PRIVATE_KEY or PDND_KEY_PATH
+
+        with pytest.raises(ValidationError) as exc_info:
+            ClientAssertionSettings()
+        assert "PDND_PRIVATE_KEY" in str(exc_info.value) or "PDND_KEY_PATH" in str(
+            exc_info.value
+        )
+
+    def test_settings_to_config_with_private_key(self, monkeypatch):
+        """Test converting settings to config with private key."""
+        monkeypatch.setenv("PDND_KID", "test-key-id")
+        monkeypatch.setenv("PDND_ISSUER", "test-issuer")
+        monkeypatch.setenv("PDND_SUBJECT", "test-subject")
+        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+        monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
+
+        settings = ClientAssertionSettings()
+        config = settings.to_config()
+
+        assert isinstance(config, ClientAssertionConfig)
+        assert config.kid == "test-key-id"
+        assert config.issuer == "test-issuer"
+        assert config.subject == "test-subject"
+        assert config.audience == "https://auth.example.com/token"
+        assert config.purpose_id == "test-purpose"
+        assert config.private_key == TEST_PRIVATE_KEY
+        assert config.key_path is None
+
+    def test_settings_to_config_with_key_path(self, monkeypatch):
+        """Test converting settings to config with key path."""
+        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as f:
+            f.write(TEST_PRIVATE_KEY)
+            key_path = f.name
+
+        try:
+            monkeypatch.setenv("PDND_KID", "test-key-id")
+            monkeypatch.setenv("PDND_ISSUER", "test-issuer")
+            monkeypatch.setenv("PDND_SUBJECT", "test-subject")
+            monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+            monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+            monkeypatch.setenv("PDND_KEY_PATH", key_path)
+
+            settings = ClientAssertionSettings()
+            config = settings.to_config()
+
+            assert isinstance(config, ClientAssertionConfig)
+            assert config.key_path == Path(key_path)
+            assert config.private_key is None
+        finally:
+            Path(key_path).unlink()
+
+    def test_settings_to_config_creates_working_assertion(self, monkeypatch):
+        """Test that config from settings can create a valid JWT."""
+        monkeypatch.setenv("PDND_KID", "test-key-id")
+        monkeypatch.setenv("PDND_ISSUER", "test-issuer")
+        monkeypatch.setenv("PDND_SUBJECT", "test-subject")
+        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+        monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
+
+        settings = ClientAssertionSettings()
+        config = settings.to_config()
+        token = create_client_assertion(config)
+
+        assert isinstance(token, str)
+        assert len(token.split(".")) == 3
+
+    def test_settings_ignores_extra_env_vars(self, monkeypatch):
+        """Test that extra environment variables are ignored."""
+        monkeypatch.setenv("PDND_KID", "test-key-id")
+        monkeypatch.setenv("PDND_ISSUER", "test-issuer")
+        monkeypatch.setenv("PDND_SUBJECT", "test-subject")
+        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+        monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
+        monkeypatch.setenv("PDND_UNKNOWN_VAR", "should-be-ignored")
+
+        # Should not raise an error
+        settings = ClientAssertionSettings()
+        assert settings.kid == "test-key-id"
+
+    def test_settings_env_prefix(self, monkeypatch):
+        """Test that only PDND_ prefixed vars are read."""
+        # Set without prefix - should not be picked up
+        monkeypatch.setenv("KID", "wrong-key-id")
+        monkeypatch.setenv("ISSUER", "wrong-issuer")
+
+        # Set with correct prefix
+        monkeypatch.setenv("PDND_KID", "correct-key-id")
+        monkeypatch.setenv("PDND_ISSUER", "correct-issuer")
+        monkeypatch.setenv("PDND_SUBJECT", "test-subject")
+        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+        monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
+
+        settings = ClientAssertionSettings()
+
+        assert settings.kid == "correct-key-id"
+        assert settings.issuer == "correct-issuer"
+
+    def test_settings_from_dotenv_file(self, monkeypatch, tmp_path):
+        """Test loading settings from .env file."""
+        # Create a .env file
+        env_file = tmp_path / ".env"
+        env_content = f"""PDND_KID=dotenv-key-id
+PDND_ISSUER=dotenv-issuer
+PDND_SUBJECT=dotenv-subject
+PDND_AUDIENCE=https://auth.example.com/token
+PDND_PURPOSE_ID=dotenv-purpose
+PDND_PRIVATE_KEY={TEST_PRIVATE_KEY.decode("utf-8")}
+"""
+        env_file.write_text(env_content)
+
+        # Change to the temp directory so .env is found
+        import os
+
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            # Clear any existing env vars
+            for key in [
+                "PDND_KID",
+                "PDND_ISSUER",
+                "PDND_SUBJECT",
+                "PDND_AUDIENCE",
+                "PDND_PURPOSE_ID",
+                "PDND_PRIVATE_KEY",
+                "PDND_KEY_PATH",
+            ]:
+                monkeypatch.delenv(key, raising=False)
+
+            settings = ClientAssertionSettings()
+
+            assert settings.kid == "dotenv-key-id"
+            assert settings.issuer == "dotenv-issuer"
+            assert settings.subject == "dotenv-subject"
+        finally:
+            os.chdir(original_cwd)
+
+    def test_settings_missing_required_field(self, monkeypatch):
+        """Test that missing required fields raise ValidationError."""
+        monkeypatch.setenv("PDND_KID", "test-key-id")
+        # Missing PDND_ISSUER
+        monkeypatch.setenv("PDND_SUBJECT", "test-subject")
+        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+        monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
+
+        with pytest.raises(ValidationError) as exc_info:
+            ClientAssertionSettings()
+        assert "issuer" in str(exc_info.value).lower()
+
+
+class TestClientAssertionSettingsExports:
+    """Tests for ClientAssertionSettings exports."""
+
+    def test_settings_importable_from_config(self):
+        """Test that ClientAssertionSettings is importable from config module."""
+        from anncsu.common.config import ClientAssertionSettings
+
+        assert ClientAssertionSettings is not None
+
+    def test_settings_importable_from_common(self):
+        """Test that ClientAssertionSettings is importable from common package."""
+        from anncsu.common import ClientAssertionSettings
+
+        assert ClientAssertionSettings is not None

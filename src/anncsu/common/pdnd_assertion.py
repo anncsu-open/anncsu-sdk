@@ -29,6 +29,20 @@ Example usage (with key file path):
     ...     key_path=Path("./private_key.pem"),
     ... )
     >>> token = create_client_assertion(config)
+
+Example usage (from environment variables):
+    >>> # Set environment variables or use .env file:
+    >>> # PDND_KID=my-key-id
+    >>> # PDND_ISSUER=my-client-id
+    >>> # PDND_SUBJECT=my-client-id
+    >>> # PDND_AUDIENCE=https://auth.interop.pagopa.it/token.oauth2
+    >>> # PDND_PURPOSE_ID=my-purpose-id
+    >>> # PDND_KEY_PATH=./private_key.pem
+    >>> # or PDND_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----...
+    >>> from anncsu.common.config import ClientAssertionSettings
+    >>> from anncsu.common.pdnd_assertion import create_client_assertion
+    >>> settings = ClientAssertionSettings()  # Loads from env
+    >>> token = create_client_assertion(settings.to_config())
 """
 
 from __future__ import annotations
