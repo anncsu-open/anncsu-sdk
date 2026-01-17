@@ -1,6 +1,7 @@
 """ANNCSU Common - Shared primitives for all ANNCSU API SDKs."""
 
 from anncsu.common.config import ClientAssertionSettings
+from anncsu.common.hooks.token_validation import TokenRefreshError
 from anncsu.common.pdnd_assertion import (
     ClientAssertionConfig,
     ClientAssertionError,
@@ -28,6 +29,7 @@ from anncsu.common.validation import (
 __all__ = [
     "Security",
     "TokenExpiredError",
+    "TokenRefreshError",
     "ResponseValidator",
     "ValidationConfig",
     "base64_validator",

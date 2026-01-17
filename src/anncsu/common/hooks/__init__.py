@@ -2,6 +2,11 @@
 
 from .registration import init_hooks
 from .sdkhooks import SDKHooks
+from .token_validation import (
+    TokenRefreshError,
+    TokenValidationHook,
+    register_token_validation_hook,
+)
 from .types import (
     AfterErrorContext,
     AfterErrorHook,
@@ -26,4 +31,8 @@ __all__ = [
     "AfterErrorHook",
     "Hooks",
     "init_hooks",
+    # Token validation hook
+    "TokenValidationHook",
+    "TokenRefreshError",
+    "register_token_validation_hook",
 ]
