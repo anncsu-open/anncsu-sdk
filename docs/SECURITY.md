@@ -50,6 +50,57 @@ security = Security()
 - Included in Authorization header as `Bearer <token>`
 - `None` for anonymous/unauthenticated requests (if supported)
 
+**`validate_expiration: bool`** (default: `True`)
+- When `True`, validates that the token is not expired on initialization
+- Raises `TokenExpiredError` if the token has expired
+- Set to `False` to skip validation (not recommended)
+
+### Token Expiration Validation
+
+The `Security` class automatically validates token expiration when initialized. This prevents confusing API errors (like 404) when using an expired token:
+
+```python
+from anncsu.common import Security, TokenExpiredError
+
+try:
+    security = Security(bearer=access_token)
+except TokenExpiredError as e:
+    print(f"Token expired at {e.expired_at}")
+    print(f"Current time: {e.current_time}")
+    # Refresh the token and retry
+```
+
+### Checking Expiration Manually
+
+```python
+from anncsu.common import Security
+
+security = Security(bearer=access_token)
+
+# Check if token is expired
+if security.is_expired():
+    print("Token needs refresh!")
+
+# Get seconds until expiration
+ttl = security.time_until_expiration()
+if ttl is not None:
+    if ttl < 0:
+        print(f"Token expired {abs(ttl)} seconds ago")
+    elif ttl < 60:
+        print(f"Token expires in {ttl} seconds - refresh soon!")
+    else:
+        print(f"Token valid for {ttl} seconds")
+```
+
+### Skipping Expiration Validation
+
+In some cases (e.g., testing), you may want to skip validation:
+
+```python
+# Not recommended for production use
+security = Security(bearer=expired_token, validate_expiration=False)
+```
+
 ## PDND Voucher Format
 
 PDND vouchers are typically JWT (JSON Web Token) format:
@@ -251,26 +302,251 @@ python scripts/create_client_assertion.py create \
     --kid "your-key-id" \
     --issuer "your-client-id" \
     --subject "your-client-id" \
-    --audience "https://auth.interop.pagopa.it/token.oauth2" \
+    --audience "auth.interop.pagopa.it/client-assertion" \
     --purpose-id "your-purpose-id" \
     --key-path ./private_key.pem
 ```
 
-## Authentication Flow
+## Token Exchange (OAuth2 Client Credentials)
 
-### 1. Obtain PDND Voucher
+After generating a client assertion, exchange it for an access token using the `get_access_token` function.
 
-Before using the SDK, you need to obtain a PDND voucher from the PDND platform:
+### TokenConfig Parameters
 
-1. Register your organization on PDND
-2. Request access to ANNCSU APIs
-3. Obtain client credentials (client ID and secret)
-4. Generate a client assertion using the SDK or CLI
-5. Exchange the client assertion for a voucher token
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `client_id` | `str` | Yes | - | Your PDND client ID |
+| `client_assertion` | `str` | Yes | - | JWT from `create_client_assertion()` |
+| `token_endpoint` | `str` | Yes | - | PDND token endpoint URL (must be HTTPS) |
+| `client_assertion_type` | `str` | No | `urn:ietf:params:oauth:client-assertion-type:jwt-bearer` | OAuth2 assertion type |
+| `grant_type` | `str` | No | `client_credentials` | OAuth2 grant type |
+| `timeout` | `float` | No | `30.0` | Request timeout in seconds |
 
-*Note: The final exchange step is outside the scope of this SDK. Refer to PDND documentation.*
+### TokenResponse Fields
 
-### 2. Configure SDK with Security
+| Field | Type | Description |
+|-------|------|-------------|
+| `access_token` | `str` | The access token for API requests |
+| `token_type` | `str` | Token type (typically "Bearer") |
+| `expires_in` | `int \| None` | Token lifetime in seconds |
+
+### Token Exchange Error Handling
+
+```python
+from anncsu.common import (
+    TokenConfig,
+    get_access_token,
+    TokenError,
+    TokenRequestError,
+    TokenResponseError,
+)
+
+try:
+    token_config = TokenConfig(
+        client_id="your-client-id",
+        client_assertion=client_assertion,
+        token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",
+    )
+    token_response = get_access_token(token_config)
+    
+except TokenRequestError as e:
+    # Network/HTTP errors
+    print(f"Request failed: {e}")
+    print(f"Status code: {e.status_code}")
+    print(f"Response body: {e.response_body}")
+    
+except TokenResponseError as e:
+    # OAuth2 error response
+    print(f"Token error: {e}")
+    print(f"Error code: {e.error}")           # e.g., "invalid_grant"
+    print(f"Description: {e.error_description}")
+    
+except TokenError as e:
+    # Base exception for any token-related error
+    print(f"Token error: {e}")
+```
+
+### Common Token Errors
+
+| Error Code | Description | Solution |
+|------------|-------------|----------|
+| `invalid_client` | Client authentication failed | Check client_id and assertion signature |
+| `invalid_grant` | Client assertion is invalid or expired | Regenerate client assertion |
+| `invalid_request` | Missing or invalid parameters | Check all required parameters |
+| `unauthorized_client` | Client not authorized for grant type | Contact PDND support |
+
+### Using Custom HTTP Client
+
+```python
+import httpx
+from anncsu.common import TokenConfig, get_access_token
+
+# Custom client with specific settings
+custom_client = httpx.Client(
+    timeout=60.0,
+    verify=True,  # SSL verification
+    # Add proxy, headers, etc.
+)
+
+token_config = TokenConfig(
+    client_id="your-client-id",
+    client_assertion=client_assertion,
+    token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",
+)
+
+# Pass custom client
+token_response = get_access_token(token_config, client=custom_client)
+
+# Don't forget to close the client when done
+custom_client.close()
+```
+
+## Complete Authentication Flow
+
+The PDND authentication flow consists of three steps, all supported by this SDK:
+
+```
+┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
+│  1. Create Client   │     │  2. Exchange for    │     │  3. Use Access      │
+│     Assertion       │────▶│     Access Token    │────▶│     Token           │
+│     (JWT)           │     │     (OAuth2)        │     │     (API Calls)     │
+└─────────────────────┘     └─────────────────────┘     └─────────────────────┘
+```
+
+### Step 1: Create Client Assertion (JWT)
+
+Generate a signed JWT client assertion using your RSA private key:
+
+```python
+from pathlib import Path
+from anncsu.common import ClientAssertionConfig, create_client_assertion
+
+# Configure the client assertion
+config = ClientAssertionConfig(
+    kid="your-key-id",                                    # Key ID from PDND
+    issuer="43508172-aa22-46b0-8c01-3006e745c73c",       # Your client_id
+    subject="43508172-aa22-46b0-8c01-3006e745c73c",      # Your client_id
+    audience="auth.uat.interop.pagopa.it/client-assertion",  # PDND audience
+    purpose_id="732877af-a76b-4528-979a-e6515ff9b06b",   # Your purpose_id
+    key_path=Path("./private_key.pem"),                   # Your RSA private key
+)
+
+# Generate the JWT
+client_assertion = create_client_assertion(config)
+print(f"Client Assertion: {client_assertion}")
+```
+
+### Step 2: Exchange for Access Token
+
+Exchange the client assertion for an access token via the PDND token endpoint:
+
+```python
+from anncsu.common import TokenConfig, get_access_token
+
+# Configure the token request
+token_config = TokenConfig(
+    client_id="43508172-aa22-46b0-8c01-3006e745c73c",           # Your client_id
+    client_assertion=client_assertion,                           # JWT from step 1
+    token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",  # PDND token endpoint
+)
+
+# Exchange for access token
+token_response = get_access_token(token_config)
+
+print(f"Access Token: {token_response.access_token}")
+print(f"Token Type: {token_response.token_type}")
+print(f"Expires In: {token_response.expires_in} seconds")
+```
+
+### Step 3: Use Access Token for API Calls
+
+Use the access token to authenticate API requests:
+
+```python
+from anncsu.pa import Anncsu
+from anncsu.common import Security
+
+# Create security with the access token
+security = Security(bearer=token_response.access_token)
+
+# Initialize SDK
+sdk = Anncsu(security=security)
+
+# Make authenticated requests
+response = sdk.queryparam.esiste_odonimo_get_query_param(
+    codcom="H501",
+    denom="VklBIFJPTUE="
+)
+```
+
+### Complete Example
+
+Here's the full authentication workflow in one place:
+
+```python
+from pathlib import Path
+from anncsu.pa import Anncsu
+from anncsu.common import (
+    # Client Assertion
+    ClientAssertionConfig,
+    create_client_assertion,
+    # Token Exchange
+    TokenConfig,
+    get_access_token,
+    # API Authentication
+    Security,
+)
+
+# Step 1: Create client assertion
+assertion_config = ClientAssertionConfig(
+    kid="your-key-id",
+    issuer="43508172-aa22-46b0-8c01-3006e745c73c",
+    subject="43508172-aa22-46b0-8c01-3006e745c73c",
+    audience="auth.uat.interop.pagopa.it/client-assertion",
+    purpose_id="73277faf-a76b-4528-979a-e6515ff9b06b",
+    key_path=Path("./private_key.pem"),
+)
+client_assertion = create_client_assertion(assertion_config)
+
+# Step 2: Exchange for access token
+token_config = TokenConfig(
+    client_id="43508172-aa22-46b0-8c01-3006e745c73c",
+    client_assertion=client_assertion,
+    token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",
+)
+token_response = get_access_token(token_config)
+
+# Step 3: Use access token for API calls
+security = Security(bearer=token_response.access_token)
+sdk = Anncsu(security=security)
+
+response = sdk.queryparam.esiste_odonimo_get_query_param(
+    codcom="H501",
+    denom="VklBIFJPTUE="
+)
+print(response)
+```
+
+### Async Version
+
+For async applications, use `get_access_token_async`:
+
+```python
+import asyncio
+from anncsu.common import TokenConfig, get_access_token_async
+
+async def get_token():
+    token_config = TokenConfig(
+        client_id="your-client-id",
+        client_assertion=client_assertion,
+        token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",
+    )
+    return await get_access_token_async(token_config)
+
+token_response = asyncio.run(get_token())
+```
+
+## Configure SDK with Security
 
 ```python
 from anncsu.pa import Anncsu
@@ -297,40 +573,76 @@ response = sdk.queryparam.esiste_odonimo_get_query_param(
 
 ## Token Refresh
 
-PDND vouchers have an expiration time. Handle token refresh in your application:
+PDND vouchers have an expiration time. Handle token refresh in your application using the built-in expiration checking:
 
 ```python
 from anncsu.pa import Anncsu
-from anncsu.common import Security
-import time
+from anncsu.common import Security, TokenExpiredError
 
 class TokenManager:
-    def __init__(self):
-        self.token = None
-        self.expires_at = 0
+    def __init__(self, token_config, assertion_config):
+        self.token_config = token_config
+        self.assertion_config = assertion_config
+        self.security = None
     
-    def get_token(self) -> str:
-        """Get current token, refreshing if necessary."""
-        if time.time() >= self.expires_at:
-            self.token, self.expires_at = self.refresh_token()
-        return self.token
+    def get_security(self) -> Security:
+        """Get Security instance, refreshing token if necessary."""
+        # Check if we need to refresh
+        if self.security is None or self.security.is_expired():
+            self._refresh_token()
+        
+        # Also check if token expires soon (within 60 seconds)
+        ttl = self.security.time_until_expiration()
+        if ttl is not None and ttl < 60:
+            self._refresh_token()
+        
+        return self.security
     
-    def refresh_token(self) -> tuple[str, float]:
-        """Refresh PDND voucher (implement your logic)."""
-        # Your token refresh logic here
-        new_token = "new-pdnd-voucher"
-        expires_at = time.time() + 3600  # 1 hour
-        return new_token, expires_at
+    def _refresh_token(self):
+        """Refresh the access token."""
+        from anncsu.common import create_client_assertion, get_access_token, TokenConfig
+        
+        # Generate new client assertion
+        client_assertion = create_client_assertion(self.assertion_config)
+        
+        # Exchange for new access token
+        token_config = TokenConfig(
+            client_id=self.token_config.client_id,
+            client_assertion=client_assertion,
+            token_endpoint=self.token_config.token_endpoint,
+        )
+        token_response = get_access_token(token_config)
+        
+        # Create new Security instance
+        self.security = Security(bearer=token_response.access_token)
 
 # Usage
-token_manager = TokenManager()
+token_manager = TokenManager(token_config, assertion_config)
 
-# Create SDK with refreshable token
-security = Security(bearer=token_manager.get_token())
-sdk = Anncsu(security=security)
+# Get SDK with auto-refreshing token
+sdk = Anncsu(security=token_manager.get_security())
 
-# For long-running applications, recreate SDK periodically
+# For long-running applications, call get_security() before each request
 # or implement automatic refresh in your HTTP client
+```
+
+### Simple Token Refresh with Expiration Check
+
+For simpler use cases, use the built-in expiration validation:
+
+```python
+from anncsu.common import Security, TokenExpiredError
+
+def get_authenticated_sdk(access_token):
+    """Get SDK, handling expired tokens."""
+    try:
+        security = Security(bearer=access_token)
+        return Anncsu(security=security)
+    except TokenExpiredError:
+        # Token expired - refresh and retry
+        new_token = refresh_your_token()  # Your refresh logic
+        security = Security(bearer=new_token)
+        return Anncsu(security=security)
 ```
 
 ## Security Per Request
@@ -568,10 +880,9 @@ uv run pytest tests/common/test_security.py -v
 ### Security Class
 
 ```python
-from dataclasses import dataclass
+from pydantic import BaseModel
 
-@dataclass
-class Security:
+class Security(BaseModel):
     """Security configuration for ANNCSU API authentication.
     
     All ANNCSU APIs use PDND (Piattaforma Digitale Nazionale Dati) 
@@ -581,13 +892,32 @@ class Security:
         bearer: PDND voucher token for Bearer authentication.
                 This token is included in the Authorization header 
                 as "Bearer <token>".
+        validate_expiration: If True (default), validates that the token
+                            is not expired when the Security object is created.
+    
+    Raises:
+        TokenExpiredError: If validate_expiration is True and the token has expired.
+    
+    Methods:
+        is_expired() -> bool: Check if the token is expired.
+        time_until_expiration() -> int | None: Get seconds until expiration.
     
     Example:
         >>> security = Security(bearer="your-pdnd-voucher-token")
         >>> # Token will be used in Authorization: Bearer your-pdnd-voucher-token
+        >>> 
+        >>> # Check expiration
+        >>> if security.is_expired():
+        ...     print("Token needs refresh!")
+        >>> 
+        >>> # Get time until expiration
+        >>> ttl = security.time_until_expiration()
+        >>> if ttl and ttl < 60:
+        ...     print(f"Token expires in {ttl} seconds")
     """
     
     bearer: str | None = None
+    validate_expiration: bool = True  # Excluded from serialization
 ```
 
 ### Usage Examples
@@ -632,13 +962,30 @@ security = Security(bearer=str(RefreshableToken()))
 
 ## Troubleshooting
 
+### Token Expired Error on Initialization
+
+**Problem**: `TokenExpiredError` raised when creating `Security` object
+
+**Solutions**:
+```python
+from anncsu.common import Security, TokenExpiredError
+
+try:
+    security = Security(bearer=access_token)
+except TokenExpiredError as e:
+    print(f"Token expired at {e.expired_at}, current time: {e.current_time}")
+    # Refresh the token
+    new_token = get_access_token(token_config)
+    security = Security(bearer=new_token.access_token)
+```
+
 ### Token Validation Failed
 
 **Problem**: API returns 401 Unauthorized
 
 **Solutions**:
 1. Check token format (should be valid JWT)
-2. Verify token hasn't expired
+2. Verify token hasn't expired using `security.is_expired()`
 3. Ensure correct PDND environment (production/test)
 4. Verify API access permissions
 

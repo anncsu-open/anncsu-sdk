@@ -78,7 +78,7 @@ def env_settings(monkeypatch, temp_key_file):
     monkeypatch.setenv("PDND_KID", "env-key-id")
     monkeypatch.setenv("PDND_ISSUER", "env-issuer")
     monkeypatch.setenv("PDND_SUBJECT", "env-subject")
-    monkeypatch.setenv("PDND_AUDIENCE", "https://env.example.com/token")
+    monkeypatch.setenv("PDND_AUDIENCE", "env.example.com/client-assertion")
     monkeypatch.setenv("PDND_PURPOSE_ID", "env-purpose-id")
     monkeypatch.setenv("PDND_KEY_PATH", str(temp_key_file))
     monkeypatch.setenv("PDND_VALIDITY_MINUTES", "60")
@@ -167,7 +167,8 @@ class TestCLIWithEnvVariables:
         app = _load_cli_app()
 
         result = cli_runner.invoke(
-            app, ["--audience", "https://cli.override.com/token", "--no-clear"]
+            app,
+            ["--audience", "cli.override.com/client-assertion", "--no-clear"],
         )
 
         assert result.exit_code == 0
@@ -177,7 +178,7 @@ class TestCLIWithEnvVariables:
         if padding != 4:
             payload_b64 += "=" * padding
         payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-        assert payload["aud"] == "https://cli.override.com/token"
+        assert payload["aud"] == "cli.override.com/client-assertion"
 
     def test_cli_param_overrides_env_purpose_id(self, cli_runner, env_settings):
         """Test that CLI --purpose-id overrides PDND_PURPOSE_ID environment variable."""
@@ -278,11 +279,32 @@ class TestCLIWithEnvVariables:
         assert payload["purposeId"] == "multi-cli-purpose"
         # These should still be from env
         assert payload["sub"] == "env-subject"
-        assert payload["aud"] == "https://env.example.com/token"
+        assert payload["aud"] == "env.example.com/client-assertion"
 
 
 class TestCLIWithoutEnvVariables:
     """Tests for CLI without environment variables set."""
+
+    @pytest.fixture(autouse=True)
+    def clear_env(self, monkeypatch, tmp_path):
+        """Clear PDND env vars and change to temp dir to avoid .env file."""
+        # Change to temp directory to avoid reading .env file from project root
+        monkeypatch.chdir(tmp_path)
+
+        # Clear all PDND env vars
+        for key in [
+            "PDND_KID",
+            "PDND_ISSUER",
+            "PDND_SUBJECT",
+            "PDND_AUDIENCE",
+            "PDND_PURPOSE_ID",
+            "PDND_PRIVATE_KEY",
+            "PDND_KEY_PATH",
+            "PDND_ALG",
+            "PDND_TYP",
+            "PDND_VALIDITY_MINUTES",
+        ]:
+            monkeypatch.delenv(key, raising=False)
 
     def test_missing_required_params_shows_error(self, cli_runner, temp_key_file):
         """Test that missing required params shows error message."""
@@ -307,7 +329,7 @@ class TestCLIWithoutEnvVariables:
                 "--subject",
                 "cli-only-subject",
                 "--audience",
-                "https://cli.only.com/token",
+                "cli.only.com/client-assertion",
                 "--purpose-id",
                 "cli-only-purpose",
                 "--key-path",
@@ -351,7 +373,7 @@ class TestCLIEnvPartialOverride:
                 "--subject",
                 "cli-subject",
                 "--audience",
-                "https://cli.audience.com/token",
+                "cli.audience.com/client-assertion",
                 "--purpose-id",
                 "cli-purpose",
                 "--no-clear",

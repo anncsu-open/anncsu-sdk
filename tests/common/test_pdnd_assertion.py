@@ -60,14 +60,14 @@ class TestClientAssertionConfig:
             kid="test-key-id",
             issuer="test-issuer",
             subject="test-subject",
-            audience="https://auth.example.com/token",
+            audience="auth.example.com/client-assertion",
             purpose_id="test-purpose",
             private_key=TEST_PRIVATE_KEY,
         )
         assert config.kid == "test-key-id"
         assert config.issuer == "test-issuer"
         assert config.subject == "test-subject"
-        assert config.audience == "https://auth.example.com/token"
+        assert config.audience == "auth.example.com/client-assertion"
         assert config.purpose_id == "test-purpose"
         assert config.private_key == TEST_PRIVATE_KEY
         assert config.alg == "RS256"
@@ -85,7 +85,7 @@ class TestClientAssertionConfig:
                 kid="test-key-id",
                 issuer="test-issuer",
                 subject="test-subject",
-                audience="https://auth.example.com/token",
+                audience="auth.example.com/client-assertion",
                 purpose_id="test-purpose",
                 key_path=key_path,
             )
@@ -101,27 +101,29 @@ class TestClientAssertionConfig:
                 kid="test-key-id",
                 issuer="test-issuer",
                 subject="test-subject",
-                audience="https://auth.example.com/token",
+                audience="auth.example.com/client-assertion",
                 purpose_id="test-purpose",
             )
         assert "Either 'private_key' or 'key_path' must be provided" in str(
             exc_info.value
         )
 
-    def test_config_validates_audience_https(self):
-        """Test that audience must be HTTPS URL."""
+    def test_config_validates_audience_client_assertion_suffix(self):
+        """Test that audience must end with /client-assertion."""
         with pytest.raises(ValidationError) as exc_info:
             ClientAssertionConfig(
                 kid="test-key-id",
                 issuer="test-issuer",
                 subject="test-subject",
-                audience="http://auth.example.com/token",  # HTTP, not HTTPS
+                audience="https://auth.example.com/token",  # Missing /client-assertion
                 purpose_id="test-purpose",
                 private_key=TEST_PRIVATE_KEY,
             )
-        # Pattern validation catches this before field_validator
+        # Pattern validation catches this - must end with /client-assertion
         assert "audience" in str(exc_info.value)
-        assert "https://" in str(exc_info.value) or "pattern" in str(exc_info.value)
+        assert "client-assertion" in str(exc_info.value) or "pattern" in str(
+            exc_info.value
+        )
 
     def test_config_validates_key_path_exists(self):
         """Test that key_path must exist."""
@@ -130,7 +132,7 @@ class TestClientAssertionConfig:
                 kid="test-key-id",
                 issuer="test-issuer",
                 subject="test-subject",
-                audience="https://auth.example.com/token",
+                audience="auth.example.com/client-assertion",
                 purpose_id="test-purpose",
                 key_path=Path("/nonexistent/path/key.pem"),
             )
@@ -144,7 +146,7 @@ class TestClientAssertionConfig:
                     kid="test-key-id",
                     issuer="test-issuer",
                     subject="test-subject",
-                    audience="https://auth.example.com/token",
+                    audience="auth.example.com/client-assertion",
                     purpose_id="test-purpose",
                     key_path=Path(tmpdir),
                 )
@@ -157,7 +159,7 @@ class TestClientAssertionConfig:
                 kid="",
                 issuer="test-issuer",
                 subject="test-subject",
-                audience="https://auth.example.com/token",
+                audience="auth.example.com/client-assertion",
                 purpose_id="test-purpose",
                 private_key=TEST_PRIVATE_KEY,
             )
@@ -169,7 +171,7 @@ class TestClientAssertionConfig:
                 kid="test-key-id",
                 issuer="",
                 subject="test-subject",
-                audience="https://auth.example.com/token",
+                audience="auth.example.com/client-assertion",
                 purpose_id="test-purpose",
                 private_key=TEST_PRIVATE_KEY,
             )
@@ -181,7 +183,7 @@ class TestClientAssertionConfig:
                 kid="test-key-id",
                 issuer="test-issuer",
                 subject="",
-                audience="https://auth.example.com/token",
+                audience="auth.example.com/client-assertion",
                 purpose_id="test-purpose",
                 private_key=TEST_PRIVATE_KEY,
             )
@@ -193,7 +195,7 @@ class TestClientAssertionConfig:
                 kid="test-key-id",
                 issuer="test-issuer",
                 subject="test-subject",
-                audience="https://auth.example.com/token",
+                audience="auth.example.com/client-assertion",
                 purpose_id="",
                 private_key=TEST_PRIVATE_KEY,
             )
@@ -205,7 +207,7 @@ class TestClientAssertionConfig:
                 kid="test-key-id",
                 issuer="test-issuer",
                 subject="test-subject",
-                audience="https://auth.example.com/token",
+                audience="auth.example.com/client-assertion",
                 purpose_id="test-purpose",
                 private_key=TEST_PRIVATE_KEY,
                 alg="HS256",  # Not allowed
@@ -218,7 +220,7 @@ class TestClientAssertionConfig:
                 kid="test-key-id",
                 issuer="test-issuer",
                 subject="test-subject",
-                audience="https://auth.example.com/token",
+                audience="auth.example.com/client-assertion",
                 purpose_id="test-purpose",
                 private_key=TEST_PRIVATE_KEY,
                 typ="JWE",  # Not allowed
@@ -231,7 +233,7 @@ class TestClientAssertionConfig:
                 kid="test-key-id",
                 issuer="test-issuer",
                 subject="test-subject",
-                audience="https://auth.example.com/token",
+                audience="auth.example.com/client-assertion",
                 purpose_id="test-purpose",
                 private_key=TEST_PRIVATE_KEY,
                 validity_minutes=0,
@@ -244,7 +246,7 @@ class TestClientAssertionConfig:
                 kid="test-key-id",
                 issuer="test-issuer",
                 subject="test-subject",
-                audience="https://auth.example.com/token",
+                audience="auth.example.com/client-assertion",
                 purpose_id="test-purpose",
                 private_key=TEST_PRIVATE_KEY,
                 validity_minutes=43201,  # Exceeds 30 days
@@ -256,7 +258,7 @@ class TestClientAssertionConfig:
             kid="test-key-id",
             issuer="test-issuer",
             subject="test-subject",
-            audience="https://auth.example.com/token",
+            audience="auth.example.com/client-assertion",
             purpose_id="test-purpose",
             private_key=TEST_PRIVATE_KEY,
             validity_minutes=1440,  # 24 hours
@@ -273,7 +275,7 @@ class TestClientAssertionConfigGetPrivateKey:
             kid="test-key-id",
             issuer="test-issuer",
             subject="test-subject",
-            audience="https://auth.example.com/token",
+            audience="auth.example.com/client-assertion",
             purpose_id="test-purpose",
             private_key=TEST_PRIVATE_KEY,
         )
@@ -290,7 +292,7 @@ class TestClientAssertionConfigGetPrivateKey:
                 kid="test-key-id",
                 issuer="test-issuer",
                 subject="test-subject",
-                audience="https://auth.example.com/token",
+                audience="auth.example.com/client-assertion",
                 purpose_id="test-purpose",
                 key_path=key_path,
             )
@@ -308,7 +310,7 @@ class TestClientAssertionConfigGetPrivateKey:
             kid="test-key-id",
             issuer="test-issuer",
             subject="test-subject",
-            audience="https://auth.example.com/token",
+            audience="auth.example.com/client-assertion",
             purpose_id="test-purpose",
             key_path=key_path,
         )
@@ -331,7 +333,7 @@ class TestClientAssertionConfigGetPrivateKey:
                 kid="test-key-id",
                 issuer="test-issuer",
                 subject="test-subject",
-                audience="https://auth.example.com/token",
+                audience="auth.example.com/client-assertion",
                 purpose_id="test-purpose",
                 key_path=key_path,
             )
@@ -354,7 +356,7 @@ class TestCreateClientAssertion:
             kid="test-key-id",
             issuer="test-issuer",
             subject="test-subject",
-            audience="https://auth.example.com/token",
+            audience="auth.example.com/client-assertion",
             purpose_id="test-purpose",
             private_key=TEST_PRIVATE_KEY,
         )
@@ -371,7 +373,7 @@ class TestCreateClientAssertion:
             kid="test-key-id",
             issuer="test-issuer",
             subject="test-subject",
-            audience="https://auth.example.com/token",
+            audience="auth.example.com/client-assertion",
             purpose_id="test-purpose",
             private_key=TEST_PRIVATE_KEY,
             validity_minutes=60,
@@ -400,7 +402,7 @@ class TestCreateClientAssertion:
             kid="test-key-id",
             issuer="test-issuer",
             subject="test-subject",
-            audience="https://auth.example.com/token",
+            audience="auth.example.com/client-assertion",
             purpose_id="test-purpose",
             private_key=TEST_PRIVATE_KEY,
         )
@@ -425,7 +427,7 @@ class TestCreateClientAssertion:
             kid="my-key-id-123",
             issuer="test-issuer",
             subject="test-subject",
-            audience="https://auth.example.com/token",
+            audience="auth.example.com/client-assertion",
             purpose_id="test-purpose",
             private_key=TEST_PRIVATE_KEY,
         )
@@ -451,7 +453,7 @@ class TestCreateClientAssertion:
             kid="test-key-id",
             issuer="my-issuer",
             subject="my-subject",
-            audience="https://auth.example.com/token",
+            audience="auth.example.com/client-assertion",
             purpose_id="my-purpose-id",
             private_key=TEST_PRIVATE_KEY,
         )
@@ -469,7 +471,7 @@ class TestCreateClientAssertion:
 
         assert payload["iss"] == "my-issuer"
         assert payload["sub"] == "my-subject"
-        assert payload["aud"] == "https://auth.example.com/token"
+        assert payload["aud"] == "auth.example.com/client-assertion"
         assert payload["purposeId"] == "my-purpose-id"
         assert "jti" in payload
         assert "iat" in payload
@@ -486,7 +488,7 @@ class TestCreateClientAssertion:
                 kid="test-key-id",
                 issuer="test-issuer",
                 subject="test-subject",
-                audience="https://auth.example.com/token",
+                audience="auth.example.com/client-assertion",
                 purpose_id="test-purpose",
                 key_path=key_path,
             )
@@ -502,7 +504,7 @@ class TestCreateClientAssertion:
             kid="test-key-id",
             issuer="test-issuer",
             subject="test-subject",
-            audience="https://auth.example.com/token",
+            audience="auth.example.com/client-assertion",
             purpose_id="test-purpose",
             private_key=b"invalid-key-content",
         )
@@ -516,7 +518,7 @@ class TestCreateClientAssertion:
             kid="test-key-id",
             issuer="test-issuer",
             subject="test-subject",
-            audience="https://auth.example.com/token",
+            audience="auth.example.com/client-assertion",
             purpose_id="test-purpose",
             private_key=TEST_PRIVATE_KEY,
         )
@@ -606,7 +608,7 @@ class TestClientAssertionSettings:
         monkeypatch.setenv("PDND_KID", "test-key-id")
         monkeypatch.setenv("PDND_ISSUER", "test-issuer")
         monkeypatch.setenv("PDND_SUBJECT", "test-subject")
-        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+        monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
         monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
         monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
 
@@ -615,7 +617,7 @@ class TestClientAssertionSettings:
         assert settings.kid == "test-key-id"
         assert settings.issuer == "test-issuer"
         assert settings.subject == "test-subject"
-        assert settings.audience == "https://auth.example.com/token"
+        assert settings.audience == "auth.example.com/client-assertion"
         assert settings.purpose_id == "test-purpose"
         assert settings.private_key == TEST_PRIVATE_KEY.decode("utf-8")
         assert settings.key_path is None
@@ -623,17 +625,35 @@ class TestClientAssertionSettings:
         assert settings.typ == "JWT"
         assert settings.validity_minutes == 43200
 
-    def test_settings_from_env_with_key_path(self, monkeypatch):
+    def test_settings_from_env_with_key_path(self, monkeypatch, tmp_path):
         """Test loading settings from environment variables with key path."""
-        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as f:
-            f.write(TEST_PRIVATE_KEY)
-            key_path = f.name
+        # Create key file in temp directory
+        key_file = tmp_path / "test_key.pem"
+        key_file.write_bytes(TEST_PRIVATE_KEY)
+        key_path = str(key_file)
 
+        # Change to temp directory to avoid reading .env file from project root
+        original_cwd = Path.cwd()
         try:
+            monkeypatch.chdir(tmp_path)
+
+            # Clear all PDND env vars first to avoid interference from .env
+            for key in [
+                "PDND_KID",
+                "PDND_ISSUER",
+                "PDND_SUBJECT",
+                "PDND_AUDIENCE",
+                "PDND_PURPOSE_ID",
+                "PDND_PRIVATE_KEY",
+                "PDND_KEY_PATH",
+            ]:
+                monkeypatch.delenv(key, raising=False)
+
+            # Set only the env vars we want
             monkeypatch.setenv("PDND_KID", "test-key-id")
             monkeypatch.setenv("PDND_ISSUER", "test-issuer")
             monkeypatch.setenv("PDND_SUBJECT", "test-subject")
-            monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+            monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
             monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
             monkeypatch.setenv("PDND_KEY_PATH", key_path)
 
@@ -642,14 +662,14 @@ class TestClientAssertionSettings:
             assert settings.key_path == key_path
             assert settings.private_key is None
         finally:
-            Path(key_path).unlink()
+            monkeypatch.chdir(original_cwd)
 
     def test_settings_custom_alg_typ_validity(self, monkeypatch):
         """Test loading custom algorithm, type, and validity from env."""
         monkeypatch.setenv("PDND_KID", "test-key-id")
         monkeypatch.setenv("PDND_ISSUER", "test-issuer")
         monkeypatch.setenv("PDND_SUBJECT", "test-subject")
-        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+        monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
         monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
         monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
         monkeypatch.setenv("PDND_ALG", "RS256")
@@ -662,27 +682,46 @@ class TestClientAssertionSettings:
         assert settings.typ == "JWT"
         assert settings.validity_minutes == 1440
 
-    def test_settings_requires_key_source(self, monkeypatch):
+    def test_settings_requires_key_source(self, monkeypatch, tmp_path):
         """Test that either PDND_PRIVATE_KEY or PDND_KEY_PATH is required."""
-        monkeypatch.setenv("PDND_KID", "test-key-id")
-        monkeypatch.setenv("PDND_ISSUER", "test-issuer")
-        monkeypatch.setenv("PDND_SUBJECT", "test-subject")
-        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
-        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
-        # No PDND_PRIVATE_KEY or PDND_KEY_PATH
+        # Change to temp directory to avoid reading .env file from project root
+        original_cwd = Path.cwd()
+        try:
+            monkeypatch.chdir(tmp_path)
 
-        with pytest.raises(ValidationError) as exc_info:
-            ClientAssertionSettings()
-        assert "PDND_PRIVATE_KEY" in str(exc_info.value) or "PDND_KEY_PATH" in str(
-            exc_info.value
-        )
+            # Clear all PDND env vars first
+            for key in [
+                "PDND_KID",
+                "PDND_ISSUER",
+                "PDND_SUBJECT",
+                "PDND_AUDIENCE",
+                "PDND_PURPOSE_ID",
+                "PDND_PRIVATE_KEY",
+                "PDND_KEY_PATH",
+            ]:
+                monkeypatch.delenv(key, raising=False)
+
+            monkeypatch.setenv("PDND_KID", "test-key-id")
+            monkeypatch.setenv("PDND_ISSUER", "test-issuer")
+            monkeypatch.setenv("PDND_SUBJECT", "test-subject")
+            monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
+            monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+            # No PDND_PRIVATE_KEY or PDND_KEY_PATH
+
+            with pytest.raises(ValidationError) as exc_info:
+                ClientAssertionSettings()
+            assert "PDND_PRIVATE_KEY" in str(exc_info.value) or "PDND_KEY_PATH" in str(
+                exc_info.value
+            )
+        finally:
+            monkeypatch.chdir(original_cwd)
 
     def test_settings_to_config_with_private_key(self, monkeypatch):
         """Test converting settings to config with private key."""
         monkeypatch.setenv("PDND_KID", "test-key-id")
         monkeypatch.setenv("PDND_ISSUER", "test-issuer")
         monkeypatch.setenv("PDND_SUBJECT", "test-subject")
-        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+        monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
         monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
         monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
 
@@ -693,22 +732,39 @@ class TestClientAssertionSettings:
         assert config.kid == "test-key-id"
         assert config.issuer == "test-issuer"
         assert config.subject == "test-subject"
-        assert config.audience == "https://auth.example.com/token"
+        assert config.audience == "auth.example.com/client-assertion"
         assert config.purpose_id == "test-purpose"
         assert config.private_key == TEST_PRIVATE_KEY
         assert config.key_path is None
 
-    def test_settings_to_config_with_key_path(self, monkeypatch):
+    def test_settings_to_config_with_key_path(self, monkeypatch, tmp_path):
         """Test converting settings to config with key path."""
-        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as f:
-            f.write(TEST_PRIVATE_KEY)
-            key_path = f.name
+        # Create key file in temp directory
+        key_file = tmp_path / "test_key.pem"
+        key_file.write_bytes(TEST_PRIVATE_KEY)
+        key_path = str(key_file)
 
+        # Change to temp directory to avoid reading .env file from project root
+        original_cwd = Path.cwd()
         try:
+            monkeypatch.chdir(tmp_path)
+
+            # Clear all PDND env vars first
+            for key in [
+                "PDND_KID",
+                "PDND_ISSUER",
+                "PDND_SUBJECT",
+                "PDND_AUDIENCE",
+                "PDND_PURPOSE_ID",
+                "PDND_PRIVATE_KEY",
+                "PDND_KEY_PATH",
+            ]:
+                monkeypatch.delenv(key, raising=False)
+
             monkeypatch.setenv("PDND_KID", "test-key-id")
             monkeypatch.setenv("PDND_ISSUER", "test-issuer")
             monkeypatch.setenv("PDND_SUBJECT", "test-subject")
-            monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+            monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
             monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
             monkeypatch.setenv("PDND_KEY_PATH", key_path)
 
@@ -719,14 +775,14 @@ class TestClientAssertionSettings:
             assert config.key_path == Path(key_path)
             assert config.private_key is None
         finally:
-            Path(key_path).unlink()
+            monkeypatch.chdir(original_cwd)
 
     def test_settings_to_config_creates_working_assertion(self, monkeypatch):
         """Test that config from settings can create a valid JWT."""
         monkeypatch.setenv("PDND_KID", "test-key-id")
         monkeypatch.setenv("PDND_ISSUER", "test-issuer")
         monkeypatch.setenv("PDND_SUBJECT", "test-subject")
-        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+        monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
         monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
         monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
 
@@ -742,7 +798,7 @@ class TestClientAssertionSettings:
         monkeypatch.setenv("PDND_KID", "test-key-id")
         monkeypatch.setenv("PDND_ISSUER", "test-issuer")
         monkeypatch.setenv("PDND_SUBJECT", "test-subject")
-        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+        monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
         monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
         monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
         monkeypatch.setenv("PDND_UNKNOWN_VAR", "should-be-ignored")
@@ -761,7 +817,7 @@ class TestClientAssertionSettings:
         monkeypatch.setenv("PDND_KID", "correct-key-id")
         monkeypatch.setenv("PDND_ISSUER", "correct-issuer")
         monkeypatch.setenv("PDND_SUBJECT", "test-subject")
-        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
+        monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
         monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
         monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
 
@@ -777,7 +833,7 @@ class TestClientAssertionSettings:
         env_content = f"""PDND_KID=dotenv-key-id
 PDND_ISSUER=dotenv-issuer
 PDND_SUBJECT=dotenv-subject
-PDND_AUDIENCE=https://auth.example.com/token
+PDND_AUDIENCE=auth.example.com/client-assertion
 PDND_PURPOSE_ID=dotenv-purpose
 PDND_PRIVATE_KEY={TEST_PRIVATE_KEY.decode("utf-8")}
 """
@@ -809,18 +865,37 @@ PDND_PRIVATE_KEY={TEST_PRIVATE_KEY.decode("utf-8")}
         finally:
             os.chdir(original_cwd)
 
-    def test_settings_missing_required_field(self, monkeypatch):
+    def test_settings_missing_required_field(self, monkeypatch, tmp_path):
         """Test that missing required fields raise ValidationError."""
-        monkeypatch.setenv("PDND_KID", "test-key-id")
-        # Missing PDND_ISSUER
-        monkeypatch.setenv("PDND_SUBJECT", "test-subject")
-        monkeypatch.setenv("PDND_AUDIENCE", "https://auth.example.com/token")
-        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
-        monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
+        # Change to temp directory to avoid reading .env file from project root
+        original_cwd = Path.cwd()
+        try:
+            monkeypatch.chdir(tmp_path)
 
-        with pytest.raises(ValidationError) as exc_info:
-            ClientAssertionSettings()
-        assert "issuer" in str(exc_info.value).lower()
+            # Clear all PDND env vars first
+            for key in [
+                "PDND_KID",
+                "PDND_ISSUER",
+                "PDND_SUBJECT",
+                "PDND_AUDIENCE",
+                "PDND_PURPOSE_ID",
+                "PDND_PRIVATE_KEY",
+                "PDND_KEY_PATH",
+            ]:
+                monkeypatch.delenv(key, raising=False)
+
+            monkeypatch.setenv("PDND_KID", "test-key-id")
+            # Missing PDND_ISSUER
+            monkeypatch.setenv("PDND_SUBJECT", "test-subject")
+            monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
+            monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+            monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
+
+            with pytest.raises(ValidationError) as exc_info:
+                ClientAssertionSettings()
+            assert "issuer" in str(exc_info.value).lower()
+        finally:
+            monkeypatch.chdir(original_cwd)
 
 
 class TestClientAssertionSettingsExports:
