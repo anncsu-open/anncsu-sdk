@@ -159,69 +159,121 @@ asyncio.run(main())
 
 All ANNCSU APIs use PDND (Piattaforma Digitale Nazionale Dati) voucher-based authentication with HTTP Bearer tokens.
 
-### Basic Authentication
+### Complete Authentication Flow
+
+The SDK supports the complete PDND authentication flow:
+
+```
+┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
+│  1. Create Client   │     │  2. Exchange for    │     │  3. Use Access      │
+│     Assertion       │────▶│     Access Token    │────▶│     Token           │
+│     (JWT)           │     │     (OAuth2)        │     │     (API Calls)     │
+└─────────────────────┘     └─────────────────────┘     └─────────────────────┘
+```
 
 ```python
+from pathlib import Path
 from anncsu.pa import Anncsu
-from anncsu.common import Security
+from anncsu.common import (
+    # Step 1: Client Assertion
+    ClientAssertionConfig,
+    create_client_assertion,
+    # Step 2: Token Exchange
+    TokenConfig,
+    get_access_token,
+    # Step 3: API Authentication
+    Security,
+)
 
-# Create security configuration with your PDND voucher
-security = Security(bearer="your-pdnd-voucher-token")
+# Step 1: Create client assertion (JWT)
+assertion_config = ClientAssertionConfig(
+    kid="your-key-id",
+    issuer="your-client-id",
+    subject="your-client-id",
+    audience="auth.uat.interop.pagopa.it/client-assertion",
+    purpose_id="your-purpose-id",
+    key_path=Path("./private_key.pem"),
+)
+client_assertion = create_client_assertion(assertion_config)
 
-# Initialize SDK with security
+# Step 2: Exchange for access token
+token_config = TokenConfig(
+    client_id="your-client-id",
+    client_assertion=client_assertion,
+    token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",
+)
+token_response = get_access_token(token_config)
+
+# Step 3: Use access token for API calls
+security = Security(bearer=token_response.access_token)
 sdk = Anncsu(security=security)
 
-# Make authenticated requests
 response = sdk.queryparam.esiste_odonimo_get_query_param(
     codcom="H501",
     denom="VklBIFJPTUE="
 )
 ```
 
-### Key Features
+### Basic Authentication (with existing token)
 
-- **PDND Voucher**: Uses PDND (Piattaforma Digitale Nazionale Dati) authentication
-- **Bearer Token**: JWT format tokens in Authorization header
-- **Common Security**: Same `Security` class works across all ANNCSU APIs
-- **Type-Safe**: Full type hints with modern Python syntax
-
-### Generating Client Assertions Programmatically
-
-The SDK includes a built-in module for generating PDND client assertions (JWT tokens) at runtime:
+If you already have an access token:
 
 ```python
-from anncsu.common import ClientAssertionConfig, create_client_assertion
-
-# Option 1: With private key as bytes
-config = ClientAssertionConfig(
-    kid="your-key-id",
-    issuer="your-client-id",
-    subject="your-client-id",
-    audience="https://auth.interop.pagopa.it/token.oauth2",
-    purpose_id="your-purpose-id",
-    private_key=b"-----BEGIN RSA PRIVATE KEY-----\n...",
-)
-token = create_client_assertion(config)
-
-# Option 2: With private key file path
-from pathlib import Path
-
-config = ClientAssertionConfig(
-    kid="your-key-id",
-    issuer="your-client-id",
-    subject="your-client-id",
-    audience="https://auth.interop.pagopa.it/token.oauth2",
-    purpose_id="your-purpose-id",
-    key_path=Path("./private_key.pem"),
-)
-token = create_client_assertion(config)
-
-# Use the token with the SDK
+from anncsu.pa import Anncsu
 from anncsu.common import Security
 
-security = Security(bearer=token)
+security = Security(bearer="your-access-token")
 sdk = Anncsu(security=security)
+
+response = sdk.queryparam.esiste_odonimo_get_query_param(
+    codcom="H501",
+    denom="VklBIFJPTUE="
+)
 ```
+
+### Token Expiration Validation
+
+The `Security` class automatically validates token expiration when initialized. If the token is expired, it raises `TokenExpiredError` instead of letting the API return a confusing 404 error:
+
+```python
+from anncsu.common import Security, TokenExpiredError
+
+try:
+    security = Security(bearer=token_response.access_token)
+except TokenExpiredError as e:
+    print(f"Token expired at {e.expired_at}, current time: {e.current_time}")
+    # Obtain a new access token...
+    token_response = get_access_token(token_config)
+    security = Security(bearer=token_response.access_token)
+```
+
+You can also check expiration manually:
+
+```python
+# Check if token is expired
+if security.is_expired():
+    print("Token needs refresh!")
+
+# Get seconds until expiration (negative if already expired)
+ttl = security.time_until_expiration()
+if ttl and ttl < 60:
+    print(f"Token expires in {ttl} seconds, consider refreshing")
+```
+
+To skip validation (not recommended):
+
+```python
+security = Security(bearer=expired_token, validate_expiration=False)
+```
+
+### Key Features
+
+- **Complete Auth Flow**: Generate assertions, exchange for tokens, authenticate API calls
+- **PDND Voucher**: Full PDND (Piattaforma Digitale Nazionale Dati) authentication support
+- **Bearer Token**: JWT format tokens in Authorization header
+- **Sync & Async**: Both `get_access_token` and `get_access_token_async` available
+- **Error Handling**: Dedicated exceptions for token errors (`TokenRequestError`, `TokenResponseError`)
+- **Type-Safe**: Full type hints with modern Python syntax
 
 ### Loading Configuration from Environment Variables
 
@@ -229,16 +281,22 @@ The SDK supports loading configuration from environment variables or a `.env` fi
 
 ```python
 from anncsu.common.config import ClientAssertionSettings
-from anncsu.common import create_client_assertion, Security
+from anncsu.common import create_client_assertion, TokenConfig, get_access_token, Security
 from anncsu.pa import Anncsu
 
 # Automatically loads from environment variables or .env file
 settings = ClientAssertionSettings()
-token = create_client_assertion(settings.to_config())
+client_assertion = create_client_assertion(settings.to_config())
+
+# Exchange for access token
+token_response = get_access_token(TokenConfig(
+    client_id=settings.issuer,
+    client_assertion=client_assertion,
+    token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",
+))
 
 # Use with SDK
-security = Security(bearer=token)
-sdk = Anncsu(security=security)
+sdk = Anncsu(security=Security(bearer=token_response.access_token))
 ```
 
 #### Required Environment Variables (prefix: `PDND_`)
@@ -248,7 +306,7 @@ sdk = Anncsu(security=security)
 | `PDND_KID` | Key ID (kid) header parameter |
 | `PDND_ISSUER` | Issuer claim - your client_id |
 | `PDND_SUBJECT` | Subject claim - your client_id |
-| `PDND_AUDIENCE` | Audience claim - PDND token endpoint |
+| `PDND_AUDIENCE` | Audience claim - must end with `/client-assertion` |
 | `PDND_PURPOSE_ID` | Purpose ID for the request |
 | `PDND_PRIVATE_KEY` | Private key content (or use `PDND_KEY_PATH`) |
 | `PDND_KEY_PATH` | Path to private key file (or use `PDND_PRIVATE_KEY`) |
@@ -259,7 +317,7 @@ sdk = Anncsu(security=security)
 PDND_KID=my-key-id
 PDND_ISSUER=my-client-id
 PDND_SUBJECT=my-client-id
-PDND_AUDIENCE=https://auth.interop.pagopa.it/token.oauth2
+PDND_AUDIENCE=auth.uat.interop.pagopa.it/client-assertion
 PDND_PURPOSE_ID=my-purpose-id
 PDND_KEY_PATH=./private_key.pem
 ```
@@ -267,10 +325,10 @@ PDND_KEY_PATH=./private_key.pem
 ### Documentation
 
 For comprehensive security documentation including:
-- PDND voucher format and JWT structure
+- Complete authentication flow (3 steps)
+- Token exchange parameters and error handling
 - Client assertion generation
 - Token refresh strategies
-- Error handling (401/403)
 - Best practices and security checklist
 - Testing with security
 
@@ -563,6 +621,119 @@ with Anncsu(
     # Handle response
     print(res)
 
+```
+
+### UAT Environment Configuration
+
+When working with the UAT (User Acceptance Testing) environment, you may need to configure a different server URL and handle SSL certificate issues.
+
+#### Basic UAT Configuration
+
+```python
+from anncsu.pa import Anncsu
+from anncsu.common import Security
+
+sdk = Anncsu(
+    security=Security(bearer_auth=token_response.access_token),
+    server_url="https://modipa-uat.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",
+)
+```
+
+#### Disabling SSL Verification (UAT Only)
+
+The UAT environment may use certificates that are not trusted by your system's certificate store. To bypass SSL verification **for testing purposes only**:
+
+```python
+import httpx
+from anncsu.pa import Anncsu
+from anncsu.common import Security
+
+# Create HTTP client with SSL verification disabled
+client = httpx.Client(verify=False)
+
+sdk = Anncsu(
+    security=Security(bearer_auth=token_response.access_token),
+    server_url="https://modipa-uat.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",
+    client=client,
+)
+
+# Make API calls
+response = sdk.queryparam.esiste_odonimo_get_query_param(
+    codcom="H501",
+    denom="VklBIFJPTUE="
+)
+```
+
+For async operations, also configure the async client:
+
+```python
+import httpx
+from anncsu.pa import Anncsu
+from anncsu.common import Security
+
+client = httpx.Client(verify=False)
+async_client = httpx.AsyncClient(verify=False)
+
+sdk = Anncsu(
+    security=Security(bearer_auth=token_response.access_token),
+    server_url="https://modipa-uat.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",
+    client=client,
+    async_client=async_client,
+)
+```
+
+> **Warning**: Never disable SSL verification in production! This should only be used for UAT/testing environments where the server uses self-signed or untrusted certificates.
+
+#### Complete UAT Example
+
+Here's a complete example for UAT environment with PDND authentication:
+
+```python
+import httpx
+from pathlib import Path
+from anncsu.pa import Anncsu
+from anncsu.common import (
+    ClientAssertionConfig,
+    create_client_assertion,
+    TokenConfig,
+    get_access_token,
+    Security,
+)
+
+# Step 1: Create client assertion for UAT
+assertion_config = ClientAssertionConfig(
+    kid="your-key-id",
+    issuer="your-client-id",
+    subject="your-client-id",
+    audience="auth.uat.interop.pagopa.it/client-assertion",  # UAT audience
+    purpose_id="your-purpose-id",
+    key_path=Path("./private_key.pem"),
+)
+client_assertion = create_client_assertion(assertion_config)
+
+# Step 2: Exchange for access token (UAT token endpoint)
+token_config = TokenConfig(
+    client_id="your-client-id",
+    client_assertion=client_assertion,
+    token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",  # UAT endpoint
+)
+token_response = get_access_token(token_config)
+
+# Step 3: Create SDK with UAT configuration
+client = httpx.Client(verify=False)  # Only for UAT!
+
+sdk = Anncsu(
+    security=Security(bearer_auth=token_response.access_token),
+    server_url="https://modipa-uat.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",
+    client=client,
+)
+
+# Step 4: Make API calls
+response = sdk.queryparam.esiste_odonimo_get_query_param(
+    codcom="H501",
+    denom="VklBIFJPTUE="
+)
+print(response)
 ```
 <!-- End Server Selection [server] -->
 

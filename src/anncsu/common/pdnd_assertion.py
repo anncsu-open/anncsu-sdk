@@ -142,7 +142,7 @@ class ClientAssertionConfig(BaseModel):
         str,
         Field(
             description="Audience (aud) - the PDND token endpoint URL",
-            pattern="^https://.*",
+            pattern="^.*/client-assertion",
         ),
     ]
     purpose_id: Annotated[
@@ -179,7 +179,7 @@ class ClientAssertionConfig(BaseModel):
     @classmethod
     def validate_audience(cls, v: str) -> str:
         """Validate audience URL format."""
-        if not v.startswith("https://"):
+        if not v.endswith("/client-assertion"):
             raise ValueError("Audience must be an HTTPS URL")
         return v
 

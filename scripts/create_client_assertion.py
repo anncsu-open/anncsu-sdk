@@ -377,8 +377,8 @@ def create(
         if clear_screen:
             os.system("clear")
 
-        # Output the token
-        console.print(token)
+        # Output the token (use print instead of console.print to avoid word-wrapping)
+        print(token)
 
     except ClientAssertionError as e:
         console.print(f"[red]Error: {e}[/red]")
