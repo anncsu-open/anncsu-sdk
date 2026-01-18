@@ -50,6 +50,7 @@ from __future__ import annotations
 import base64
 import json
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from anncsu.common.pdnd_assertion import (
@@ -62,6 +63,12 @@ from anncsu.common.pdnd_token import (
     get_access_token,
 )
 from anncsu.common.security import Security
+from anncsu.common.session import (
+    Session,
+    clear_session,
+    load_session,
+    save_session,
+)
 
 if TYPE_CHECKING:
     from anncsu.common.config import ClientAssertionSettings
@@ -145,6 +152,8 @@ class PDNDAuthManager:
         token_endpoint: str | None = None,
         client_assertion_threshold_seconds: int = DEFAULT_CLIENT_ASSERTION_THRESHOLD,
         access_token_threshold_seconds: int = DEFAULT_ACCESS_TOKEN_THRESHOLD,
+        session_persistence: bool = False,
+        config_dir: Path | None = None,
     ):
         """Initialize the PDND Auth Manager.
 
@@ -158,6 +167,10 @@ class PDNDAuthManager:
                 this many seconds before it expires. Default is 86400 (1 day).
             access_token_threshold_seconds: Refresh access token this many
                 seconds before it expires. Default is 60.
+            session_persistence: If True, load/save session to file.
+                Default is False.
+            config_dir: Custom config directory for session file.
+                Defaults to ~/.anncsu/
 
         Raises:
             ValueError: If neither settings nor config is provided.
@@ -171,6 +184,8 @@ class PDNDAuthManager:
         self.token_endpoint = token_endpoint
         self.client_assertion_threshold_seconds = client_assertion_threshold_seconds
         self.access_token_threshold_seconds = access_token_threshold_seconds
+        self.session_persistence = session_persistence
+        self.config_dir = config_dir
 
         # Convert settings to config if needed
         if config is not None:
@@ -184,6 +199,10 @@ class PDNDAuthManager:
         # Cached tokens
         self._client_assertion: str | None = None
         self._access_token: str | None = None
+
+        # Load session from file if persistence is enabled
+        if self.session_persistence:
+            self._load_session()
 
     def get_client_assertion(self) -> str:
         """Get a valid client assertion, generating one if needed.
@@ -202,6 +221,7 @@ class PDNDAuthManager:
         # Check if we need to generate a new assertion
         if self._should_regenerate_client_assertion():
             self._client_assertion = create_client_assertion(self.config)
+            self._save_session()
 
         return self._client_assertion  # type: ignore
 
@@ -316,6 +336,7 @@ class PDNDAuthManager:
             # Get access token
             response = get_access_token(token_config)
             self._access_token = response.access_token
+            self._save_session()
         except TokenResponseError as e:
             # Check if error is due to invalid/expired assertion
             if e.error == "invalid_client" and not force_new_assertion:
@@ -394,6 +415,59 @@ class PDNDAuthManager:
             return self.get_access_token()
 
         return refresh
+
+    def _load_session(self) -> None:
+        """Load session from file if it exists and tokens are valid.
+
+        Only loads tokens if:
+        - Session file exists
+        - Token endpoint matches (or session has no endpoint)
+        - Tokens are not expired
+        """
+        session = load_session(config_dir=self.config_dir)
+        if session is None:
+            return
+
+        # Check if token endpoint matches
+        if (
+            self.token_endpoint is not None
+            and session.token_endpoint != self.token_endpoint
+        ):
+            return
+
+        # Load client assertion if valid
+        if session.client_assertion is not None:
+            ttl = _get_jwt_ttl(session.client_assertion)
+            if ttl is not None and ttl > 0:
+                self._client_assertion = session.client_assertion
+
+        # Load access token if valid
+        if session.access_token is not None:
+            ttl = _get_jwt_ttl(session.access_token)
+            if ttl is not None and ttl > 0:
+                self._access_token = session.access_token
+
+    def _save_session(self) -> None:
+        """Save current session to file."""
+        if not self.session_persistence:
+            return
+
+        if self.token_endpoint is None:
+            return
+
+        session = Session(
+            client_assertion=self._client_assertion,
+            access_token=self._access_token,
+            token_endpoint=self.token_endpoint,
+        )
+        save_session(session, config_dir=self.config_dir)
+
+    def clear_session(self) -> None:
+        """Clear the session file and cached tokens."""
+        self._client_assertion = None
+        self._access_token = None
+        if self.session_persistence:
+            clear_session(config_dir=self.config_dir)
 
 
 __all__ = [
