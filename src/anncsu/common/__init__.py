@@ -1,5 +1,6 @@
 """ANNCSU Common - Shared primitives for all ANNCSU API SDKs."""
 
+from anncsu.common.auth import PDNDAuthManager
 from anncsu.common.config import ClientAssertionSettings
 from anncsu.common.hooks.token_validation import TokenRefreshError
 from anncsu.common.pdnd_assertion import (
@@ -34,6 +35,8 @@ __all__ = [
     "ValidationConfig",
     "base64_validator",
     "belfiore_code_validator",
+    # PDND Auth Manager
+    "PDNDAuthManager",
     # PDND Client Assertion
     "ClientAssertionConfig",
     "ClientAssertionSettings",
