@@ -13,7 +13,12 @@ dependencies = [
     "pydantic >=2.12.5",
     "authlib>=1.3.0",
     "pydantic-settings>=2.12.0",
+    "typer>=0.15.0",
+    "rich>=13.0.0",
 ]
+
+[project.scripts]
+anncsu = "anncsu.cli:app"
 [dependency-groups]
 dev = [
     "pytest>=9.0.0",

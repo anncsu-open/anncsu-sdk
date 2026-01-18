@@ -37,6 +37,7 @@ ANNCSU REST API: API dei servizi REST di ANNCSU su PDND
   * [Resource Management](#resource-management)
   * [Debugging](#debugging)
   * [Architecture](#architecture)
+  * [Command Line Interface](#command-line-interface)
 * [Development](#development)
   * [Maturity](#maturity)
   * [Contributions](#contributions)
@@ -907,6 +908,35 @@ This architecture allows adding new ANNCSU API specifications (e.g., aggiornamen
 
 For more details, see [Refactoring Documentation](./docs/refactoring/REFACTORING_SUMMARY.md).
 <!-- End Architecture [architecture] -->
+
+<!-- Start Command Line Interface [cli] -->
+## Command Line Interface
+
+The SDK includes a command-line interface (`anncsu`) for managing PDND authentication and performing common operations without writing code.
+
+### Quick Start
+
+```bash
+# Configure PDND credentials
+anncsu config set --kid YOUR_KEY_ID --issuer YOUR_CLIENT_ID
+
+# Login and obtain access token
+anncsu auth login
+
+# Check authentication status
+anncsu auth status
+```
+
+### Key Features
+
+- **Authentication Management**: Generate client assertions, obtain and refresh access tokens
+- **Configuration**: Manage PDND credentials via CLI or environment variables
+- **Standalone Utilities**: Create assertions independently for integration with other tools
+
+### Documentation
+
+For complete CLI documentation including all commands, options, and examples, see **[docs/CLI.md](docs/CLI.md)**.
+<!-- End Command Line Interface [cli] -->
 
 # Development
 
