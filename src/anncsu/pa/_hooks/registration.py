@@ -1,4 +1,4 @@
-from .types import Hooks
+from anncsu.common.sdk.types import Hooks
 
 
 # This file is only ever generated once on the first generation and then is free to be modified.

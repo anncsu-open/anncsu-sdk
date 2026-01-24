@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 from pydantic import Field
 
-from anncsu.common.types import UNSET, OptionalNullable
+from anncsu.common.sdk.types import UNSET, OptionalNullable
 
 from ._version import (
     __gen_version__,
@@ -13,8 +13,8 @@ from ._version import (
     __user_agent__,
     __version__,
 )
-from .httpclient import AsyncHttpClient, HttpClient
-from .utils import Logger, RetryConfig, remove_suffix
+from anncsu.common.sdk.httpclient import AsyncHttpClient, HttpClient
+from anncsu.common.sdk.utils import Logger, RetryConfig, remove_suffix
 
 SERVERS = [
     "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",

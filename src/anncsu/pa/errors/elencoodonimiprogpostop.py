@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from anncsu.common.errors import AnncsuBaseError as AnncsuError
-from anncsu.common.types import BaseModel
+from anncsu.common.sdk.types import BaseModel
 import httpx
 from typing import Optional
 

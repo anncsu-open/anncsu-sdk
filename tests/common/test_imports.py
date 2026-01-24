@@ -1,8 +1,9 @@
 """Test imports for anncsu.common package.
 
 This test suite verifies that all modules in the anncsu.common package
-can be imported successfully after the refactoring that extracted shared
-primitives from anncsu.pa.
+can be imported successfully. After refactoring, the base SDK infrastructure
+is now in anncsu.common.sdk, with backward-compatible re-exports from
+anncsu.common.types and anncsu.common.utils.
 """
 
 import pytest
@@ -25,7 +26,7 @@ class TestCommonPackageImports:
 
 
 class TestCommonTypesImports:
-    """Test imports from anncsu.common.types module."""
+    """Test imports from anncsu.common.types module (re-exports from sdk.types)."""
 
     def test_import_types_module(self):
         """Test that anncsu.common.types can be imported."""
@@ -72,7 +73,7 @@ class TestCommonTypesImports:
 
 
 class TestCommonUtilsImports:
-    """Test imports from anncsu.common.utils module."""
+    """Test imports from anncsu.common.utils module (re-exports from sdk.utils)."""
 
     def test_import_utils_module(self):
         """Test that anncsu.common.utils can be imported."""
@@ -202,26 +203,38 @@ class TestCommonHooksImports:
         assert AfterErrorContext is not None
 
 
-class TestCommonInfrastructureImports:
-    """Test imports of infrastructure components."""
+class TestCommonSDKInfrastructureImports:
+    """Test imports of SDK infrastructure from anncsu.common.sdk."""
 
-    def test_import_http_client(self):
-        """Test that HTTPClient can be imported."""
-        from anncsu.common.httpclient import HttpClient
+    def test_import_sdk_package(self):
+        """Test that anncsu.common.sdk package can be imported."""
+        import anncsu.common.sdk
+
+        assert anncsu.common.sdk is not None
+
+    def test_import_base_sdk_from_sdk_package(self):
+        """Test that BaseSDK can be imported from common.sdk."""
+        from anncsu.common.sdk import BaseSDK
+
+        assert BaseSDK is not None
+
+    def test_import_http_client_from_sdk_package(self):
+        """Test that HttpClient can be imported from common.sdk."""
+        from anncsu.common.sdk import HttpClient
 
         assert HttpClient is not None
 
-    def test_import_async_http_client(self):
-        """Test that AsyncHttpClient can be imported."""
-        from anncsu.common.httpclient import AsyncHttpClient
+    def test_import_async_http_client_from_sdk_package(self):
+        """Test that AsyncHttpClient can be imported from common.sdk."""
+        from anncsu.common.sdk import AsyncHttpClient
 
         assert AsyncHttpClient is not None
 
-    def test_import_base_sdk(self):
-        """Test that BaseSDK can be imported."""
-        from anncsu.common.basesdk import BaseSDK
+    def test_import_sdk_configuration_protocol(self):
+        """Test that SDKConfigurationProtocol can be imported."""
+        from anncsu.common.sdk import SDKConfigurationProtocol
 
-        assert BaseSDK is not None
+        assert SDKConfigurationProtocol is not None
 
     def test_import_sdk_configuration(self):
         """Test that SDKConfiguration can be imported."""
@@ -230,104 +243,104 @@ class TestCommonInfrastructureImports:
         assert SDKConfiguration is not None
 
 
-class TestCommonUtilityModules:
-    """Test that individual utility modules can be imported."""
+class TestCommonSDKUtilsImports:
+    """Test imports from anncsu.common.sdk.utils module."""
 
-    def test_import_annotations(self):
-        """Test that annotations module can be imported."""
-        from anncsu.common.utils import annotations
+    def test_import_sdk_utils_module(self):
+        """Test that anncsu.common.sdk.utils can be imported."""
+        import anncsu.common.sdk.utils
 
-        assert annotations is not None
+        assert anncsu.common.sdk.utils is not None
 
-    def test_import_datetimes(self):
-        """Test that datetimes module can be imported."""
-        from anncsu.common.utils import datetimes
+    def test_import_get_security(self):
+        """Test that get_security can be imported."""
+        from anncsu.common.sdk.utils import get_security
 
-        assert datetimes is not None
+        assert get_security is not None
 
-    def test_import_enums(self):
-        """Test that enums module can be imported."""
-        from anncsu.common.utils import enums
+    def test_import_marshal_json(self):
+        """Test that marshal_json can be imported."""
+        from anncsu.common.sdk.utils import marshal_json
 
-        assert enums is not None
+        assert marshal_json is not None
 
-    def test_import_eventstreaming(self):
-        """Test that eventstreaming module can be imported."""
-        from anncsu.common.utils import eventstreaming
+    def test_import_unmarshal_json(self):
+        """Test that unmarshal_json can be imported."""
+        from anncsu.common.sdk.utils import unmarshal_json
 
-        assert eventstreaming is not None
+        assert unmarshal_json is not None
 
-    def test_import_forms(self):
-        """Test that forms module can be imported."""
-        from anncsu.common.utils import forms
+    def test_import_generate_url(self):
+        """Test that generate_url can be imported."""
+        from anncsu.common.sdk.utils import generate_url
 
-        assert forms is not None
+        assert generate_url is not None
 
-    def test_import_headers(self):
-        """Test that headers module can be imported."""
-        from anncsu.common.utils import headers
+    def test_import_template_url(self):
+        """Test that template_url can be imported."""
+        from anncsu.common.sdk.utils import template_url
 
-        assert headers is not None
+        assert template_url is not None
 
     def test_import_logger(self):
-        """Test that logger module can be imported."""
-        from anncsu.common.utils import logger
+        """Test that Logger can be imported."""
+        from anncsu.common.sdk.utils import Logger
 
-        assert logger is not None
+        assert Logger is not None
 
-    def test_import_metadata(self):
-        """Test that metadata module can be imported."""
-        from anncsu.common.utils import metadata
 
-        assert metadata is not None
+class TestCommonSDKTypesImports:
+    """Test imports from anncsu.common.sdk.types module."""
 
-    def test_import_queryparams(self):
-        """Test that queryparams module can be imported."""
-        from anncsu.common.utils import queryparams
+    def test_import_sdk_types_module(self):
+        """Test that anncsu.common.sdk.types can be imported."""
+        import anncsu.common.sdk.types
 
-        assert queryparams is not None
+        assert anncsu.common.sdk.types is not None
 
-    def test_import_requestbodies(self):
-        """Test that requestbodies module can be imported."""
-        from anncsu.common.utils import requestbodies
+    def test_import_basemodel_from_sdk_types(self):
+        """Test that BaseModel can be imported from sdk.types."""
+        from anncsu.common.sdk.types import BaseModel
 
-        assert requestbodies is not None
+        assert BaseModel is not None
 
-    def test_import_retries(self):
-        """Test that retries module can be imported."""
-        from anncsu.common.utils import retries
+    def test_import_unset_from_sdk_types(self):
+        """Test that UNSET can be imported from sdk.types."""
+        from anncsu.common.sdk.types import UNSET
 
-        assert retries is not None
+        assert UNSET is not None
 
-    def test_import_security(self):
-        """Test that security module can be imported."""
-        from anncsu.common.utils import security
 
-        assert security is not None
+class TestBackwardCompatibility:
+    """Test backward compatibility of import paths."""
 
-    def test_import_serializers(self):
-        """Test that serializers module can be imported."""
-        from anncsu.common.utils import serializers
+    def test_types_backward_compatible(self):
+        """Test that imports from common.types work (re-exports from sdk.types)."""
+        from anncsu.common.sdk.types import (
+            UNSET as SDK_UNSET,
+        )
+        from anncsu.common.sdk.types import (
+            BaseModel as SDKBaseModel,
+        )
+        from anncsu.common.types import UNSET, BaseModel
 
-        assert serializers is not None
+        # They should be the same objects
+        assert BaseModel is SDKBaseModel
+        assert UNSET is SDK_UNSET
 
-    def test_import_unmarshal_json_response(self):
-        """Test that unmarshal_json_response module can be imported."""
-        from anncsu.common.utils import unmarshal_json_response
+    def test_utils_backward_compatible(self):
+        """Test that imports from common.utils work (re-exports from sdk.utils)."""
+        from anncsu.common.sdk.utils import (
+            FieldMetadata as SDKFieldMetadata,
+        )
+        from anncsu.common.sdk.utils import (
+            RetryConfig as SDKRetryConfig,
+        )
+        from anncsu.common.utils import FieldMetadata, RetryConfig
 
-        assert unmarshal_json_response is not None
-
-    def test_import_url(self):
-        """Test that url module can be imported."""
-        from anncsu.common.utils import url
-
-        assert url is not None
-
-    def test_import_values(self):
-        """Test that values module can be imported."""
-        from anncsu.common.utils import values
-
-        assert values is not None
+        # They should be the same objects
+        assert RetryConfig is SDKRetryConfig
+        assert FieldMetadata is SDKFieldMetadata
 
 
 if __name__ == "__main__":

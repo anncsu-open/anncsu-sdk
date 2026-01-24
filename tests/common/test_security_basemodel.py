@@ -7,8 +7,8 @@ and works with the security utility functions.
 import pytest
 from pydantic import BaseModel
 
+from anncsu.common.sdk.utils import get_security
 from anncsu.common.security import Security
-from anncsu.common.utils.security import get_security
 
 
 class TestSecurityBaseModelInheritance:
@@ -105,7 +105,7 @@ class TestSecurityMetadata:
 
     def test_security_bearer_has_metadata(self):
         """Test that bearer field has security metadata."""
-        from anncsu.common.utils.metadata import (
+        from anncsu.common.sdk.utils import (
             SecurityMetadata,
             find_field_metadata,
         )
@@ -121,7 +121,7 @@ class TestSecurityMetadata:
 
     def test_security_metadata_indicates_http_bearer(self):
         """Test that metadata correctly indicates HTTP Bearer authentication."""
-        from anncsu.common.utils.metadata import (
+        from anncsu.common.sdk.utils import (
             SecurityMetadata,
             find_field_metadata,
         )

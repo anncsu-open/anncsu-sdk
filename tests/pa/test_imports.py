@@ -156,32 +156,34 @@ class TestPaUsesCommonComponents:
         assert AnncsuBaseError is not None
 
 
-class TestBackwardCompatibility:
-    """Test backward compatibility with old import paths."""
+class TestPaUsesCommonSdk:
+    """Test that PA package correctly uses common SDK infrastructure.
 
-    def test_pa_still_has_utils_module(self):
-        """Test that anncsu.pa.utils still exists (for Speakeasy compatibility)."""
-        import anncsu.pa.utils
+    Note: After refactoring, PA no longer has its own types/ and utils/ modules.
+    These are now centralized in common/sdk/. Code in PA should import from
+    anncsu.common.sdk directly.
+    """
 
-        assert anncsu.pa.utils is not None
+    def test_pa_uses_common_sdk_types(self):
+        """Test that PA should use types from common/sdk/."""
+        from anncsu.common.sdk.types import BaseModel
 
-    def test_pa_still_has_types_module(self):
-        """Test that anncsu.pa.types still exists (for Speakeasy compatibility)."""
-        import anncsu.pa.types
-
-        assert anncsu.pa.types is not None
-
-    def test_can_import_basemodel_from_pa_types(self):
-        """Test that BaseModel can still be imported from pa.types."""
-        from anncsu.pa.types import BaseModel
-
+        # Verify we can import from the correct location
         assert BaseModel is not None
 
-    def test_can_import_retry_config_from_pa_utils(self):
-        """Test that RetryConfig can still be imported from pa.utils."""
-        from anncsu.pa.utils import RetryConfig
+    def test_pa_uses_common_sdk_utils(self):
+        """Test that PA should use utils from common/sdk/."""
+        from anncsu.common.sdk.utils import RetryConfig
 
+        # Verify we can import from the correct location
         assert RetryConfig is not None
+
+    def test_pa_uses_common_sdk_basesdk(self):
+        """Test that PA should use BaseSDK from common/sdk/."""
+        from anncsu.common.sdk import BaseSDK
+
+        # Verify we can import from the correct location
+        assert BaseSDK is not None
 
 
 class TestSdkConfiguration:
@@ -193,9 +195,9 @@ class TestSdkConfiguration:
 
         assert SDKConfiguration is not None
 
-    def test_import_base_sdk_from_pa(self):
-        """Test that BaseSDK can be imported from pa."""
-        from anncsu.pa.basesdk import BaseSDK
+    def test_import_base_sdk_from_common_sdk(self):
+        """Test that BaseSDK is imported from common/sdk/ (not pa/)."""
+        from anncsu.common.sdk import BaseSDK
 
         assert BaseSDK is not None
 
