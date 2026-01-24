@@ -2,7 +2,7 @@
 
 from .registration import init_hooks
 from .sdkhooks import SDKHooks
-from .types import (
+from anncsu.common.sdk.types import (
     AfterErrorContext,
     AfterErrorHook,
     AfterSuccessContext,

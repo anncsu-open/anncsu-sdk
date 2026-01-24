@@ -15,8 +15,8 @@ from authlib.jose import JWTClaims
 from authlib.jose.errors import ExpiredTokenError as AuthlibExpiredTokenError
 from pydantic import Field, model_validator
 
-from .types import BaseModel
-from .utils.metadata import FieldMetadata, SecurityMetadata
+from anncsu.common.sdk.types import BaseModel
+from anncsu.common.sdk.utils import FieldMetadata, SecurityMetadata
 
 
 def _decode_jwt_claims(token: str) -> JWTClaims | None:
