@@ -89,3 +89,59 @@ class AssertionInfo(BaseModel):
     purpose_id: str = Field(description="Purpose ID")
     validity_minutes: int = Field(description="Validity period in minutes")
     validity_days: float = Field(description="Validity period in days")
+
+
+# Coordinate Models
+class CoordinateUpdateResult(BaseModel):
+    """Result of a coordinate update operation."""
+
+    success: bool = Field(description="Whether the operation was successful")
+    id_richiesta: str | None = Field(
+        default=None, description="Request ID assigned by the API"
+    )
+    esito: str | None = Field(default=None, description="Operation outcome")
+    messaggio: str | None = Field(
+        default=None, description="Message associated with the outcome"
+    )
+    dati_count: int = Field(default=0, description="Number of data records returned")
+
+
+class CoordinateStatusResult(BaseModel):
+    """Result of a coordinate API status check."""
+
+    available: bool = Field(description="Whether the API is available")
+    status: str = Field(description="Status message from the API")
+    server_url: str = Field(description="Server URL being checked")
+    environment: str = Field(description="Environment (validation or production)")
+
+
+class OriginalCoordinates(BaseModel):
+    """Original coordinates saved before dry-run test."""
+
+    prognazacc: str = Field(description="Progressivo nazionale dell'accesso")
+    codcom: str = Field(description="Codice comune (Belfiore)")
+    civico: str | None = Field(default=None, description="Numero civico")
+    coord_x: str | None = Field(default=None, description="Coordinata X (longitude)")
+    coord_y: str | None = Field(default=None, description="Coordinata Y (latitude)")
+    quota: str | None = Field(default=None, description="Quota (altitude)")
+    metodo: str | None = Field(default=None, description="Metodo di rilevazione")
+
+
+class DryRunResult(BaseModel):
+    """Result of a coordinate dry-run operation."""
+
+    success: bool = Field(description="Whether the full dry-run cycle completed")
+    original_coordinates: OriginalCoordinates = Field(
+        description="Original coordinates before the test"
+    )
+    test_update: CoordinateUpdateResult = Field(description="Result of the test update")
+    restore: CoordinateUpdateResult | None = Field(
+        default=None, description="Result of the restore operation"
+    )
+    restore_failed: bool = Field(
+        default=False,
+        description="Whether restore failed (requires manual intervention)",
+    )
+    error_message: str | None = Field(
+        default=None, description="Error message if operation failed"
+    )

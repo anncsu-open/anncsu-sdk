@@ -36,6 +36,9 @@ anncsu auth status
 
 # 6. Use token in API calls (auto-refreshes if expired)
 curl -H "Authorization: Bearer $(anncsu auth token)" https://api.example.com
+
+# 7. Update coordinates for an access point
+anncsu coordinate update --codcom H501 --progr-civico 12345 --x 12.4963655 --y 41.9027835
 ```
 
 ## Commands
@@ -260,6 +263,220 @@ Usage with curl:
 ```bash
 curl -H "Authorization: Bearer $(anncsu auth token)" \
   https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1/esisteodonimo?codcom=H501
+```
+
+---
+
+### `anncsu coordinate` - Coordinate Management
+
+Manage geographic coordinates for access points (civici) in ANNCSU.
+
+#### `anncsu coordinate update`
+
+Update coordinates for an access point (civico):
+
+```bash
+anncsu coordinate update --codcom H501 --progr-civico 12345 --x 12.4963655 --y 41.9027835 --metodo 4
+```
+
+Output:
+```
+Operation successful! ID: abc123-def456
+
+┌─────────────────────────────────────────┐
+│ Field              │ Value              │
+├─────────────────────────────────────────┤
+│ ID Richiesta       │ abc123-def456      │
+│ Esito              │ OK                 │
+│ Messaggio          │ Operazione eseguita│
+│ Dati Restituiti    │ 1                  │
+└─────────────────────────────────────────┘
+```
+
+Options:
+- `--codcom, -c` - Codice comune (Belfiore code, e.g. H501 for Roma) **[required]**
+- `--progr-civico, -p` - Progressivo civico (access progressive number) **[required]**
+- `--x` - Coordinata X (longitude). Valid range for Italy: 6.0-18.0
+- `--y` - Coordinata Y (latitude). Valid range for Italy: 36.0-47.0
+- `--z` - Quota (altitude in meters)
+- `--metodo, -m` - Metodo di rilevazione (1-4)
+- `--token-endpoint, -e` - PDND token endpoint URL
+- `--server-url, -s` - API server URL (defaults to validation environment)
+- `--validation/--production` - Use validation (UAT) or production environment
+- `--no-verify-ssl` - Disable SSL certificate verification (use with caution)
+- `--json` - Output as JSON
+
+Example with JSON output:
+```bash
+anncsu coordinate update --codcom H501 --progr-civico 12345 --x 12.4963655 --y 41.9027835 --json
+```
+
+Output:
+```json
+{
+  "success": true,
+  "id_richiesta": "abc123-def456",
+  "esito": "OK",
+  "messaggio": "Operazione eseguita con successo",
+  "dati_count": 1
+}
+```
+
+#### `anncsu coordinate status`
+
+Check the status of the Coordinate API service:
+
+```bash
+anncsu coordinate status
+```
+
+Output:
+```
+Coordinate API Status - Validation (UAT)
+
+┌─────────────────────────────────────────┐
+│ Property           │ Value              │
+├─────────────────────────────────────────┤
+│ Status             │ OK                 │
+│ Server             │ https://modipa-val…│
+│ Response           │ OK                 │
+└─────────────────────────────────────────┘
+```
+
+Options:
+- `--token-endpoint, -e` - PDND token endpoint URL
+- `--server-url, -s` - API server URL
+- `--validation/--production` - Use validation (UAT) or production environment
+- `--no-verify-ssl` - Disable SSL certificate verification
+- `--json` - Output as JSON
+
+Example checking production environment:
+```bash
+anncsu coordinate status --production
+```
+
+Example with JSON output:
+```bash
+anncsu coordinate status --json
+```
+
+Output:
+```json
+{
+  "available": true,
+  "status": "OK",
+  "server_url": "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate/anncsuaccessi/v1",
+  "environment": "validation"
+}
+```
+
+#### `anncsu coordinate dry-run`
+
+Perform a test coordinate update cycle: search for an access point, update coordinates, then immediately restore the original values. This is useful for testing that authentication and configuration are correct without permanently altering data.
+
+```bash
+anncsu coordinate dry-run --codcom H501 --denom VklBIFJPTUE=
+```
+
+The command performs these steps:
+1. **Search** - Find an access point using the consultazione API
+2. **Test Update** - Update the coordinates (using same values)
+3. **Restore** - Immediately restore the original coordinates
+
+Output:
+```
+Step 1: Searching for access point...
+
+Found access point: prognazacc=123456789
+  Civico: 1
+  Coord X: 12.4963655
+  Coord Y: 41.9027835
+  Quota: 21
+  Metodo: 4
+
+Step 2: Performing test update...
+
+Test update completed: esito=OK
+
+Step 3: Restoring original coordinates...
+
+Restore completed: esito=OK
+
+Dry-run Summary:
+
+┌─────────────────────────────────────────────────────────────┐
+│ Step         │ Status │ Details                             │
+├─────────────────────────────────────────────────────────────┤
+│ Search       │ OK     │ Found prognazacc=123456789          │
+│ Test Update  │ OK     │ Operazione completata               │
+│ Restore      │ OK     │ Operazione completata               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Options:
+- `--codcom, -c` - Codice comune (Belfiore code, e.g. H501 for Roma) **[required]**
+- `--denom, -d` - Denominazione esatta dell'odonimo - base64 encoded **[required]**
+- `--accparz, -a` - Valore anche parziale del civico (default: '1')
+- `--token-endpoint, -e` - PDND token endpoint URL
+- `--server-url, -s` - API server URL (defaults to validation environment)
+- `--validation/--production` - Use validation (UAT) or production environment
+- `--no-verify-ssl` - Disable SSL certificate verification (use with caution)
+- `--json` - Output as JSON
+
+Example with specific civico number:
+```bash
+anncsu coordinate dry-run --codcom H501 --denom VklBIFJPTUE= --accparz 10
+```
+
+Example with JSON output:
+```bash
+anncsu coordinate dry-run --codcom H501 --denom VklBIFJPTUE= --json
+```
+
+Output:
+```json
+{
+  "success": true,
+  "original_coordinates": {
+    "prognazacc": "123456789",
+    "codcom": "H501",
+    "civico": "1",
+    "coord_x": "12.4963655",
+    "coord_y": "41.9027835",
+    "quota": "21",
+    "metodo": "4"
+  },
+  "test_update": {
+    "success": true,
+    "id_richiesta": "REQ-123",
+    "esito": "OK",
+    "messaggio": "Operazione completata",
+    "dati_count": 0
+  },
+  "restore": {
+    "success": true,
+    "id_richiesta": "REQ-456",
+    "esito": "OK",
+    "messaggio": "Operazione completata",
+    "dati_count": 0
+  },
+  "restore_failed": false,
+  "error_message": null
+}
+```
+
+**Warning Handling**: If the restore operation fails, the command will display a warning with the original coordinate values so they can be manually restored:
+
+```
+WARNING: Restore failed: <error message>
+
+Original coordinates to restore manually:
+  prognazacc: 123456789
+  codcom: H501
+  coord_x: 12.4963655
+  coord_y: 41.9027835
+  quota: 21
+  metodo: 4
 ```
 
 ---

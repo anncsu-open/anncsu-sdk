@@ -10,7 +10,12 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from anncsu.cli.commands import assertion_app, auth_app, config_app
+from anncsu.cli.commands import (
+    assertion_app,
+    auth_app,
+    config_app,
+    coordinate_app,
+)
 
 # Create main app
 app = typer.Typer(
@@ -26,6 +31,11 @@ app.add_typer(
 )
 app.add_typer(config_app, name="config", help="Configuration management")
 app.add_typer(assertion_app, name="assertion", help="Client assertion utilities")
+app.add_typer(
+    coordinate_app,
+    name="coordinate",
+    help="Coordinate management (update access points)",
+)
 
 console = Console()
 
