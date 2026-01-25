@@ -60,6 +60,7 @@ class BaseSDK:
         ] = None,
         url_override: Optional[str] = None,
         http_headers: Optional[Mapping[str, str]] = None,
+        allow_empty_value: Optional[bool] = None,
     ) -> httpx.Request:
         client = self.sdk_configuration.async_client
         return self._build_request_with_client(
@@ -102,6 +103,7 @@ class BaseSDK:
         ] = None,
         url_override: Optional[str] = None,
         http_headers: Optional[Mapping[str, str]] = None,
+        allow_empty_value: Optional[bool] = None,
     ) -> httpx.Request:
         client = self.sdk_configuration.client
         return self._build_request_with_client(

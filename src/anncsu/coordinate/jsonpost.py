@@ -5,8 +5,8 @@ from typing import Any, Mapping, Optional, Union
 from anncsu.common.hooks import HookContext
 from anncsu.common.sdk import BaseSDK, utils
 from anncsu.common.sdk.types import UNSET, OptionalNullable
-from anncsu.common.sdk.utils import (
-    get_security_from_env,
+from anncsu.common.sdk.utils import get_security_from_env
+from anncsu.common.sdk.utils.unmarshal_json_response import (
     unmarshal_json_response,
 )
 
