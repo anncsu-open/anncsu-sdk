@@ -37,6 +37,7 @@ class TestResponseValidator:
     def spec_path(self):
         """Fixture providing path to test OpenAPI spec."""
         # Use the actual PA spec from the SDK (dev environment)
+        # Path: tests/validation/test_response_validator.py -> project root -> oas/dev/
         return (
             Path(__file__).parent.parent.parent
             / "oas"

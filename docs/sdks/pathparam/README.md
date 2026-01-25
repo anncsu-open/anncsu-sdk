@@ -24,7 +24,7 @@ Ritorna un valore boolean dell'esistenza dell'odonimo in ANNCSU
 
 <!-- UsageSnippet language="python" operationID="esisteOdonimoGetPathParam" method="get" path="/esisteodonimo/{codcom}/{denom}" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -66,7 +66,7 @@ Ritorna un valore boolean dell'esistenza dell'accesso in ANNCSU
 
 <!-- UsageSnippet language="python" operationID="esisteAccessoGetPathParam" method="get" path="/esisteaccesso/{codcom}/{denom}/{accesso}" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -109,7 +109,7 @@ Ritorna un elenco di odonimi presenti in ANNCSU
 
 <!-- UsageSnippet language="python" operationID="elencoOdonimiGetPathParam" method="get" path="/elencoodonimi/{codcom}/{denomparz}" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -152,7 +152,7 @@ Ritorna un elenco di accessi presenti in ANNCSU
 
 <!-- UsageSnippet language="python" operationID="elencoAccessiGetPathParam" method="get" path="/elencoaccessi/{codcom}/{denom}/{accparz}" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -196,7 +196,7 @@ Ritorna un elenco di odonimi presenti in ANNCSU incluso il progressivo nazionale
 
 <!-- UsageSnippet language="python" operationID="elencoodonimiprogGetPathParam" method="get" path="/elencoodonimiprog/{codcom}/{denomparz}" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -239,7 +239,7 @@ Ritorna un elenco di accessi presenti in ANNCSU incluso il progressivo nazionale
 
 <!-- UsageSnippet language="python" operationID="elencoaccessiprogGetPathParam" method="get" path="/elencoaccessiprog/{prognaz}/{accparz}" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -282,7 +282,7 @@ Cerca in ANNCSU un odonimo per progressivo nazionale e ne ritorna i dati
 
 <!-- UsageSnippet language="python" operationID="prognazareaGetPathParam" method="get" path="/prognazarea/{prognaz}" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -324,7 +324,7 @@ Cerca in ANNCSU un accesso per progressivo nazionale accesso e ne ritorna i dati
 
 <!-- UsageSnippet language="python" operationID="prognazaccGetPathParam" method="get" path="/prognazacc/{prognazacc}" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:

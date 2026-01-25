@@ -93,9 +93,9 @@ It's also possible to write a standalone Python script without needing to set up
 # ]
 # ///
 
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
-sdk = Anncsu(
+sdk = AnncsuConsultazione(
   # SDK arguments
 )
 
@@ -123,7 +123,7 @@ Generally, the SDK will work well with most IDEs out of the box. However, when u
 
 ```python
 # Synchronous Example
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -139,7 +139,7 @@ with Anncsu() as a_client:
 The same SDK client can also be used to make asychronous requests by importing asyncio.
 ```python
 # Asynchronous Example
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 import asyncio
 
 async def main():
@@ -174,7 +174,7 @@ The SDK supports the complete PDND authentication flow:
 
 ```python
 from pathlib import Path
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import (
     # Step 1: Client Assertion
     ClientAssertionConfig,
@@ -207,7 +207,7 @@ token_response = get_access_token(token_config)
 
 # Step 3: Use access token for API calls
 security = Security(bearer=token_response.access_token)
-sdk = Anncsu(security=security)
+sdk = AnncsuConsultazione(security=security)
 
 response = sdk.queryparam.esiste_odonimo_get_query_param(
     codcom="H501",
@@ -220,11 +220,11 @@ response = sdk.queryparam.esiste_odonimo_get_query_param(
 If you already have an access token:
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 security = Security(bearer="your-access-token")
-sdk = Anncsu(security=security)
+sdk = AnncsuConsultazione(security=security)
 
 response = sdk.queryparam.esiste_odonimo_get_query_param(
     codcom="H501",
@@ -283,7 +283,7 @@ The SDK supports loading configuration from environment variables or a `.env` fi
 ```python
 from anncsu.common.config import ClientAssertionSettings
 from anncsu.common import create_client_assertion, TokenConfig, get_access_token, Security
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 # Automatically loads from environment variables or .env file
 settings = ClientAssertionSettings()
@@ -297,7 +297,7 @@ token_response = get_access_token(TokenConfig(
 ))
 
 # Use with SDK
-sdk = Anncsu(security=Security(bearer=token_response.access_token))
+sdk = AnncsuConsultazione(security=Security(bearer=token_response.access_token))
 ```
 
 #### Required Environment Variables (prefix: `PDND_`)
@@ -391,7 +391,7 @@ Some of the endpoints in this SDK support retries. If you use the SDK without an
 
 To change the default retry strategy for a single API call, simply provide a `RetryConfig` object to the call:
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common.utils import BackoffStrategy, RetryConfig
 
 
@@ -407,7 +407,7 @@ with Anncsu() as a_client:
 
 If you'd like to override the default retry strategy for all operations that support retries, you can use the `retry_config` optional parameter when initializing the SDK:
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common.utils import BackoffStrategy, RetryConfig
 
 
@@ -439,7 +439,7 @@ with Anncsu(
 
 ### Example
 ```python
-from anncsu.pa import Anncsu, errors
+from anncsu.pa import AnncsuConsultazione, errors
 
 
 with Anncsu() as a_client:
@@ -610,7 +610,7 @@ with Anncsu() as a_client:
 
 The default server can be overridden globally by passing a URL to the `server_url: str` optional parameter when initializing the SDK client instance. For example:
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu(
@@ -631,10 +631,10 @@ When working with the UAT (User Acceptance Testing) environment, you may need to
 #### Basic UAT Configuration
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
-sdk = Anncsu(
+sdk = AnncsuConsultazione(
     security=Security(bearer_auth=token_response.access_token),
     server_url="https://modipa-uat.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",
 )
@@ -646,13 +646,13 @@ The UAT environment may use certificates that are not trusted by your system's c
 
 ```python
 import httpx
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 # Create HTTP client with SSL verification disabled
 client = httpx.Client(verify=False)
 
-sdk = Anncsu(
+sdk = AnncsuConsultazione(
     security=Security(bearer_auth=token_response.access_token),
     server_url="https://modipa-uat.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",
     client=client,
@@ -669,13 +669,13 @@ For async operations, also configure the async client:
 
 ```python
 import httpx
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 client = httpx.Client(verify=False)
 async_client = httpx.AsyncClient(verify=False)
 
-sdk = Anncsu(
+sdk = AnncsuConsultazione(
     security=Security(bearer_auth=token_response.access_token),
     server_url="https://modipa-uat.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",
     client=client,
@@ -692,7 +692,7 @@ Here's a complete example for UAT environment with PDND authentication:
 ```python
 import httpx
 from pathlib import Path
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import (
     ClientAssertionConfig,
     create_client_assertion,
@@ -723,7 +723,7 @@ token_response = get_access_token(token_config)
 # Step 3: Create SDK with UAT configuration
 client = httpx.Client(verify=False)  # Only for UAT!
 
-sdk = Anncsu(
+sdk = AnncsuConsultazione(
     security=Security(bearer_auth=token_response.access_token),
     server_url="https://modipa-uat.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",
     client=client,
@@ -747,16 +747,16 @@ This allows you to wrap the client with your own custom logic, such as adding cu
 
 For example, you could specify a header for every request that this sdk makes as follows:
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 import httpx
 
 http_client = httpx.Client(headers={"x-custom-header": "someValue"})
-s = Anncsu(client=http_client)
+s = AnncsuConsultazione(client=http_client)
 ```
 
 or you could wrap the client with your own custom logic:
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.pa.httpclient import AsyncHttpClient
 import httpx
 
@@ -815,7 +815,7 @@ class CustomClient(AsyncHttpClient):
             extensions=extensions,
         )
 
-s = Anncsu(async_client=CustomClient(httpx.AsyncClient()))
+s = AnncsuConsultazione(async_client=CustomClient(httpx.AsyncClient()))
 ```
 <!-- End Custom HTTP Client [http-client] -->
 
@@ -827,7 +827,7 @@ The `Anncsu` class implements the context manager protocol and registers a final
 [context-manager]: https://docs.python.org/3/reference/datamodel.html#context-managers
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 def main():
 
     with Anncsu() as a_client:
@@ -849,11 +849,11 @@ You can setup your SDK to emit debug logs for SDK requests and responses.
 
 You can pass your own logger class directly into your SDK.
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 import logging
 
 logging.basicConfig(level=logging.DEBUG)
-s = Anncsu(debug_logger=logging.getLogger("anncsu"))
+s = AnncsuConsultazione(debug_logger=logging.getLogger("anncsu"))
 ```
 
 You can also enable a default debug logger by setting an environment variable `ANNCSU_DEBUG` to true.
@@ -892,14 +892,14 @@ The `anncsu.common` package contains shared primitives used across all ANNCSU AP
 When using advanced features like retry configuration, import from `anncsu.common`:
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common.utils import BackoffStrategy, RetryConfig  # Shared utilities
 ```
 
 For regular SDK usage, you only need to import from `anncsu.pa`:
 
 ```python
-from anncsu.pa import Anncsu  # All you need for basic usage
+from anncsu.pa import AnncsuConsultazione  # All you need for basic usage
 ```
 
 ### Multiple API Support

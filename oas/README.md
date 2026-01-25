@@ -24,11 +24,11 @@ Contains the OpenAPI specification for the PDND validation/test environment:
 
 **Usage in SDK**:
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 security = Security(bearer="your-validation-pdnd-token")
-sdk = Anncsu(
+sdk = AnncsuConsultazione(
     security=security,
     server_url="https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1"
 )
@@ -45,12 +45,12 @@ Will contain the OpenAPI specification for the production environment:
 
 **When available, usage in SDK**:
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 security = Security(bearer="your-production-pdnd-token")
 # SDK uses production URL by default, or specify explicitly:
-sdk = Anncsu(
+sdk = AnncsuConsultazione(
     security=security,
     server_url="https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1"
 )
@@ -89,16 +89,16 @@ You can validate API responses against the OpenAPI spec:
 
 ```python
 from pathlib import Path
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 # For dev/validation environment:
-sdk = Anncsu(
+sdk = AnncsuConsultazione(
     validate_responses=True,
     openapi_spec_path=Path("oas/dev/Specifica API - ANNCSU – Consultazione per le PA.yaml")
 )
 
 # For production (when available):
-# sdk = Anncsu(
+# sdk = AnncsuConsultazione(
 #     validate_responses=True,
 #     openapi_spec_path=Path("oas/prod/Specifica API - ANNCSU – Consultazione per le PA.yaml")
 # )

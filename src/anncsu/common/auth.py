@@ -387,7 +387,7 @@ class PDNDAuthManager:
         Example:
             >>> auth = PDNDAuthManager(settings=settings, token_endpoint=endpoint)
             >>> security = auth.get_security()
-            >>> sdk = Anncsu(security=security)
+            >>> sdk = AnncsuConsultazione(security=security)
         """
         token = self.get_access_token()
         return Security(bearer=token, validate_expiration=validate_expiration)

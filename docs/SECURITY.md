@@ -13,14 +13,14 @@ All ANNCSU APIs share the same authentication mechanism:
 ## Quick Start
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 # Create security configuration with your PDND voucher
 security = Security(bearer="your-pdnd-voucher-token")
 
 # Initialize SDK with security
-sdk = Anncsu(security=security)
+sdk = AnncsuConsultazione(security=security)
 
 # Make authenticated requests
 response = sdk.queryparam.esiste_odonimo_get_query_param(
@@ -463,14 +463,14 @@ print(f"Expires In: {token_response.expires_in} seconds")
 Use the access token to authenticate API requests:
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 # Create security with the access token
 security = Security(bearer=token_response.access_token)
 
 # Initialize SDK
-sdk = Anncsu(security=security)
+sdk = AnncsuConsultazione(security=security)
 
 # Make authenticated requests
 response = sdk.queryparam.esiste_odonimo_get_query_param(
@@ -485,7 +485,7 @@ Here's the full authentication workflow in one place:
 
 ```python
 from pathlib import Path
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import (
     # Client Assertion
     ClientAssertionConfig,
@@ -518,7 +518,7 @@ token_response = get_access_token(token_config)
 
 # Step 3: Use access token for API calls
 security = Security(bearer=token_response.access_token)
-sdk = Anncsu(security=security)
+sdk = AnncsuConsultazione(security=security)
 
 response = sdk.queryparam.esiste_odonimo_get_query_param(
     codcom="H501",
@@ -549,14 +549,14 @@ token_response = asyncio.run(get_token())
 ## Configure SDK with Security
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 # Create security with your voucher
 security = Security(bearer="your-voucher-token")
 
 # Initialize SDK
-sdk = Anncsu(security=security)
+sdk = AnncsuConsultazione(security=security)
 ```
 
 ### 3. Make Authenticated Requests
@@ -576,7 +576,7 @@ response = sdk.queryparam.esiste_odonimo_get_query_param(
 PDND vouchers have an expiration time. Handle token refresh in your application using the built-in expiration checking:
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security, TokenExpiredError
 
 class TokenManager:
@@ -620,7 +620,7 @@ class TokenManager:
 token_manager = TokenManager(token_config, assertion_config)
 
 # Get SDK with auto-refreshing token
-sdk = Anncsu(security=token_manager.get_security())
+sdk = AnncsuConsultazione(security=token_manager.get_security())
 
 # For long-running applications, call get_security() before each request
 # or implement automatic refresh in your HTTP client
@@ -650,14 +650,14 @@ def get_authenticated_sdk(access_token):
 If you need different tokens for different requests:
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 # SDK 1 with token A
-sdk1 = Anncsu(security=Security(bearer="token-a"))
+sdk1 = AnncsuConsultazione(security=Security(bearer="token-a"))
 
 # SDK 2 with token B
-sdk2 = Anncsu(security=Security(bearer="token-b"))
+sdk2 = AnncsuConsultazione(security=Security(bearer="token-b"))
 
 # Different tokens for different requests
 response1 = sdk1.queryparam.esiste_odonimo_get_query_param(...)
@@ -671,11 +671,11 @@ The same `Security` class works for all ANNCSU API specifications:
 ### Consultazione API
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 security = Security(bearer="your-pdnd-voucher")
-sdk = Anncsu(security=security)
+sdk = AnncsuConsultazione(security=security)
 
 # Query operations
 response = sdk.queryparam.esiste_odonimo_get_query_param(
@@ -704,12 +704,12 @@ security = Security(bearer="your-pdnd-voucher")
 Handle authentication failures gracefully:
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 from anncsu.common.errors import APIError
 
 security = Security(bearer="invalid-token")
-sdk = Anncsu(security=security)
+sdk = AnncsuConsultazione(security=security)
 
 try:
     response = sdk.queryparam.esiste_odonimo_get_query_param(
@@ -729,10 +729,10 @@ except APIError as e:
 ### Missing Token
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 # SDK without security (may fail for protected endpoints)
-sdk = Anncsu()
+sdk = AnncsuConsultazione()
 
 try:
     response = sdk.queryparam.esiste_odonimo_get_query_param(
@@ -780,7 +780,7 @@ except APIError as e:
 # Reuse the same Security instance
 # for multiple SDK instances
 security = Security(bearer=token)
-sdk1 = Anncsu(security=security)
+sdk1 = AnncsuConsultazione(security=security)
 sdk2 = AnotherANNCSUSDK(security=security)
 ```
 
@@ -839,7 +839,7 @@ Use test tokens in integration tests:
 
 ```python
 import os
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 def test_authenticated_request():
@@ -847,7 +847,7 @@ def test_authenticated_request():
     # Use test token from environment
     test_token = os.getenv("TEST_PDND_VOUCHER")
     security = Security(bearer=test_token)
-    sdk = Anncsu(security=security)
+    sdk = AnncsuConsultazione(security=security)
     
     response = sdk.queryparam.esiste_odonimo_get_query_param(
         codcom="H501",

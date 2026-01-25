@@ -53,7 +53,7 @@ FILES_TO_DELETE = [
     "utils/values.py",
 ]
 
-# Import replacements to apply
+# Import replacements to apply (order matters - more specific patterns first)
 IMPORT_REPLACEMENTS = [
     # Replace relative imports of basesdk
     (r"from \.basesdk import BaseSDK", "from anncsu.common.sdk import BaseSDK"),
@@ -104,7 +104,51 @@ IMPORT_REPLACEMENTS = [
         r"from anncsu\.common\.types import (.*)",
         r"from anncsu.common.sdk.types import \1",
     ),
+    # Replace bare anncsu.types with anncsu.common.sdk.types (for new packages)
+    (
+        r"from anncsu\.types import (.*)",
+        r"from anncsu.common.sdk.types import \1",
+    ),
+    # Replace bare anncsu.utils with anncsu.common.sdk.utils (for new packages)
+    (
+        r"from anncsu\.utils import (.*)",
+        r"from anncsu.common.sdk.utils import \1",
+    ),
+    (
+        r"from anncsu\.utils\.(\w+) import (.*)",
+        r"from anncsu.common.sdk.utils import \2",
+    ),
+    # Replace anncsu.errors with anncsu.common.errors (for new packages)
+    (
+        r"from anncsu\.errors import (.*)",
+        r"from anncsu.common.errors import \1",
+    ),
+    # Replace anncsu._hooks with anncsu.common.hooks (for new packages)
+    (
+        r"from anncsu\._hooks import (.*)",
+        r"from anncsu.common.hooks import \1",
+    ),
+    # Replace "from anncsu import models, utils" with relative imports
+    (
+        r"from anncsu import models, utils",
+        r"from . import models\nfrom anncsu.common.sdk import utils",
+    ),
+    (
+        r"from anncsu import errors, models, utils",
+        r"from . import errors, models\nfrom anncsu.common.sdk import utils",
+    ),
+    # Replace "from anncsu import models" with relative import
+    (r"from anncsu import models", r"from . import models"),
+    # Replace "from anncsu import errors" with relative import
+    (r"from anncsu import errors", r"from . import errors"),
+    # Replace internal module imports (e.g., from anncsu.status import Status)
+    # These need to become relative imports within the package
+    (r"from anncsu\.status import (.*)", r"from .status import \1"),
+    (r"from anncsu\.anncsu_2 import (.*)", r"from .anncsu_2 import \1"),
 ]
+
+# All known API packages
+ALL_PACKAGES = ["pa", "coordinate"]
 
 # Files that should NOT have their imports modified (except specific patterns)
 EXCLUDE_FILES = [
@@ -247,8 +291,7 @@ def main(
 
     if all_packages:
         # Process all known API packages
-        packages = ["pa"]  # Add more as they're created: "odonimi", "accessi", etc.
-        for pkg in packages:
+        for pkg in ALL_PACKAGES:
             deleted, modified = process_package(pkg, dry_run)
             total_deleted += deleted
             total_modified += modified

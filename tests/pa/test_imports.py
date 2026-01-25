@@ -28,16 +28,16 @@ class TestPaSdkImports:
     """Test imports of the main SDK class."""
 
     def test_import_anncsu_sdk(self):
-        """Test that Anncsu SDK can be imported."""
-        from anncsu.pa import Anncsu
+        """Test that AnncsuConsultazione SDK can be imported."""
+        from anncsu.pa import AnncsuConsultazione
 
-        assert Anncsu is not None
+        assert AnncsuConsultazione is not None
 
     def test_import_sdk_from_module(self):
         """Test that SDK can be imported from sdk module."""
-        from anncsu.pa.sdk import Anncsu
+        from anncsu.pa.sdk import AnncsuConsultazione
 
-        assert Anncsu is not None
+        assert AnncsuConsultazione is not None
 
 
 class TestPaEndpointImports:

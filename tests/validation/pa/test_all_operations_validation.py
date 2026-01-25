@@ -20,7 +20,7 @@ class TestEsisteOdonimoOperations:
     def spec_path(self):
         """Fixture providing path to OpenAPI spec."""
         return (
-            Path(__file__).parent.parent.parent
+            Path(__file__).parent.parent.parent.parent
             / "oas"
             / "dev"
             / "Specifica API - ANNCSU – Consultazione per le PA.yaml"
@@ -102,7 +102,7 @@ class TestEsisteAccessoOperations:
     def spec_path(self):
         """Fixture providing path to OpenAPI spec."""
         return (
-            Path(__file__).parent.parent.parent
+            Path(__file__).parent.parent.parent.parent
             / "oas"
             / "dev"
             / "Specifica API - ANNCSU – Consultazione per le PA.yaml"
@@ -164,7 +164,7 @@ class TestElencoOdonimiOperations:
     def spec_path(self):
         """Fixture providing path to OpenAPI spec."""
         return (
-            Path(__file__).parent.parent.parent
+            Path(__file__).parent.parent.parent.parent
             / "oas"
             / "dev"
             / "Specifica API - ANNCSU – Consultazione per le PA.yaml"
@@ -280,7 +280,7 @@ class TestElencoAccessiOperations:
     def spec_path(self):
         """Fixture providing path to OpenAPI spec."""
         return (
-            Path(__file__).parent.parent.parent
+            Path(__file__).parent.parent.parent.parent
             / "oas"
             / "dev"
             / "Specifica API - ANNCSU – Consultazione per le PA.yaml"
@@ -361,7 +361,7 @@ class TestElencoodonimiProgOperations:
     def spec_path(self):
         """Fixture providing path to OpenAPI spec."""
         return (
-            Path(__file__).parent.parent.parent
+            Path(__file__).parent.parent.parent.parent
             / "oas"
             / "dev"
             / "Specifica API - ANNCSU – Consultazione per le PA.yaml"
@@ -464,7 +464,7 @@ class TestElencoaccessiProgOperations:
     def spec_path(self):
         """Fixture providing path to OpenAPI spec."""
         return (
-            Path(__file__).parent.parent.parent
+            Path(__file__).parent.parent.parent.parent
             / "oas"
             / "dev"
             / "Specifica API - ANNCSU – Consultazione per le PA.yaml"
@@ -576,7 +576,7 @@ class TestPrognazAreaOperations:
     def spec_path(self):
         """Fixture providing path to OpenAPI spec."""
         return (
-            Path(__file__).parent.parent.parent
+            Path(__file__).parent.parent.parent.parent
             / "oas"
             / "dev"
             / "Specifica API - ANNCSU – Consultazione per le PA.yaml"
@@ -677,7 +677,7 @@ class TestPrognazAccOperations:
     def spec_path(self):
         """Fixture providing path to OpenAPI spec."""
         return (
-            Path(__file__).parent.parent.parent
+            Path(__file__).parent.parent.parent.parent
             / "oas"
             / "dev"
             / "Specifica API - ANNCSU – Consultazione per le PA.yaml"
@@ -805,7 +805,7 @@ class TestStatusOperation:
     def spec_path(self):
         """Fixture providing path to OpenAPI spec."""
         return (
-            Path(__file__).parent.parent.parent
+            Path(__file__).parent.parent.parent.parent
             / "oas"
             / "dev"
             / "Specifica API - ANNCSU – Consultazione per le PA.yaml"
@@ -850,7 +850,7 @@ class TestErrorResponsesAllOperations:
     def spec_path(self):
         """Fixture providing path to OpenAPI spec."""
         return (
-            Path(__file__).parent.parent.parent
+            Path(__file__).parent.parent.parent.parent
             / "oas"
             / "dev"
             / "Specifica API - ANNCSU – Consultazione per le PA.yaml"
