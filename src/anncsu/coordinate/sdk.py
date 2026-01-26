@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Callable, Dict, Optional, Union, cast
 
 import httpx
 
-from anncsu.common.hooks import SDKHooks
+from anncsu.common.hooks import HooksProvider, SDKHooks
 from anncsu.common.sdk import BaseSDK, utils
 from anncsu.common.sdk.httpclient import (
     AsyncHttpClient,
@@ -55,6 +55,7 @@ class AnncsuCoordinate(BaseSDK):
         retry_config: OptionalNullable[RetryConfig] = UNSET,
         timeout_ms: Optional[int] = None,
         debug_logger: Optional[Logger] = None,
+        hooks: Optional[HooksProvider] = None,
     ) -> None:
         r"""Instantiates the SDK configuring it with the provided parameters.
 
@@ -66,6 +67,9 @@ class AnncsuCoordinate(BaseSDK):
         :param async_client: The Async HTTP client to use for all asynchronous methods
         :param retry_config: The retry configuration to use for all supported methods
         :param timeout_ms: Optional request timeout applied to each operation in milliseconds
+        :param hooks: Optional pre-configured hooks provider for dependency injection.
+            If not provided, a new SDKHooks instance is created. Use this to inject
+            pre-configured hooks like ModIPreRequestHook for ModI header generation.
         """
         client_supplied = True
         if client is None:
@@ -108,12 +112,13 @@ class AnncsuCoordinate(BaseSDK):
             ),
         )
 
-        hooks = SDKHooks()
+        # Use injected hooks or create new ones (dependency injection pattern)
+        sdk_hooks = hooks if hooks is not None else SDKHooks()
 
         # pylint: disable=protected-access
-        self.sdk_configuration.__dict__["_hooks"] = hooks
+        self.sdk_configuration.__dict__["_hooks"] = sdk_hooks
 
-        self.sdk_configuration = hooks.sdk_init(self.sdk_configuration)
+        self.sdk_configuration = sdk_hooks.sdk_init(self.sdk_configuration)
 
         weakref.finalize(
             self,

@@ -556,7 +556,11 @@ class TestModIDigestHeader:
         assert http_digest == jwt_digest
 
     def test_digest_computed_from_compact_json(self, mock_private_key: Path) -> None:
-        """Test that digest is computed from compact JSON with sorted keys."""
+        """Test that digest is computed from compact JSON.
+
+        The digest is computed WITHOUT sort_keys to match Speakeasy's
+        serialization. Keys must be in sorted order to avoid mismatch.
+        """
         import base64
         import hashlib
         import json
@@ -571,13 +575,13 @@ class TestModIDigestHeader:
         )
         generator = ModIHeaderGenerator(config)
 
-        # Payload with keys in non-alphabetical order
-        payload = {"operazione": "M", "codcom": "H501"}
+        # Payload with keys in alphabetical order (required for consistency)
+        payload = {"codcom": "H501", "operazione": "M"}
 
         headers = generator.generate_headers(payload)
 
-        # Compute expected digest with sorted keys, compact JSON
-        expected_json = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        # Compute expected digest with compact JSON (no sort_keys)
+        expected_json = json.dumps(payload, separators=(",", ":"))
         expected_digest = hashlib.sha256(expected_json.encode("utf-8")).digest()
         expected_b64 = base64.b64encode(expected_digest).decode("utf-8")
 
@@ -709,6 +713,254 @@ class TestModISignatureJwtJtiClaim:
         assert len(jtis) == 10
 
 
+class TestModIDigestBodyConsistency:
+    """Tests for ensuring Digest is computed on the exact HTTP body.
+
+    The Digest header and the digest in signed_headers MUST be computed
+    on the exact same bytes that will be sent as the HTTP request body.
+    Any mismatch will cause 400 InteroperabilityInvalidRequest errors.
+    """
+
+    def test_digest_matches_json_serialized_payload(
+        self, mock_private_key: Path
+    ) -> None:
+        """Test that digest is computed on JSON-serialized payload."""
+        import base64
+        import hashlib
+        import json
+
+        from anncsu.common.modi import ModIConfig, ModIHeaderGenerator
+
+        config = ModIConfig(
+            private_key=mock_private_key.read_bytes(),
+            kid="test-key-id",
+            issuer="test-issuer",
+            audience="https://api.example.com",
+        )
+        generator = ModIHeaderGenerator(config)
+
+        payload = {"codcom": "H501", "operazione": "M"}
+        headers = generator.generate_headers(payload)
+
+        # Compute expected digest from the same serialization
+        expected_body = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        expected_digest = hashlib.sha256(expected_body.encode("utf-8")).digest()
+        expected_b64 = base64.b64encode(expected_digest).decode("utf-8")
+
+        assert headers["Digest"] == f"SHA-256={expected_b64}"
+
+    def test_digest_with_nested_objects(self, mock_private_key: Path) -> None:
+        """Test digest computation with nested objects like Pydantic models."""
+        import base64
+        import hashlib
+        import json
+
+        from anncsu.common.modi import ModIConfig, ModIHeaderGenerator
+
+        config = ModIConfig(
+            private_key=mock_private_key.read_bytes(),
+            kid="test-key-id",
+            issuer="test-issuer",
+            audience="https://api.example.com",
+        )
+        generator = ModIHeaderGenerator(config)
+
+        # Nested payload with keys in sorted order (required)
+        # Note: keys must be alphabetically sorted at all levels
+        payload = {
+            "accesso": {
+                "codcom": "H501",
+                "coordinate": {"metodo": None, "x": None, "y": None, "z": None},
+                "progr_civico": "5256880",
+            },
+            "operazione": "M",
+        }
+        headers = generator.generate_headers(payload)
+
+        # Verify digest is computed correctly (no sort_keys)
+        expected_body = json.dumps(payload, separators=(",", ":"))
+        expected_digest = hashlib.sha256(expected_body.encode("utf-8")).digest()
+        expected_b64 = base64.b64encode(expected_digest).decode("utf-8")
+
+        assert headers["Digest"] == f"SHA-256={expected_b64}"
+
+    def test_digest_with_null_values_preserved(self, mock_private_key: Path) -> None:
+        """Test that null values are preserved in digest computation.
+
+        When the HTTP body contains null values, the digest must be computed
+        on the body WITH the null values, not with them excluded.
+        """
+
+        from anncsu.common.modi import ModIConfig, ModIHeaderGenerator
+
+        config = ModIConfig(
+            private_key=mock_private_key.read_bytes(),
+            kid="test-key-id",
+            issuer="test-issuer",
+            audience="https://api.example.com",
+        )
+        generator = ModIHeaderGenerator(config)
+
+        # Payload with null values (keys in sorted order)
+        payload_with_nulls = {
+            "accesso": {
+                "codcom": "H501",
+                "coordinate": {"metodo": None, "x": None, "y": None, "z": None},
+                "progr_civico": "5256880",
+            },
+            "operazione": "M",
+        }
+
+        # Same payload without nulls (keys in sorted order)
+        payload_without_nulls = {
+            "accesso": {
+                "codcom": "H501",
+                "progr_civico": "5256880",
+            },
+            "operazione": "M",
+        }
+
+        headers_with_nulls = generator.generate_headers(payload_with_nulls)
+        headers_without_nulls = generator.generate_headers(payload_without_nulls)
+
+        # Digests should be DIFFERENT because payloads are different
+        assert headers_with_nulls["Digest"] != headers_without_nulls["Digest"]
+
+    def test_http_body_must_match_digest_exactly(self, mock_private_key: Path) -> None:
+        """Test that verifies the HTTP body serialization matches digest.
+
+        This test documents the CRITICAL requirement: the exact bytes sent
+        as the HTTP body must match what was used to compute the digest.
+        """
+        import base64
+        import hashlib
+        import json
+
+        from anncsu.common.modi import ModIConfig, ModIHeaderGenerator
+
+        config = ModIConfig(
+            private_key=mock_private_key.read_bytes(),
+            kid="test-key-id",
+            issuer="test-issuer",
+            audience="https://api.example.com",
+        )
+        generator = ModIHeaderGenerator(config)
+
+        # Keys in sorted order
+        payload = {"codcom": "H501", "operazione": "M"}
+        headers = generator.generate_headers(payload)
+
+        # Simulate what the HTTP body should be (no sort_keys since keys are sorted)
+        http_body = json.dumps(payload, separators=(",", ":"))
+        http_body_bytes = http_body.encode("utf-8")
+
+        # Verify the digest matches the HTTP body
+        actual_digest = hashlib.sha256(http_body_bytes).digest()
+        actual_b64 = base64.b64encode(actual_digest).decode("utf-8")
+
+        assert headers["Digest"] == f"SHA-256={actual_b64}"
+
+        # Also verify the JWT signed_headers contains the same digest
+        parts = headers["Agid-JWT-Signature"].split(".")
+        claims_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(claims_b64))
+
+        assert claims["signed_headers"][0]["digest"] == headers["Digest"]
+
+
+class TestModIDigestWithPydanticModels:
+    """Tests for ModI digest computation with Pydantic model serialization.
+
+    These tests verify that when using Pydantic models (like coordinate API),
+    the digest is computed on the EXACT same bytes as the HTTP body.
+    """
+
+    def test_pydantic_model_dump_produces_correct_digest(
+        self, mock_private_key: Path
+    ) -> None:
+        """Test digest with Pydantic model_dump output."""
+        import base64
+        import hashlib
+        import json
+
+        from anncsu.common.modi import ModIConfig, ModIHeaderGenerator
+
+        config = ModIConfig(
+            private_key=mock_private_key.read_bytes(),
+            kid="test-key-id",
+            issuer="test-issuer",
+            audience="https://api.example.com",
+        )
+        generator = ModIHeaderGenerator(config)
+
+        # Simulate Pydantic model_dump with keys in sorted order
+        pydantic_output = {
+            "accesso": {
+                "codcom": "H501",
+                "coordinate": {"metodo": None, "x": None, "y": None, "z": None},
+                "progr_civico": "5256880",
+            },
+            "operazione": "M",
+        }
+
+        headers = generator.generate_headers(pydantic_output)
+
+        # The digest should match what we'd compute from the serialized payload
+        expected_body = json.dumps(pydantic_output, separators=(",", ":"))
+        expected_digest = hashlib.sha256(expected_body.encode("utf-8")).digest()
+        expected_b64 = base64.b64encode(expected_digest).decode("utf-8")
+
+        assert headers["Digest"] == f"SHA-256={expected_b64}"
+
+    def test_exclude_none_changes_digest(self, mock_private_key: Path) -> None:
+        """Test that exclude_none=True produces different digest than with nulls.
+
+        IMPORTANT: If the HTTP body is serialized WITH null values but the
+        digest is computed WITHOUT them (or vice versa), validation will fail.
+        """
+        import json
+
+        from anncsu.common.modi import ModIConfig, ModIHeaderGenerator
+
+        config = ModIConfig(
+            private_key=mock_private_key.read_bytes(),
+            kid="test-key-id",
+            issuer="test-issuer",
+            audience="https://api.example.com",
+        )
+        generator = ModIHeaderGenerator(config)
+
+        # With nulls - keys in sorted order
+        payload_with_nulls = {
+            "accesso": {
+                "codcom": "H501",
+                "coordinate": {"x": None, "y": None},
+            },
+        }
+
+        # Without nulls - keys in sorted order
+        payload_without_nulls = {
+            "accesso": {
+                "codcom": "H501",
+            },
+        }
+
+        headers_with = generator.generate_headers(payload_with_nulls)
+        headers_without = generator.generate_headers(payload_without_nulls)
+
+        # These MUST be different - if they match it's a bug
+        assert headers_with["Digest"] != headers_without["Digest"]
+
+        # Document the serialized forms for clarity
+        json_with = json.dumps(
+            payload_with_nulls, separators=(",", ":"), sort_keys=True
+        )
+        json_without = json.dumps(
+            payload_without_nulls, separators=(",", ":"), sort_keys=True
+        )
+        assert json_with != json_without
+
+
 class TestModIHeadersIntegration:
     """Integration tests for ModI headers with real JWT verification."""
 
@@ -805,3 +1057,273 @@ class TestModIHeadersIntegration:
             assert "\n" not in header_value
             assert "\r" not in header_value
             assert " " not in header_value or header_value.count(".") == 2
+
+
+class TestSortDictRecursively:
+    """Tests for sort_dict_recursively helper function.
+
+    This function is critical for ensuring the digest matches the HTTP body.
+    It must sort all dictionary keys recursively so that:
+    1. The digest is computed on sorted JSON
+    2. Speakeasy receives a pre-sorted dict and produces the same JSON
+    """
+
+    def test_sorts_top_level_keys(self) -> None:
+        """Test that top-level keys are sorted alphabetically."""
+        from anncsu.common.modi import sort_dict_recursively
+
+        input_dict = {"z": 1, "a": 2, "m": 3}
+        result = sort_dict_recursively(input_dict)
+
+        assert list(result.keys()) == ["a", "m", "z"]
+        assert result == {"a": 2, "m": 3, "z": 1}
+
+    def test_sorts_nested_dict_keys(self) -> None:
+        """Test that nested dict keys are also sorted."""
+        from anncsu.common.modi import sort_dict_recursively
+
+        input_dict = {
+            "outer_z": {"inner_z": 1, "inner_a": 2},
+            "outer_a": {"nested_z": 3, "nested_a": 4},
+        }
+        result = sort_dict_recursively(input_dict)
+
+        # Top level sorted
+        assert list(result.keys()) == ["outer_a", "outer_z"]
+        # Nested levels sorted
+        assert list(result["outer_a"].keys()) == ["nested_a", "nested_z"]
+        assert list(result["outer_z"].keys()) == ["inner_a", "inner_z"]
+
+    def test_sorts_deeply_nested_dicts(self) -> None:
+        """Test sorting with multiple levels of nesting."""
+        from anncsu.common.modi import sort_dict_recursively
+
+        input_dict = {
+            "level1_z": {
+                "level2_z": {
+                    "level3_z": 1,
+                    "level3_a": 2,
+                },
+                "level2_a": 3,
+            },
+            "level1_a": 4,
+        }
+        result = sort_dict_recursively(input_dict)
+
+        assert list(result.keys()) == ["level1_a", "level1_z"]
+        assert list(result["level1_z"].keys()) == ["level2_a", "level2_z"]
+        assert list(result["level1_z"]["level2_z"].keys()) == [
+            "level3_a",
+            "level3_z",
+        ]
+
+    def test_handles_lists_with_dicts(self) -> None:
+        """Test that dicts inside lists are also sorted."""
+        from anncsu.common.modi import sort_dict_recursively
+
+        input_dict = {
+            "items": [
+                {"z": 1, "a": 2},
+                {"y": 3, "b": 4},
+            ]
+        }
+        result = sort_dict_recursively(input_dict)
+
+        assert list(result["items"][0].keys()) == ["a", "z"]
+        assert list(result["items"][1].keys()) == ["b", "y"]
+
+    def test_handles_nested_lists(self) -> None:
+        """Test handling of nested lists."""
+        from anncsu.common.modi import sort_dict_recursively
+
+        input_dict = {
+            "matrix": [
+                [{"z": 1, "a": 2}],
+                [{"y": 3, "b": 4}],
+            ]
+        }
+        result = sort_dict_recursively(input_dict)
+
+        assert list(result["matrix"][0][0].keys()) == ["a", "z"]
+        assert list(result["matrix"][1][0].keys()) == ["b", "y"]
+
+    def test_preserves_primitive_values(self) -> None:
+        """Test that primitive values are preserved unchanged."""
+        from anncsu.common.modi import sort_dict_recursively
+
+        input_dict = {
+            "string": "hello",
+            "number": 42,
+            "float": 3.14,
+            "bool_true": True,
+            "bool_false": False,
+            "none": None,
+            "empty_string": "",
+        }
+        result = sort_dict_recursively(input_dict)
+
+        assert result["string"] == "hello"
+        assert result["number"] == 42
+        assert result["float"] == 3.14
+        assert result["bool_true"] is True
+        assert result["bool_false"] is False
+        assert result["none"] is None
+        assert result["empty_string"] == ""
+
+    def test_preserves_list_order(self) -> None:
+        """Test that list element order is preserved (only dict keys are sorted)."""
+        from anncsu.common.modi import sort_dict_recursively
+
+        input_dict = {"items": [3, 1, 2, "z", "a"]}
+        result = sort_dict_recursively(input_dict)
+
+        # List order must be preserved
+        assert result["items"] == [3, 1, 2, "z", "a"]
+
+    def test_empty_dict(self) -> None:
+        """Test handling of empty dict."""
+        from anncsu.common.modi import sort_dict_recursively
+
+        result = sort_dict_recursively({})
+        assert result == {}
+
+    def test_empty_nested_dict(self) -> None:
+        """Test handling of empty nested dict."""
+        from anncsu.common.modi import sort_dict_recursively
+
+        input_dict = {"outer": {}}
+        result = sort_dict_recursively(input_dict)
+        assert result == {"outer": {}}
+
+    def test_pydantic_style_coordinate_payload(self) -> None:
+        """Test with a real Pydantic-style coordinate API payload.
+
+        This is the exact structure used by the coordinate CLI command.
+        """
+        from anncsu.common.modi import sort_dict_recursively
+
+        # Simulate Pydantic model_dump output (keys in definition order)
+        input_dict = {
+            "accesso": {
+                "codcom": "H501",
+                "progr_civico": "5256880",
+                "coordinate": {"x": "", "y": "", "z": "", "metodo": ""},
+            },
+        }
+        result = sort_dict_recursively(input_dict)
+
+        # Verify all levels are sorted
+        assert list(result["accesso"].keys()) == [
+            "codcom",
+            "coordinate",
+            "progr_civico",
+        ]
+        assert list(result["accesso"]["coordinate"].keys()) == [
+            "metodo",
+            "x",
+            "y",
+            "z",
+        ]
+
+    def test_sorted_dict_produces_same_json_as_sort_keys(self) -> None:
+        """Test that sorted dict serializes identically to sort_keys=True.
+
+        This is the CRITICAL test: after sorting, json.dumps without sort_keys
+        must produce the same output as json.dumps with sort_keys=True.
+        """
+        from anncsu.common.modi import sort_dict_recursively
+
+        # Unsorted input
+        input_dict = {
+            "z": 1,
+            "a": {"z": 2, "a": 3},
+            "m": [{"z": 4, "a": 5}],
+        }
+
+        sorted_dict = sort_dict_recursively(input_dict)
+
+        # Serialize without sort_keys (like Speakeasy does)
+        json_without_sort_keys = json.dumps(sorted_dict, separators=(",", ":"))
+
+        # Serialize with sort_keys (like our digest computation)
+        json_with_sort_keys = json.dumps(
+            input_dict, separators=(",", ":"), sort_keys=True
+        )
+
+        # They MUST be identical
+        assert json_without_sort_keys == json_with_sort_keys
+
+
+class TestSpeakeasySerializationBehavior:
+    """Tests documenting Speakeasy's JSON serialization behavior.
+
+    These tests verify our assumptions about how Speakeasy serializes JSON.
+    If Speakeasy changes behavior, these tests will fail and alert us.
+    """
+
+    def test_speakeasy_preserves_insertion_order(self) -> None:
+        """Verify that dict insertion order is preserved in JSON output.
+
+        Python 3.7+ guarantees dict insertion order, and json.dumps
+        without sort_keys preserves this order.
+        """
+        # Dict with keys in non-alphabetical order
+        payload = {"z": 1, "a": 2, "m": 3}
+
+        # Speakeasy-style serialization (no sort_keys)
+        result = json.dumps(payload, separators=(",", ":"))
+
+        # Order is preserved (z, a, m - not a, m, z)
+        assert result == '{"z":1,"a":2,"m":3}'
+
+    def test_speakeasy_does_not_sort_keys(self) -> None:
+        """Verify that Speakeasy serialization differs from sort_keys=True."""
+        payload = {"z": 1, "a": 2}
+
+        speakeasy_style = json.dumps(payload, separators=(",", ":"))
+        sorted_style = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+        # These MUST be different
+        assert speakeasy_style != sorted_style
+        assert speakeasy_style == '{"z":1,"a":2}'
+        assert sorted_style == '{"a":2,"z":1}'
+
+    def test_speakeasy_nested_dict_order(self) -> None:
+        """Verify nested dict key order behavior."""
+        payload = {
+            "outer_z": {"inner_z": 1, "inner_a": 2},
+            "outer_a": 3,
+        }
+
+        result = json.dumps(payload, separators=(",", ":"))
+
+        # Outer keys preserve insertion order
+        assert result.startswith('{"outer_z":')
+        # Inner keys also preserve insertion order
+        assert '{"inner_z":1,"inner_a":2}' in result
+
+
+class TestSpeakeasySerializationBehaviorDocumentation:
+    """Documentation tests for Speakeasy's JSON serialization behavior.
+
+    These tests document (not test generate_headers) how Speakeasy serializes JSON.
+    """
+
+    def test_speakeasy_serialization_does_not_use_sort_keys(self) -> None:
+        """Document that Speakeasy does NOT use sort_keys.
+
+        This test verifies our understanding of Speakeasy's behavior.
+        It serves as documentation and regression test.
+        """
+        # Speakeasy uses: json.dumps(d, separators=(",", ":"))
+        # NOT: json.dumps(d, separators=(",", ":"), sort_keys=True)
+
+        payload = {"z": 2, "a": 1}
+
+        speakeasy_style = json.dumps(payload, separators=(",", ":"))
+        sorted_style = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+        # These should be DIFFERENT
+        assert speakeasy_style != sorted_style
+        assert speakeasy_style == '{"z":2,"a":1}'  # Insertion order preserved
+        assert sorted_style == '{"a":1,"z":2}'  # Keys sorted

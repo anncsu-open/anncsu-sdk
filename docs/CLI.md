@@ -374,90 +374,187 @@ Output:
 
 Perform a test coordinate update cycle: search for an access point, update coordinates, then immediately restore the original values. This is useful for testing that authentication and configuration are correct without permanently altering data.
 
+**Two Modes of Operation:**
+
+1. **Direct mode (`--prognazacc`)**: Use the progressivo nazionale accesso directly.
+   Skips the odonimo search step - faster if you already know the prognazacc.
+
+2. **Search mode (`--codcom` + `--denom`)**: Search for odonimo then access point.
+   Use this when you only know the municipality code and street name.
+
 ```bash
+# Direct mode - use prognazacc directly (faster)
+anncsu coordinate dry-run --prognazacc 5256880
+
+# Search mode - search by municipality and street
 anncsu coordinate dry-run --codcom H501 --denom VklBIFJPTUE=
 ```
 
 The command performs these steps:
-1. **Search** - Find an access point using the consultazione API
+1. **Search/Lookup** - Find an access point (direct lookup or search via consultazione API)
 2. **Test Update** - Update the coordinates (using same values)
 3. **Restore** - Immediately restore the original coordinates
 
-Output:
+**Output (direct mode with `--prognazacc`):**
 ```
-Step 1: Searching for access point...
+Step 1: Looking up access point prognazacc=5256880...
 
-Found access point: prognazacc=123456789
+  Found: VIA ROMA
+  Progressivo nazionale odonimo: 907156
+
+Found access point: prognazacc=5256880
   Civico: 1
-  Coord X: 12.4963655
-  Coord Y: 41.9027835
-  Quota: 21
+  Coord X: 12.4922309
+  Coord Y: 41.8902102
+  Quota: 0
   Metodo: 4
 
 Step 2: Performing test update...
 
-Test update completed: esito=OK
+Test update completed: OK (esito=0)
 
 Step 3: Restoring original coordinates...
 
-Restore completed: esito=OK
+Restore completed: OK (esito=0)
 
 Dry-run Summary:
 
 ┌─────────────────────────────────────────────────────────────┐
 │ Step         │ Status │ Details                             │
 ├─────────────────────────────────────────────────────────────┤
-│ Search       │ OK     │ Found prognazacc=123456789          │
-│ Test Update  │ OK     │ Operazione completata               │
-│ Restore      │ OK     │ Operazione completata               │
+│ Search       │ OK     │ Found prognazacc=5256880            │
+│ Test Update  │ OK     │ 0                                   │
+│ Restore      │ OK     │ 0                                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Output (search mode with `--codcom` + `--denom`):**
+```
+Step 1: Searching for odonimo and access point...
+
+  Found odonimo: VIA ROMA
+  Progressivo nazionale: 907156
+
+Found access point: prognazacc=5256880
+  Civico: 1
+  Coord X: 12.4922309
+  Coord Y: 41.8902102
+  Quota: 0
+  Metodo: 4
+
+Step 2: Performing test update...
+
+Test update completed: OK (esito=0)
+
+Step 3: Restoring original coordinates...
+
+Restore completed: OK (esito=0)
+
+Dry-run Summary:
+
+┌─────────────────────────────────────────────────────────────┐
+│ Step         │ Status │ Details                             │
+├─────────────────────────────────────────────────────────────┤
+│ Search       │ OK     │ Found prognazacc=5256880            │
+│ Test Update  │ OK     │ 0                                   │
+│ Restore      │ OK     │ 0                                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 Options:
-- `--codcom, -c` - Codice comune (Belfiore code, e.g. H501 for Roma) **[required]**
-- `--denom, -d` - Denominazione esatta dell'odonimo - base64 encoded **[required]**
-- `--accparz, -a` - Valore anche parziale del civico (default: '1')
+- `--prognazacc, -p` - Progressivo nazionale accesso (alternative to --codcom/--denom)
+- `--codcom, -c` - Codice comune (Belfiore code, e.g. H501 for Roma). Required with --denom.
+- `--denom, -d` - Denominazione esatta dell'odonimo - base64 encoded. Required with --codcom.
+- `--accparz, -a` - Valore anche parziale del civico. Used with --codcom/--denom.
 - `--token-endpoint, -e` - PDND token endpoint URL
 - `--server-url, -s` - API server URL (defaults to validation environment)
 - `--validation/--production` - Use validation (UAT) or production environment
 - `--no-verify-ssl` - Disable SSL certificate verification (use with caution)
 - `--json` - Output as JSON
 
-Example with specific civico number:
+> **Note**: You must provide either `--prognazacc` OR both `--codcom` and `--denom`.
+> If `--prognazacc` is provided, `--codcom` and `--denom` are ignored.
+
+**Examples:**
+
+Direct mode - use prognazacc directly (faster):
+```bash
+anncsu coordinate dry-run --prognazacc 5256880
+```
+
+Search mode - search by municipality and street:
+```bash
+anncsu coordinate dry-run --codcom H501 --denom VklBIFJPTUE=
+```
+
+Search mode with specific civico number:
 ```bash
 anncsu coordinate dry-run --codcom H501 --denom VklBIFJPTUE= --accparz 10
 ```
 
-Example with JSON output:
+JSON output (works with both modes):
 ```bash
+anncsu coordinate dry-run --prognazacc 5256880 --json
 anncsu coordinate dry-run --codcom H501 --denom VklBIFJPTUE= --json
 ```
 
-Output:
+JSON output (direct mode - `codcom` may be `null`):
 ```json
 {
   "success": true,
   "original_coordinates": {
-    "prognazacc": "123456789",
-    "codcom": "H501",
+    "prognazacc": "5256880",
+    "codcom": null,
     "civico": "1",
-    "coord_x": "12.4963655",
-    "coord_y": "41.9027835",
-    "quota": "21",
+    "coord_x": "12.4922309",
+    "coord_y": "41.8902102",
+    "quota": "0",
     "metodo": "4"
   },
   "test_update": {
     "success": true,
     "id_richiesta": "REQ-123",
-    "esito": "OK",
-    "messaggio": "Operazione completata",
+    "esito": "0",
+    "messaggio": "OK",
     "dati_count": 0
   },
   "restore": {
     "success": true,
     "id_richiesta": "REQ-456",
-    "esito": "OK",
-    "messaggio": "Operazione completata",
+    "esito": "0",
+    "messaggio": "OK",
+    "dati_count": 0
+  },
+  "restore_failed": false,
+  "error_message": null
+}
+```
+
+JSON output (search mode - `codcom` is populated):
+```json
+{
+  "success": true,
+  "original_coordinates": {
+    "prognazacc": "5256880",
+    "codcom": "H501",
+    "civico": "1",
+    "coord_x": "12.4922309",
+    "coord_y": "41.8902102",
+    "quota": "0",
+    "metodo": "4"
+  },
+  "test_update": {
+    "success": true,
+    "id_richiesta": "REQ-123",
+    "esito": "0",
+    "messaggio": "OK",
+    "dati_count": 0
+  },
+  "restore": {
+    "success": true,
+    "id_richiesta": "REQ-456",
+    "esito": "0",
+    "messaggio": "OK",
     "dati_count": 0
   },
   "restore_failed": false,
@@ -478,6 +575,23 @@ Original coordinates to restore manually:
   quota: 21
   metodo: 4
 ```
+
+**Handling Access Points Without Coordinates**: When an access point has no existing coordinates (X, Y, and metodo are all empty), the dry-run uses temporary test coordinates for the update test:
+
+| Field | Test Value | Description |
+|-------|------------|-------------|
+| X | `12.4922309` | Longitude (Roma Colosseo area) |
+| Y | `41.8902102` | Latitude (Roma Colosseo area) |
+| Z | `null` | Altitude not specified |
+| metodo | `4` | "Altro" (other method) |
+
+After the test update, the command restores the original empty state. A note is displayed when test coordinates are used:
+
+```
+Note: Access has no coordinates. Using test coordinates (will be cleared after test).
+```
+
+**Note**: If the API does not allow restoring an access point without valid coordinates, the restore operation may fail. In this case, manual intervention may be needed.
 
 ---
 

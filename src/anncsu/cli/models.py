@@ -135,7 +135,10 @@ class OriginalCoordinates(BaseModel):
     """Original coordinates saved before dry-run test."""
 
     prognazacc: str = Field(description="Progressivo nazionale dell'accesso")
-    codcom: str = Field(description="Codice comune (Belfiore)")
+    codcom: str | None = Field(
+        default=None,
+        description="Codice comune (Belfiore). May be None when using --prognazacc directly.",
+    )
     civico: str | None = Field(default=None, description="Numero civico")
     coord_x: str | None = Field(default=None, description="Coordinata X (longitude)")
     coord_y: str | None = Field(default=None, description="Coordinata Y (latitude)")

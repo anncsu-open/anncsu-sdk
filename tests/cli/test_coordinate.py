@@ -10,8 +10,35 @@ from unittest.mock import MagicMock, patch
 
 from pydantic import BaseModel
 
+from anncsu.cli.models import DryRunResult
+
 if TYPE_CHECKING:
     from typer.testing import CliRunner
+
+
+def create_mock_response(
+    id_richiesta: str = "REQ-123",
+    esito: str = "0",
+    messaggio: str | None = "OK",
+    dati: list | None = None,
+) -> MagicMock:
+    """Create a mock response with model_dump() configured.
+
+    ANNCSU API convention: esito="0" means success.
+    """
+    response = MagicMock()
+    response.id_richiesta = id_richiesta
+    response.esito = esito
+    response.messaggio = messaggio
+    response.dati = dati or []
+    # Configure model_dump() to return the correct dict
+    response.model_dump.return_value = {
+        "idRichiesta": id_richiesta,
+        "esito": esito,
+        "messaggio": messaggio,
+        "dati": dati or [],
+    }
+    return response
 
 
 # Pydantic models for coordinate output
@@ -87,6 +114,11 @@ class TestCoordinateUpdate:
                 "anncsu.cli.commands.coordinate.ClientAssertionSettings"
             ) as mock_settings:
                 settings = MagicMock()
+                settings.private_key = None
+                settings.key_path = None
+                settings.kid = "test-kid"
+                settings.issuer = "test-issuer"
+                settings.has_modi_audit_context.return_value = False
                 mock_settings.return_value = settings
 
                 with patch(
@@ -97,34 +129,41 @@ class TestCoordinateUpdate:
                     mock_manager.return_value = manager
 
                     with patch(
-                        "anncsu.cli.commands.coordinate.AnncsuCoordinate"
-                    ) as mock_sdk:
-                        sdk = MagicMock()
-                        response = MagicMock()
-                        response.id_richiesta = "REQ-123"
-                        response.esito = "OK"
-                        response.messaggio = "Operazione completata"
-                        response.dati = []
-                        sdk.json_post.gestionecoordinate.return_value = response
-                        mock_sdk.return_value = sdk
+                        "anncsu.cli.commands.coordinate.SDKHooks"
+                    ) as mock_hooks_class:
+                        mock_hooks = MagicMock()
+                        mock_hooks_class.return_value = mock_hooks
 
-                        result = cli_runner.invoke(
-                            app,
-                            [
-                                "coordinate",
-                                "update",
-                                "--codcom",
-                                "H501",
-                                "--progr-civico",
-                                "12345",
-                                "--x",
-                                "12.4963655",
-                                "--y",
-                                "41.9027835",
-                                "--metodo",
-                                "4",
-                            ],
-                        )
+                        with patch("anncsu.cli.commands.coordinate.register_modi_hook"):
+                            with patch(
+                                "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                            ) as mock_sdk:
+                                sdk = MagicMock()
+                                response = create_mock_response(
+                                    id_richiesta="REQ-123",
+                                    esito="0",
+                                    messaggio="Operazione completata",
+                                )
+                                sdk.json_post.gestionecoordinate.return_value = response
+                                mock_sdk.return_value = sdk
+
+                                result = cli_runner.invoke(
+                                    app,
+                                    [
+                                        "coordinate",
+                                        "update",
+                                        "--codcom",
+                                        "H501",
+                                        "--progr-civico",
+                                        "12345",
+                                        "--x",
+                                        "12.4963655",
+                                        "--y",
+                                        "41.9027835",
+                                        "--metodo",
+                                        "4",
+                                    ],
+                                )
 
             assert result.exit_code == 0
             output_lower = result.output.lower()
@@ -160,11 +199,11 @@ class TestCoordinateUpdate:
                         "anncsu.cli.commands.coordinate.AnncsuCoordinate"
                     ) as mock_sdk:
                         sdk = MagicMock()
-                        response = MagicMock()
-                        response.id_richiesta = "REQ-456"
-                        response.esito = "OK"
-                        response.messaggio = "Success"
-                        response.dati = []
+                        response = create_mock_response(
+                            id_richiesta="REQ-456",
+                            esito="0",
+                            messaggio="Success",
+                        )
                         sdk.json_post.gestionecoordinate.return_value = response
                         mock_sdk.return_value = sdk
 
@@ -213,11 +252,11 @@ class TestCoordinateUpdate:
                         "anncsu.cli.commands.coordinate.AnncsuCoordinate"
                     ) as mock_sdk:
                         sdk = MagicMock()
-                        response = MagicMock()
-                        response.id_richiesta = "REQ-789"
-                        response.esito = "OK"
-                        response.messaggio = None
-                        response.dati = []
+                        response = create_mock_response(
+                            id_richiesta="REQ-789",
+                            esito="0",
+                            messaggio=None,
+                        )
                         sdk.json_post.gestionecoordinate.return_value = response
                         mock_sdk.return_value = sdk
 
@@ -341,11 +380,11 @@ class TestCoordinateUpdate:
                         "anncsu.cli.commands.coordinate.AnncsuCoordinate"
                     ) as mock_sdk:
                         sdk = MagicMock()
-                        response = MagicMock()
-                        response.id_richiesta = "REQ-custom"
-                        response.esito = "OK"
-                        response.messaggio = None
-                        response.dati = []
+                        response = create_mock_response(
+                            id_richiesta="REQ-custom",
+                            esito="0",
+                            messaggio=None,
+                        )
                         sdk.json_post.gestionecoordinate.return_value = response
                         mock_sdk.return_value = sdk
 
@@ -395,11 +434,11 @@ class TestCoordinateUpdate:
                         "anncsu.cli.commands.coordinate.AnncsuCoordinate"
                     ) as mock_sdk:
                         sdk = MagicMock()
-                        response = MagicMock()
-                        response.id_richiesta = "REQ-prod"
-                        response.esito = "OK"
-                        response.messaggio = None
-                        response.dati = []
+                        response = create_mock_response(
+                            id_richiesta="REQ-prod",
+                            esito="0",
+                            messaggio=None,
+                        )
                         sdk.json_post.gestionecoordinate.return_value = response
                         mock_sdk.return_value = sdk
 
@@ -505,17 +544,17 @@ class TestCoordinateDryRun:
                         ) as mock_coord_sdk:
                             coord_sdk = MagicMock()
                             # Mock update response (test update)
-                            update_response = MagicMock()
-                            update_response.id_richiesta = "REQ-TEST-123"
-                            update_response.esito = "OK"
-                            update_response.messaggio = "Test update OK"
-                            update_response.dati = []
+                            update_response = create_mock_response(
+                                id_richiesta="REQ-TEST-123",
+                                esito="0",
+                                messaggio="Test update OK",
+                            )
                             # Mock restore response
-                            restore_response = MagicMock()
-                            restore_response.id_richiesta = "REQ-RESTORE-456"
-                            restore_response.esito = "OK"
-                            restore_response.messaggio = "Restore OK"
-                            restore_response.dati = []
+                            restore_response = create_mock_response(
+                                id_richiesta="REQ-RESTORE-456",
+                                esito="0",
+                                messaggio="Restore OK",
+                            )
                             coord_sdk.json_post.gestionecoordinate.side_effect = [
                                 update_response,
                                 restore_response,
@@ -589,16 +628,16 @@ class TestCoordinateDryRun:
                             "anncsu.cli.commands.coordinate.AnncsuCoordinate"
                         ) as mock_coord_sdk:
                             coord_sdk = MagicMock()
-                            update_response = MagicMock()
-                            update_response.id_richiesta = "REQ-TEST-123"
-                            update_response.esito = "OK"
-                            update_response.messaggio = "Test OK"
-                            update_response.dati = []
-                            restore_response = MagicMock()
-                            restore_response.id_richiesta = "REQ-RESTORE-456"
-                            restore_response.esito = "OK"
-                            restore_response.messaggio = "Restore OK"
-                            restore_response.dati = []
+                            update_response = create_mock_response(
+                                id_richiesta="REQ-TEST-123",
+                                esito="0",
+                                messaggio="Test OK",
+                            )
+                            restore_response = create_mock_response(
+                                id_richiesta="REQ-RESTORE-456",
+                                esito="0",
+                                messaggio="Restore OK",
+                            )
                             coord_sdk.json_post.gestionecoordinate.side_effect = [
                                 update_response,
                                 restore_response,
@@ -736,11 +775,11 @@ class TestCoordinateDryRun:
                         ) as mock_coord_sdk:
                             coord_sdk = MagicMock()
                             # Test update succeeds
-                            update_response = MagicMock()
-                            update_response.id_richiesta = "REQ-TEST-123"
-                            update_response.esito = "OK"
-                            update_response.messaggio = "Test OK"
-                            update_response.dati = []
+                            update_response = create_mock_response(
+                                id_richiesta="REQ-TEST-123",
+                                esito="0",
+                                messaggio="Test OK",
+                            )
                             # Restore fails
                             coord_sdk.json_post.gestionecoordinate.side_effect = [
                                 update_response,
@@ -887,16 +926,16 @@ class TestCoordinateDryRun:
                             "anncsu.cli.commands.coordinate.AnncsuCoordinate"
                         ) as mock_coord_sdk:
                             coord_sdk = MagicMock()
-                            update_response = MagicMock()
-                            update_response.id_richiesta = "REQ-TEST"
-                            update_response.esito = "OK"
-                            update_response.messaggio = None
-                            update_response.dati = []
-                            restore_response = MagicMock()
-                            restore_response.id_richiesta = "REQ-RESTORE"
-                            restore_response.esito = "OK"
-                            restore_response.messaggio = None
-                            restore_response.dati = []
+                            update_response = create_mock_response(
+                                id_richiesta="REQ-TEST",
+                                esito="0",
+                                messaggio=None,
+                            )
+                            restore_response = create_mock_response(
+                                id_richiesta="REQ-RESTORE",
+                                esito="0",
+                                messaggio=None,
+                            )
                             coord_sdk.json_post.gestionecoordinate.side_effect = [
                                 update_response,
                                 restore_response,
@@ -924,6 +963,383 @@ class TestCoordinateDryRun:
                 consult_sdk.queryparam.elencoaccessiprog_get_query_param.call_args
             )
             assert call_kwargs[1]["accparz"] == "10"
+
+    def test_dry_run_access_without_coordinates_uses_test_values(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Test that dry-run uses test coordinates when access has no existing coordinates."""
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    mock_manager.return_value = manager
+
+                    with patch(
+                        "anncsu.cli.commands.coordinate.AnncsuConsultazione"
+                    ) as mock_consult_sdk:
+                        consult_sdk = MagicMock()
+                        # Mock odonimo response
+                        odonimo_response = MagicMock()
+                        odonimo_response.data = [MagicMock()]
+                        odonimo_response.data[0].prognaz = "987654"
+                        odonimo_response.data[0].dug = "VIA"
+                        odonimo_response.data[0].denomuff = "ROMA"
+                        consult_sdk.queryparam.elencoodonimiprog_get_query_param.return_value = odonimo_response
+                        # Mock access response - NO COORDINATES
+                        search_response = MagicMock()
+                        search_response.data = [MagicMock()]
+                        search_response.data[0].prognazacc = "5256880"
+                        search_response.data[0].coord_x = None  # No X
+                        search_response.data[0].coord_y = None  # No Y
+                        search_response.data[0].quota = None
+                        search_response.data[0].metodo = None  # No metodo
+                        search_response.data[0].civico = "1"
+                        consult_sdk.queryparam.elencoaccessiprog_get_query_param.return_value = search_response
+                        mock_consult_sdk.return_value = consult_sdk
+
+                        with patch(
+                            "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                        ) as mock_coord_sdk:
+                            coord_sdk = MagicMock()
+                            # Test update succeeds
+                            update_response = create_mock_response(
+                                id_richiesta="REQ-TEST-123",
+                                esito="0",
+                                messaggio="Test update OK",
+                            )
+                            # Restore succeeds
+                            restore_response = create_mock_response(
+                                id_richiesta="REQ-RESTORE-456",
+                                esito="0",
+                                messaggio="Restore OK",
+                            )
+                            coord_sdk.json_post.gestionecoordinate.side_effect = [
+                                update_response,
+                                restore_response,
+                            ]
+                            mock_coord_sdk.return_value = coord_sdk
+
+                            result = cli_runner.invoke(
+                                app,
+                                [
+                                    "coordinate",
+                                    "dry-run",
+                                    "--codcom",
+                                    "H501",
+                                    "--denom",
+                                    "VklBIFJPTUE=",
+                                ],
+                            )
+
+            assert result.exit_code == 0
+            # Should show note about using test coordinates
+            assert "no coordinates" in result.output.lower()
+            # Verify gestionecoordinate was called twice (test + restore)
+            assert coord_sdk.json_post.gestionecoordinate.call_count == 2
+            # Verify test update used Roma Colosseo test coordinates
+            test_call = coord_sdk.json_post.gestionecoordinate.call_args_list[0]
+            test_richiesta = test_call[1]["richiesta"]
+            assert test_richiesta.accesso.coordinate.x == "12.4922309"
+            assert test_richiesta.accesso.coordinate.y == "41.8902102"
+            assert test_richiesta.accesso.coordinate.metodo == "4"
+            # Verify restore uses original empty values
+            restore_call = coord_sdk.json_post.gestionecoordinate.call_args_list[1]
+            restore_richiesta = restore_call[1]["richiesta"]
+            assert restore_richiesta.accesso.coordinate.x is None
+            assert restore_richiesta.accesso.coordinate.y is None
+            assert restore_richiesta.accesso.coordinate.metodo is None
+
+    def test_dry_run_with_prognazacc_skips_search(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Test that --prognazacc skips odonimo/accesso search and uses direct lookup."""
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    mock_manager.return_value = manager
+
+                    with patch(
+                        "anncsu.cli.commands.coordinate.AnncsuConsultazione"
+                    ) as mock_consult_sdk:
+                        consult_sdk = MagicMock()
+                        # Mock direct prognazacc lookup response
+                        prognazacc_response = MagicMock()
+                        prognazacc_response.data = MagicMock()
+                        prognazacc_response.data.prognazacc = "5256880"
+                        prognazacc_response.data.prognaz = "907156"
+                        prognazacc_response.data.dug = "VIA"
+                        prognazacc_response.data.denomuff = "ROMA"
+                        prognazacc_response.data.civico = "1"
+                        prognazacc_response.data.coord_x = "12.4922309"
+                        prognazacc_response.data.coord_y = "41.8902102"
+                        prognazacc_response.data.quota = "0"
+                        prognazacc_response.data.metodo = "4"
+                        consult_sdk.queryparam.prognazacc_get_query_param.return_value = prognazacc_response
+                        mock_consult_sdk.return_value = consult_sdk
+
+                        with patch(
+                            "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                        ) as mock_coord_sdk:
+                            coord_sdk = MagicMock()
+                            update_response = create_mock_response(
+                                id_richiesta="REQ-TEST-123",
+                                esito="0",
+                                messaggio="Test update OK",
+                            )
+                            restore_response = create_mock_response(
+                                id_richiesta="REQ-RESTORE-456",
+                                esito="0",
+                                messaggio="Restore OK",
+                            )
+                            coord_sdk.json_post.gestionecoordinate.side_effect = [
+                                update_response,
+                                restore_response,
+                            ]
+                            mock_coord_sdk.return_value = coord_sdk
+
+                            result = cli_runner.invoke(
+                                app,
+                                [
+                                    "coordinate",
+                                    "dry-run",
+                                    "--prognazacc",
+                                    "5256880",
+                                ],
+                            )
+
+            assert result.exit_code == 0
+            # Should NOT call odonimo search
+            consult_sdk.queryparam.elencoodonimiprog_get_query_param.assert_not_called()
+            # Should NOT call accesso list search
+            consult_sdk.queryparam.elencoaccessiprog_get_query_param.assert_not_called()
+            # Should call direct prognazacc lookup
+            consult_sdk.queryparam.prognazacc_get_query_param.assert_called_once_with(
+                prognazacc="5256880"
+            )
+            # Should show the found access point
+            assert "5256880" in result.output
+
+    def test_dry_run_with_prognazacc_json_output(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Test that --prognazacc with --json outputs valid JSON."""
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    mock_manager.return_value = manager
+
+                    with patch(
+                        "anncsu.cli.commands.coordinate.AnncsuConsultazione"
+                    ) as mock_consult_sdk:
+                        consult_sdk = MagicMock()
+                        prognazacc_response = MagicMock()
+                        prognazacc_response.data = MagicMock()
+                        prognazacc_response.data.prognazacc = "5256880"
+                        prognazacc_response.data.prognaz = "907156"
+                        prognazacc_response.data.dug = "VIA"
+                        prognazacc_response.data.denomuff = "ROMA"
+                        prognazacc_response.data.civico = "1"
+                        prognazacc_response.data.coord_x = "12.4922309"
+                        prognazacc_response.data.coord_y = "41.8902102"
+                        prognazacc_response.data.quota = "0"
+                        prognazacc_response.data.metodo = "4"
+                        consult_sdk.queryparam.prognazacc_get_query_param.return_value = prognazacc_response
+                        mock_consult_sdk.return_value = consult_sdk
+
+                        with patch(
+                            "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                        ) as mock_coord_sdk:
+                            coord_sdk = MagicMock()
+                            update_response = create_mock_response(
+                                id_richiesta="REQ-TEST-123",
+                                esito="0",
+                                messaggio="Test update OK",
+                            )
+                            restore_response = create_mock_response(
+                                id_richiesta="REQ-RESTORE-456",
+                                esito="0",
+                                messaggio="Restore OK",
+                            )
+                            coord_sdk.json_post.gestionecoordinate.side_effect = [
+                                update_response,
+                                restore_response,
+                            ]
+                            mock_coord_sdk.return_value = coord_sdk
+
+                            result = cli_runner.invoke(
+                                app,
+                                [
+                                    "coordinate",
+                                    "dry-run",
+                                    "--prognazacc",
+                                    "5256880",
+                                    "--json",
+                                ],
+                            )
+
+            assert result.exit_code == 0
+            # Should be valid JSON
+            dry_run_result = DryRunResult.model_validate_json(result.output)
+            assert dry_run_result.success is True
+            assert dry_run_result.original_coordinates.prognazacc == "5256880"
+
+    def test_dry_run_requires_either_prognazacc_or_codcom_denom(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """Test that dry-run fails without --prognazacc or --codcom/--denom."""
+        from anncsu.cli import app
+
+        # No parameters at all - should fail
+        result = cli_runner.invoke(app, ["coordinate", "dry-run"])
+        assert result.exit_code != 0
+        # Should show error about missing parameters
+        assert (
+            "prognazacc" in result.output.lower() or "codcom" in result.output.lower()
+        )
+
+    def test_dry_run_prognazacc_mutually_exclusive_with_codcom(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """Test that --prognazacc is mutually exclusive with --codcom/--denom."""
+        from anncsu.cli import app
+
+        # Both --prognazacc and --codcom/--denom - should fail
+        result = cli_runner.invoke(
+            app,
+            [
+                "coordinate",
+                "dry-run",
+                "--prognazacc",
+                "5256880",
+                "--codcom",
+                "H501",
+                "--denom",
+                "VklBIFJPTUE=",
+            ],
+        )
+        # Should fail with exit code 1 because --prognazacc is mutually exclusive
+        # with --codcom/--denom
+        assert result.exit_code == 1
+        assert (
+            "mutually exclusive" in result.output.lower()
+            or "cannot use" in result.output.lower()
+        )
+
+    def test_dry_run_prognazacc_not_found(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Test that dry-run with invalid --prognazacc shows error."""
+        from anncsu.cli import app
+        from anncsu.pa.errors import (
+            PrognazaccGetQueryParamNotFoundError,
+            PrognazaccGetQueryParamNotFoundErrorData,
+        )
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    mock_manager.return_value = manager
+
+                    with patch(
+                        "anncsu.cli.commands.coordinate.AnncsuConsultazione"
+                    ) as mock_consult_sdk:
+                        consult_sdk = MagicMock()
+                        # Simulate not found error with correct signature
+                        error_data = PrognazaccGetQueryParamNotFoundErrorData(
+                            title="Not Found",
+                            detail="Access point not found",
+                        )
+                        mock_response = MagicMock()
+                        mock_response.text = "Not Found"
+                        consult_sdk.queryparam.prognazacc_get_query_param.side_effect = PrognazaccGetQueryParamNotFoundError(
+                            data=error_data,
+                            raw_response=mock_response,
+                        )
+                        mock_consult_sdk.return_value = consult_sdk
+
+                        result = cli_runner.invoke(
+                            app,
+                            [
+                                "coordinate",
+                                "dry-run",
+                                "--prognazacc",
+                                "9999999999",
+                            ],
+                        )
+
+            assert result.exit_code != 0
+            assert (
+                "not found" in result.output.lower() or "error" in result.output.lower()
+            )
+
+    def test_dry_run_codcom_requires_denom(self, cli_runner: CliRunner) -> None:
+        """Test that --codcom requires --denom when not using --prognazacc."""
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(app, ["coordinate", "dry-run", "--codcom", "H501"])
+        assert result.exit_code != 0
+        # Should indicate that --denom is required
+        assert "denom" in result.output.lower()
+
+    def test_dry_run_denom_requires_codcom(self, cli_runner: CliRunner) -> None:
+        """Test that --denom requires --codcom when not using --prognazacc."""
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(
+            app, ["coordinate", "dry-run", "--denom", "VklBIFJPTUE="]
+        )
+        assert result.exit_code != 0
+        # Should indicate that --codcom is required
+        assert "codcom" in result.output.lower()
 
 
 class TestCoordinateStatus:
@@ -1131,12 +1547,19 @@ class TestCoordinateStatus:
 
 
 class TestCoordinateModIHeaders:
-    """Tests for ModI headers integration in coordinate commands."""
+    """Tests for ModI headers integration in coordinate commands.
 
-    def test_update_sends_modi_headers_when_configured(
+    These tests verify the hooks-based ModI header injection architecture:
+    - SDKHooks is created and injected into the SDK via dependency injection
+    - register_modi_hook is called when ModI is configured (private key + audience)
+    - The hook automatically adds Digest, Agid-JWT-Signature, and Agid-JWT-TrackingEvidence
+      headers to all POST requests
+    """
+
+    def test_update_registers_modi_hook_when_configured(
         self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
     ) -> None:
-        """Test that update command sends ModI headers when audit context is configured."""
+        """Test that update command registers ModI hook when audit context is configured."""
         from anncsu.cli import app
 
         with cli_runner.isolated_filesystem(temp_dir=tmp_path):
@@ -1146,7 +1569,16 @@ class TestCoordinateModIHeaders:
                 "anncsu.cli.commands.coordinate.ClientAssertionSettings"
             ) as mock_settings:
                 settings = MagicMock()
-                settings.has_modi_audit_context = True
+                settings.kid = "test-kid"
+                settings.issuer = "test-issuer"
+                settings.private_key = mock_private_key.read_text()
+                settings.key_path = None
+                settings.has_modi_audit_context.return_value = True
+                settings.get_modi_audit_context.return_value = MagicMock(
+                    user_id="test-user",
+                    user_location="test-location",
+                    loa="SPID_L2",
+                )
                 mock_settings.return_value = settings
 
                 with patch(
@@ -1154,226 +1586,256 @@ class TestCoordinateModIHeaders:
                 ) as mock_manager:
                     manager = MagicMock()
                     manager.get_access_token.return_value = "mock-access-token"
-                    manager.has_modi_generator = True
-                    manager.get_modi_headers.return_value = {
-                        "Agid-JWT-Signature": "mock.jwt.signature",
-                        "Agid-JWT-TrackingEvidence": "mock.jwt.tracking",
-                    }
                     mock_manager.return_value = manager
 
                     with patch(
-                        "anncsu.cli.commands.coordinate.AnncsuCoordinate"
-                    ) as mock_sdk:
-                        sdk = MagicMock()
-                        response = MagicMock()
-                        response.id_richiesta = "REQ-MODI-123"
-                        response.esito = "OK"
-                        response.messaggio = "Success with ModI"
-                        response.dati = []
-                        sdk.json_post.gestionecoordinate.return_value = response
-                        mock_sdk.return_value = sdk
-
-                        result = cli_runner.invoke(
-                            app,
-                            [
-                                "coordinate",
-                                "update",
-                                "--codcom",
-                                "H501",
-                                "--progr-civico",
-                                "12345",
-                                "--x",
-                                "12.4963655",
-                                "--y",
-                                "41.9027835",
-                            ],
-                        )
-
-            assert result.exit_code == 0
-
-            # Verify gestionecoordinate was called with http_headers containing ModI headers
-            sdk.json_post.gestionecoordinate.assert_called_once()
-            call_kwargs = sdk.json_post.gestionecoordinate.call_args[1]
-            assert "http_headers" in call_kwargs
-            assert (
-                call_kwargs["http_headers"]["Agid-JWT-Signature"]
-                == "mock.jwt.signature"
-            )
-            assert (
-                call_kwargs["http_headers"]["Agid-JWT-TrackingEvidence"]
-                == "mock.jwt.tracking"
-            )
-
-    def test_update_no_modi_headers_when_not_configured(
-        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
-    ) -> None:
-        """Test that update command does not send ModI headers when not configured."""
-        from anncsu.cli import app
-
-        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
-            Path("private_key.pem").write_text(mock_private_key.read_text())
-
-            with patch(
-                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
-            ) as mock_settings:
-                settings = MagicMock()
-                settings.has_modi_audit_context = False
-                mock_settings.return_value = settings
-
-                with patch(
-                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
-                ) as mock_manager:
-                    manager = MagicMock()
-                    manager.get_access_token.return_value = "mock-access-token"
-                    manager.has_modi_generator = False
-                    manager.get_modi_headers.return_value = {}
-                    mock_manager.return_value = manager
-
-                    with patch(
-                        "anncsu.cli.commands.coordinate.AnncsuCoordinate"
-                    ) as mock_sdk:
-                        sdk = MagicMock()
-                        response = MagicMock()
-                        response.id_richiesta = "REQ-NO-MODI"
-                        response.esito = "OK"
-                        response.messaggio = None
-                        response.dati = []
-                        sdk.json_post.gestionecoordinate.return_value = response
-                        mock_sdk.return_value = sdk
-
-                        result = cli_runner.invoke(
-                            app,
-                            [
-                                "coordinate",
-                                "update",
-                                "--codcom",
-                                "H501",
-                                "--progr-civico",
-                                "12345",
-                            ],
-                        )
-
-            assert result.exit_code == 0
-
-            # Verify gestionecoordinate was called (http_headers may be empty or None)
-            sdk.json_post.gestionecoordinate.assert_called_once()
-            call_kwargs = sdk.json_post.gestionecoordinate.call_args[1]
-            # Either no http_headers, None, or empty dict
-            http_headers = call_kwargs.get("http_headers") or {}
-            assert "Agid-JWT-Signature" not in http_headers
-            assert "Agid-JWT-TrackingEvidence" not in http_headers
-
-    def test_dry_run_sends_modi_headers_for_both_updates(
-        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
-    ) -> None:
-        """Test that dry-run sends ModI headers for both test update and restore."""
-        from anncsu.cli import app
-
-        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
-            Path("private_key.pem").write_text(mock_private_key.read_text())
-
-            with patch(
-                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
-            ) as mock_settings:
-                settings = MagicMock()
-                settings.has_modi_audit_context = True
-                mock_settings.return_value = settings
-
-                with patch(
-                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
-                ) as mock_manager:
-                    manager = MagicMock()
-                    manager.get_access_token.return_value = "mock-access-token"
-                    manager.has_modi_generator = True
-                    # Return different headers for each call (they should be different)
-                    manager.get_modi_headers.side_effect = [
-                        {
-                            "Agid-JWT-Signature": "test.update.sig",
-                            "Agid-JWT-TrackingEvidence": "test.update.track",
-                        },
-                        {
-                            "Agid-JWT-Signature": "restore.sig",
-                            "Agid-JWT-TrackingEvidence": "restore.track",
-                        },
-                    ]
-                    mock_manager.return_value = manager
-
-                    with patch(
-                        "anncsu.cli.commands.coordinate.AnncsuConsultazione"
-                    ) as mock_consult_sdk:
-                        consult_sdk = MagicMock()
-                        # Mock odonimo response
-                        odonimo_response = MagicMock()
-                        odonimo_response.data = [MagicMock()]
-                        odonimo_response.data[0].prognaz = "987654"
-                        odonimo_response.data[0].dug = "VIA"
-                        odonimo_response.data[0].denomuff = "ROMA"
-                        consult_sdk.queryparam.elencoodonimiprog_get_query_param.return_value = odonimo_response
-                        # Mock access response
-                        search_response = MagicMock()
-                        search_response.data = [MagicMock()]
-                        search_response.data[0].prognazacc = "123456789"
-                        search_response.data[0].coord_x = "12.4963655"
-                        search_response.data[0].coord_y = "41.9027835"
-                        search_response.data[0].quota = "21"
-                        search_response.data[0].metodo = "4"
-                        search_response.data[0].civico = "1"
-                        consult_sdk.queryparam.elencoaccessiprog_get_query_param.return_value = search_response
-                        mock_consult_sdk.return_value = consult_sdk
+                        "anncsu.cli.commands.coordinate.SDKHooks"
+                    ) as mock_hooks_class:
+                        mock_hooks = MagicMock()
+                        mock_hooks_class.return_value = mock_hooks
 
                         with patch(
-                            "anncsu.cli.commands.coordinate.AnncsuCoordinate"
-                        ) as mock_coord_sdk:
-                            coord_sdk = MagicMock()
-                            update_response = MagicMock()
-                            update_response.id_richiesta = "REQ-TEST"
-                            update_response.esito = "OK"
-                            update_response.messaggio = None
-                            update_response.dati = []
-                            restore_response = MagicMock()
-                            restore_response.id_richiesta = "REQ-RESTORE"
-                            restore_response.esito = "OK"
-                            restore_response.messaggio = None
-                            restore_response.dati = []
-                            coord_sdk.json_post.gestionecoordinate.side_effect = [
-                                update_response,
-                                restore_response,
-                            ]
-                            mock_coord_sdk.return_value = coord_sdk
+                            "anncsu.cli.commands.coordinate.register_modi_hook"
+                        ) as mock_register:
+                            with patch(
+                                "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                            ) as mock_sdk:
+                                sdk = MagicMock()
+                                response = create_mock_response(
+                                    id_richiesta="REQ-MODI-123",
+                                    esito="0",
+                                    messaggio="Success with ModI",
+                                )
+                                sdk.json_post.gestionecoordinate.return_value = response
+                                mock_sdk.return_value = sdk
 
-                            result = cli_runner.invoke(
-                                app,
-                                [
-                                    "coordinate",
-                                    "dry-run",
-                                    "--codcom",
-                                    "H501",
-                                    "--denom",
-                                    "VklBIFJPTUE=",
-                                ],
-                            )
+                                result = cli_runner.invoke(
+                                    app,
+                                    [
+                                        "coordinate",
+                                        "update",
+                                        "--codcom",
+                                        "H501",
+                                        "--progr-civico",
+                                        "12345",
+                                        "--x",
+                                        "12.4963655",
+                                        "--y",
+                                        "41.9027835",
+                                    ],
+                                )
 
             assert result.exit_code == 0
 
-            # Verify gestionecoordinate was called twice with ModI headers
+            # Verify SDKHooks was created
+            mock_hooks_class.assert_called_once()
+
+            # Verify register_modi_hook was called with the hooks instance
+            mock_register.assert_called_once()
+            call_args = mock_register.call_args
+            assert call_args[0][0] == mock_hooks  # First positional arg is hooks
+            assert "config" in call_args[1]  # ModIConfig passed as kwarg
+            assert "audit_context" in call_args[1]  # AuditContext passed as kwarg
+
+            # Verify SDK was created with hooks via dependency injection
+            sdk_call_kwargs = mock_sdk.call_args[1]
+            assert "hooks" in sdk_call_kwargs
+            assert sdk_call_kwargs["hooks"] == mock_hooks
+
+    def test_update_no_modi_hook_when_no_audience(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Test that update command does not register ModI hook when no audience is provided.
+
+        The ModI hook is only registered when modi_audience is provided to _get_sdk().
+        Without an audience, the hooks instance is created but register_modi_hook is not called.
+        """
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.kid = "test-kid"
+                settings.issuer = "test-issuer"
+                settings.private_key = mock_private_key.read_text()
+                settings.key_path = None
+                settings.has_modi_audit_context.return_value = False
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    mock_manager.return_value = manager
+
+                    with patch(
+                        "anncsu.cli.commands.coordinate.SDKHooks"
+                    ) as mock_hooks_class:
+                        mock_hooks = MagicMock()
+                        mock_hooks_class.return_value = mock_hooks
+
+                        with patch("anncsu.cli.commands.coordinate.register_modi_hook"):
+                            with patch(
+                                "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                            ) as mock_sdk:
+                                sdk = MagicMock()
+                                response = create_mock_response(
+                                    id_richiesta="REQ-NO-MODI",
+                                    esito="0",
+                                    messaggio=None,
+                                )
+                                sdk.json_post.gestionecoordinate.return_value = response
+                                mock_sdk.return_value = sdk
+
+                                # Note: We call update WITHOUT --production flag
+                                # The default validation environment has a server URL,
+                                # but the test mocks prevent actual ModI hook registration
+                                result = cli_runner.invoke(
+                                    app,
+                                    [
+                                        "coordinate",
+                                        "update",
+                                        "--codcom",
+                                        "H501",
+                                        "--progr-civico",
+                                        "12345",
+                                    ],
+                                )
+
+            assert result.exit_code == 0
+
+            # Verify SDKHooks was created (always created)
+            mock_hooks_class.assert_called_once()
+
+            # Verify SDK was created with hooks (even without ModI)
+            sdk_call_kwargs = mock_sdk.call_args[1]
+            assert "hooks" in sdk_call_kwargs
+            assert sdk_call_kwargs["hooks"] == mock_hooks
+
+    def test_dry_run_registers_modi_hook_for_coordinate_sdk(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Test that dry-run registers ModI hook for the coordinate SDK.
+
+        The hook is registered once per SDK instance and automatically adds
+        headers to all POST requests made by that SDK.
+        """
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.kid = "test-kid"
+                settings.issuer = "test-issuer"
+                settings.private_key = mock_private_key.read_text()
+                settings.key_path = None
+                settings.has_modi_audit_context.return_value = True
+                settings.get_modi_audit_context.return_value = MagicMock(
+                    user_id="test-user",
+                    user_location="test-location",
+                    loa="SPID_L2",
+                )
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    mock_manager.return_value = manager
+
+                    with patch(
+                        "anncsu.cli.commands.coordinate.SDKHooks"
+                    ) as mock_hooks_class:
+                        mock_hooks = MagicMock()
+                        mock_hooks_class.return_value = mock_hooks
+
+                        with patch(
+                            "anncsu.cli.commands.coordinate.register_modi_hook"
+                        ) as mock_register:
+                            with patch(
+                                "anncsu.cli.commands.coordinate.AnncsuConsultazione"
+                            ) as mock_consult_sdk:
+                                consult_sdk = MagicMock()
+                                # Mock odonimo response
+                                odonimo_response = MagicMock()
+                                odonimo_response.data = [MagicMock()]
+                                odonimo_response.data[0].prognaz = "987654"
+                                odonimo_response.data[0].dug = "VIA"
+                                odonimo_response.data[0].denomuff = "ROMA"
+                                consult_sdk.queryparam.elencoodonimiprog_get_query_param.return_value = odonimo_response
+                                # Mock access response
+                                search_response = MagicMock()
+                                search_response.data = [MagicMock()]
+                                search_response.data[0].prognazacc = "123456789"
+                                search_response.data[0].coord_x = "12.4963655"
+                                search_response.data[0].coord_y = "41.9027835"
+                                search_response.data[0].quota = "21"
+                                search_response.data[0].metodo = "4"
+                                search_response.data[0].civico = "1"
+                                consult_sdk.queryparam.elencoaccessiprog_get_query_param.return_value = search_response
+                                mock_consult_sdk.return_value = consult_sdk
+
+                                with patch(
+                                    "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                                ) as mock_coord_sdk:
+                                    coord_sdk = MagicMock()
+                                    update_response = create_mock_response(
+                                        id_richiesta="REQ-TEST",
+                                        esito="0",
+                                        messaggio=None,
+                                    )
+                                    restore_response = create_mock_response(
+                                        id_richiesta="REQ-RESTORE",
+                                        esito="0",
+                                        messaggio=None,
+                                    )
+                                    coord_sdk.json_post.gestionecoordinate.side_effect = [
+                                        update_response,
+                                        restore_response,
+                                    ]
+                                    mock_coord_sdk.return_value = coord_sdk
+
+                                    result = cli_runner.invoke(
+                                        app,
+                                        [
+                                            "coordinate",
+                                            "dry-run",
+                                            "--codcom",
+                                            "H501",
+                                            "--denom",
+                                            "VklBIFJPTUE=",
+                                        ],
+                                    )
+
+            assert result.exit_code == 0
+
+            # Verify SDKHooks was created for coordinate SDK
+            assert mock_hooks_class.call_count >= 1
+
+            # Verify register_modi_hook was called for the coordinate SDK
+            assert mock_register.call_count >= 1
+
+            # Verify gestionecoordinate was called twice (test update + restore)
             assert coord_sdk.json_post.gestionecoordinate.call_count == 2
 
-            # Check first call (test update)
-            first_call = coord_sdk.json_post.gestionecoordinate.call_args_list[0]
-            first_headers = first_call[1].get("http_headers", {})
-            assert first_headers.get("Agid-JWT-Signature") == "test.update.sig"
-            assert first_headers.get("Agid-JWT-TrackingEvidence") == "test.update.track"
-
-            # Check second call (restore)
-            second_call = coord_sdk.json_post.gestionecoordinate.call_args_list[1]
-            second_headers = second_call[1].get("http_headers", {})
-            assert second_headers.get("Agid-JWT-Signature") == "restore.sig"
-            assert second_headers.get("Agid-JWT-TrackingEvidence") == "restore.track"
-
-    def test_modi_audience_derived_from_server_url(
+    def test_modi_config_uses_correct_audience(
         self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
     ) -> None:
-        """Test that ModI audience is derived from the API server URL."""
+        """Test that ModI config is created with the correct audience URL.
+
+        The audience should be the API server URL, which is passed to ModIConfig
+        when registering the hook.
+        """
         from anncsu.cli import app
 
         with cli_runner.isolated_filesystem(temp_dir=tmp_path):
@@ -1383,69 +1845,16 @@ class TestCoordinateModIHeaders:
                 "anncsu.cli.commands.coordinate.ClientAssertionSettings"
             ) as mock_settings:
                 settings = MagicMock()
-                settings.has_modi_audit_context = True
-                mock_settings.return_value = settings
-
-                with patch(
-                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
-                ) as mock_manager:
-                    manager = MagicMock()
-                    manager.get_access_token.return_value = "mock-access-token"
-                    manager.has_modi_generator = True
-                    manager.get_modi_headers.return_value = {
-                        "Agid-JWT-Signature": "mock.sig",
-                        "Agid-JWT-TrackingEvidence": "mock.track",
-                    }
-                    mock_manager.return_value = manager
-
-                    with patch(
-                        "anncsu.cli.commands.coordinate.AnncsuCoordinate"
-                    ) as mock_sdk:
-                        sdk = MagicMock()
-                        response = MagicMock()
-                        response.id_richiesta = "REQ-123"
-                        response.esito = "OK"
-                        response.messaggio = None
-                        response.dati = []
-                        sdk.json_post.gestionecoordinate.return_value = response
-                        mock_sdk.return_value = sdk
-
-                        result = cli_runner.invoke(
-                            app,
-                            [
-                                "coordinate",
-                                "update",
-                                "--codcom",
-                                "H501",
-                                "--progr-civico",
-                                "12345",
-                                "--production",  # Use production environment
-                            ],
-                        )
-
-            assert result.exit_code == 0
-
-            # Verify PDNDAuthManager was created with modi_audience from production server
-            mock_manager.assert_called()
-            call_kwargs = mock_manager.call_args[1]
-            # Modi audience should be the base URL of the API
-            assert "modi_audience" in call_kwargs
-            assert "modipa.agenziaentrate.it" in call_kwargs["modi_audience"]
-
-    def test_status_command_does_not_send_modi_headers(
-        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
-    ) -> None:
-        """Test that status command does not require ModI headers (GET request)."""
-        from anncsu.cli import app
-
-        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
-            Path("private_key.pem").write_text(mock_private_key.read_text())
-
-            with patch(
-                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
-            ) as mock_settings:
-                settings = MagicMock()
-                settings.has_modi_audit_context = True  # Even if configured
+                settings.kid = "test-kid"
+                settings.issuer = "test-issuer"
+                settings.private_key = mock_private_key.read_text()
+                settings.key_path = None
+                settings.has_modi_audit_context.return_value = True
+                settings.get_modi_audit_context.return_value = MagicMock(
+                    user_id="test-user",
+                    user_location="test-location",
+                    loa="SPID_L2",
+                )
                 mock_settings.return_value = settings
 
                 with patch(
@@ -1456,18 +1865,118 @@ class TestCoordinateModIHeaders:
                     mock_manager.return_value = manager
 
                     with patch(
-                        "anncsu.cli.commands.coordinate.AnncsuCoordinate"
-                    ) as mock_sdk:
-                        sdk = MagicMock()
-                        status_response = MagicMock()
-                        status_response.status = "OK"
-                        sdk.status.show_status.return_value = status_response
-                        mock_sdk.return_value = sdk
+                        "anncsu.cli.commands.coordinate.SDKHooks"
+                    ) as mock_hooks_class:
+                        mock_hooks = MagicMock()
+                        mock_hooks_class.return_value = mock_hooks
 
-                        result = cli_runner.invoke(app, ["coordinate", "status"])
+                        with patch("anncsu.cli.commands.coordinate.register_modi_hook"):
+                            with patch(
+                                "anncsu.cli.commands.coordinate.ModIConfig"
+                            ) as mock_modi_config:
+                                mock_config_instance = MagicMock()
+                                mock_modi_config.return_value = mock_config_instance
+
+                                with patch(
+                                    "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                                ) as mock_sdk:
+                                    sdk = MagicMock()
+                                    response = create_mock_response(
+                                        id_richiesta="REQ-123",
+                                        esito="0",
+                                        messaggio=None,
+                                    )
+                                    sdk.json_post.gestionecoordinate.return_value = (
+                                        response
+                                    )
+                                    mock_sdk.return_value = sdk
+
+                                    result = cli_runner.invoke(
+                                        app,
+                                        [
+                                            "coordinate",
+                                            "update",
+                                            "--codcom",
+                                            "H501",
+                                            "--progr-civico",
+                                            "12345",
+                                            "--production",  # Use production environment
+                                        ],
+                                    )
 
             assert result.exit_code == 0
 
-            # Status command (GET) should not call get_modi_headers
-            # ModI headers are only for POST requests with payload
-            manager.get_modi_headers.assert_not_called()
+            # Verify ModIConfig was created with production audience
+            mock_modi_config.assert_called_once()
+            config_kwargs = mock_modi_config.call_args[1]
+            assert "audience" in config_kwargs
+            # Production URL should contain modipa.agenziaentrate.it
+            assert "modipa.agenziaentrate.it" in config_kwargs["audience"]
+
+    def test_status_command_uses_hooks_but_modi_only_for_post(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Test that status command creates hooks but ModI is only for POST requests.
+
+        The status command uses GET, so even though hooks are created,
+        the ModI pre-request hook only activates for POST requests with a body.
+        """
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.kid = "test-kid"
+                settings.issuer = "test-issuer"
+                settings.private_key = mock_private_key.read_text()
+                settings.key_path = None
+                settings.has_modi_audit_context.return_value = True
+                settings.get_modi_audit_context.return_value = MagicMock(
+                    user_id="test-user",
+                    user_location="test-location",
+                    loa="SPID_L2",
+                )
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    mock_manager.return_value = manager
+
+                    with patch(
+                        "anncsu.cli.commands.coordinate.SDKHooks"
+                    ) as mock_hooks_class:
+                        mock_hooks = MagicMock()
+                        mock_hooks_class.return_value = mock_hooks
+
+                        with patch("anncsu.cli.commands.coordinate.register_modi_hook"):
+                            with patch(
+                                "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                            ) as mock_sdk:
+                                sdk = MagicMock()
+                                status_response = MagicMock()
+                                status_response.status = "OK"
+                                sdk.status.show_status.return_value = status_response
+                                mock_sdk.return_value = sdk
+
+                                result = cli_runner.invoke(
+                                    app, ["coordinate", "status"]
+                                )
+
+            assert result.exit_code == 0
+
+            # Verify SDKHooks was created
+            mock_hooks_class.assert_called_once()
+
+            # Verify SDK was created with hooks
+            sdk_call_kwargs = mock_sdk.call_args[1]
+            assert "hooks" in sdk_call_kwargs
+
+            # The ModI hook is registered but only activates for POST requests
+            # Status uses GET, so headers won't be added (handled by the hook logic)

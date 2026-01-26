@@ -163,6 +163,7 @@ class PDNDAuthManager:
         session_persistence: bool = False,
         config_dir: Path | None = None,
         modi_audience: str | None = None,
+        server_url: str | None = None,
     ):
         """Initialize the PDND Auth Manager.
 
@@ -185,11 +186,15 @@ class PDNDAuthManager:
                 Defaults to ~/.anncsu/
             modi_audience: Audience URL for ModI headers (required for APIs
                 that need ModI security headers like Coordinate API).
-                Example: "https://modipa-val.anpr.interno.it"
+                This MUST match server_url for INTEGRITY_REST_02 compliance.
+            server_url: The API server URL. Used to validate modi_audience
+                when both are provided. If modi_audience differs from server_url,
+                an AudienceMismatchError is raised.
 
         Raises:
             ValueError: If api_type is None or if neither settings nor config is provided.
             EmptyPurposeIDError: If the purpose_id for the API is empty.
+            AudienceMismatchError: If modi_audience doesn't match server_url.
         """
         if api_type is None:
             raise ValueError(
@@ -201,6 +206,10 @@ class PDNDAuthManager:
             raise ValueError(
                 "Either 'settings' or 'config' must be provided to PDNDAuthManager"
             )
+
+        # Validate that modi_audience matches server_url when both are provided
+        if modi_audience is not None and server_url is not None:
+            self._validate_audience_matches_server(modi_audience, server_url)
 
         self.api_type = api_type
         self.settings = settings
@@ -265,6 +274,47 @@ class PDNDAuthManager:
 
         # Create generator
         self._modi_generator = ModIHeaderGenerator(modi_config, audit_context)
+
+    @staticmethod
+    def _validate_audience_matches_server(
+        modi_audience: str,
+        server_url: str,
+    ) -> None:
+        """Validate that ModI audience matches the API server URL.
+
+        Per ModI INTEGRITY_REST_02, the audience (aud) claim in the JWT
+        MUST match the API server URL. A mismatch will cause 400
+        InteroperabilityInvalidRequest errors from the API.
+
+        Args:
+            modi_audience: The configured ModI audience.
+            server_url: The actual API server URL.
+
+        Raises:
+            AudienceMismatchError: If the audience doesn't match the server URL.
+        """
+        from urllib.parse import urlparse
+
+        from anncsu.common.errors import AudienceMismatchError
+
+        # Parse both URLs
+        audience_parsed = urlparse(modi_audience)
+        server_parsed = urlparse(server_url)
+
+        # Check if domains match (the most common mistake)
+        if audience_parsed.netloc != server_parsed.netloc:
+            raise AudienceMismatchError(
+                modi_audience=modi_audience,
+                server_url=server_url,
+            )
+
+        # If domains match but paths are completely different, also raise
+        # (allows for minor path differences like trailing slash)
+        if modi_audience.rstrip("/") != server_url.rstrip("/"):
+            raise AudienceMismatchError(
+                modi_audience=modi_audience,
+                server_url=server_url,
+            )
 
     def get_client_assertion(self) -> str:
         """Get a valid client assertion, generating one if needed.

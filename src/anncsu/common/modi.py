@@ -191,13 +191,18 @@ class ModIHeaderGenerator:
 
         Uses standard base64 encoding with padding as per RFC 3230.
 
+        IMPORTANT: Uses sort_keys=True for deterministic serialization.
+        This ensures the same payload always produces the same digest,
+        regardless of the order keys were inserted into the dictionary.
+
         Args:
             payload: Request body to compute digest from.
 
         Returns:
             Digest value in format "SHA-256=<base64-encoded-hash>"
         """
-        # Use compact JSON serialization with sorted keys for determinism
+        # Use compact JSON serialization WITH sort_keys for determinism
+        # This ensures consistent digest regardless of key insertion order
         payload_bytes = json.dumps(
             payload, separators=(",", ":"), sort_keys=True
         ).encode("utf-8")
@@ -348,9 +353,38 @@ def create_modi_config_from_settings(
     )
 
 
+def sort_dict_recursively(obj: Any) -> Any:
+    """Sort dictionary keys recursively.
+
+    Helper function to sort all dictionary keys alphabetically at all
+    nesting levels. May be useful for debugging or comparison purposes.
+
+    Args:
+        obj: Object to sort. Can be dict, list, or primitive.
+
+    Returns:
+        A new object with all dict keys sorted alphabetically at all levels.
+        Lists preserve their element order, but dicts inside lists are sorted.
+
+    Example:
+        >>> sort_dict_recursively({"z": 1, "a": {"z": 2, "a": 3}})
+        {'a': {'a': 3, 'z': 2}, 'z': 1}
+    """
+    if isinstance(obj, dict):
+        # Sort keys and recursively process values
+        return {k: sort_dict_recursively(v) for k, v in sorted(obj.items())}
+    elif isinstance(obj, list):
+        # Process list items but preserve order
+        return [sort_dict_recursively(item) for item in obj]
+    else:
+        # Primitive value, return as-is
+        return obj
+
+
 __all__ = [
     "AuditContext",
     "ModIConfig",
     "ModIHeaderGenerator",
     "create_modi_config_from_settings",
+    "sort_dict_recursively",
 ]
