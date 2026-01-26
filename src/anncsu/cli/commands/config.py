@@ -62,8 +62,12 @@ PDND_SUBJECT=your-client-id
 # Audience - must end with /client-assertion
 PDND_AUDIENCE=auth.uat.interop.pagopa.it/client-assertion
 
-# Purpose ID from PDND
-PDND_PURPOSE_ID=your-purpose-id
+# Purpose ID for each API type (ALL must be present, can be empty if not used)
+PDND_PURPOSE_ID_PA=your-purpose-id-for-pa-consultazione
+PDND_PURPOSE_ID_COORDINATE=your-purpose-id-for-coordinate-api
+PDND_PURPOSE_ID_ACCESSI=
+PDND_PURPOSE_ID_INTERNI=
+PDND_PURPOSE_ID_ODONIMI=
 
 # Path to private key file (or use PDND_PRIVATE_KEY for content)
 PDND_KEY_PATH=./private_key.pem
@@ -232,21 +236,36 @@ def show(
 
     key_exists = settings.key_path.exists() if settings.key_path else False
 
+    # Helper to mask or show "Not set" for empty values
+    def _mask_or_empty(value: str | None) -> str:
+        if not value:
+            return "[dim]Not set[/dim]"
+        return _mask_value(value)
+
     config_info = ConfigInfo(
         kid=_mask_value(settings.kid),
         issuer=_mask_value(settings.issuer),
         subject=_mask_value(settings.subject),
         audience=settings.audience,
-        purpose_id=_mask_value(settings.purpose_id),
+        purpose_id_pa=_mask_or_empty(settings.purpose_id_pa),
+        purpose_id_coordinate=_mask_or_empty(settings.purpose_id_coordinate),
+        purpose_id_accessi=_mask_or_empty(settings.purpose_id_accessi),
+        purpose_id_interni=_mask_or_empty(settings.purpose_id_interni),
+        purpose_id_odonimi=_mask_or_empty(settings.purpose_id_odonimi),
         key_path=str(settings.key_path) if settings.key_path else "Not set",
         key_exists=key_exists,
         validity_minutes=settings.validity_minutes,
+        modi_user_id=settings.modi_user_id,
+        modi_user_location=settings.modi_user_location,
+        modi_loa=settings.modi_loa,
+        modi_configured=settings.has_modi_audit_context,
     )
 
     if json_output:
         console.print(config_info.model_dump_json(indent=2))
         return
 
+    # PDND Configuration table
     table = Table(title="PDND Configuration", show_header=False)
     table.add_column("Setting", style="cyan")
     table.add_column("Value")
@@ -255,7 +274,6 @@ def show(
     table.add_row("Issuer", config_info.issuer)
     table.add_row("Subject", config_info.subject)
     table.add_row("Audience", config_info.audience)
-    table.add_row("Purpose ID", config_info.purpose_id)
     table.add_row(
         "Key Path",
         f"{config_info.key_path} {'[green]OK[/green]' if key_exists else '[red]NOT FOUND[/red]'}",
@@ -266,6 +284,39 @@ def show(
     )
 
     console.print(table)
+    console.print()
+
+    # Purpose IDs table
+    purpose_table = Table(title="Purpose IDs per API", show_header=False)
+    purpose_table.add_column("API", style="cyan")
+    purpose_table.add_column("Purpose ID")
+
+    purpose_table.add_row("PA (Consultazione)", config_info.purpose_id_pa)
+    purpose_table.add_row("Coordinate", config_info.purpose_id_coordinate)
+    purpose_table.add_row("Accessi", config_info.purpose_id_accessi)
+    purpose_table.add_row("Interni", config_info.purpose_id_interni)
+    purpose_table.add_row("Odonimi", config_info.purpose_id_odonimi)
+
+    console.print(purpose_table)
+    console.print()
+
+    # ModI Configuration table
+    modi_table = Table(title="ModI Configuration", show_header=False)
+    modi_table.add_column("Setting", style="cyan")
+    modi_table.add_column("Value")
+
+    if config_info.modi_configured:
+        modi_table.add_row("Status", "[green]Configured[/green]")
+        modi_table.add_row("User ID", config_info.modi_user_id or "")
+        modi_table.add_row("User Location", config_info.modi_user_location or "")
+        modi_table.add_row("LoA", config_info.modi_loa or "")
+    else:
+        modi_table.add_row("Status", "[yellow]Not configured[/yellow]")
+        modi_table.add_row(
+            "Note", "[dim]Required for Coordinate API write operations[/dim]"
+        )
+
+    console.print(modi_table)
 
 
 @config_app.command("validate")
@@ -347,13 +398,53 @@ def set_config(
         str | None,
         typer.Option("--audience", help="Set PDND_AUDIENCE value."),
     ] = None,
-    purpose_id: Annotated[
+    purpose_id_pa: Annotated[
         str | None,
-        typer.Option("--purpose-id", help="Set PDND_PURPOSE_ID value."),
+        typer.Option("--purpose-id-pa", help="Set PDND_PURPOSE_ID_PA value."),
+    ] = None,
+    purpose_id_coordinate: Annotated[
+        str | None,
+        typer.Option(
+            "--purpose-id-coordinate",
+            help="Set PDND_PURPOSE_ID_COORDINATE value.",
+        ),
+    ] = None,
+    purpose_id_accessi: Annotated[
+        str | None,
+        typer.Option("--purpose-id-accessi", help="Set PDND_PURPOSE_ID_ACCESSI value."),
+    ] = None,
+    purpose_id_interni: Annotated[
+        str | None,
+        typer.Option("--purpose-id-interni", help="Set PDND_PURPOSE_ID_INTERNI value."),
+    ] = None,
+    purpose_id_odonimi: Annotated[
+        str | None,
+        typer.Option("--purpose-id-odonimi", help="Set PDND_PURPOSE_ID_ODONIMI value."),
     ] = None,
     key_path: Annotated[
         str | None,
         typer.Option("--key-path", help="Set PDND_KEY_PATH value."),
+    ] = None,
+    modi_user_id: Annotated[
+        str | None,
+        typer.Option(
+            "--modi-user-id",
+            help="Set PDND_MODI_USER_ID value (for ModI audit headers).",
+        ),
+    ] = None,
+    modi_user_location: Annotated[
+        str | None,
+        typer.Option(
+            "--modi-user-location",
+            help="Set PDND_MODI_USER_LOCATION value (for ModI audit headers).",
+        ),
+    ] = None,
+    modi_loa: Annotated[
+        str | None,
+        typer.Option(
+            "--modi-loa",
+            help="Set PDND_MODI_LOA value (Level of Assurance, e.g., SPID_L2).",
+        ),
     ] = None,
     env_file: Annotated[
         Path | None,
@@ -365,6 +456,10 @@ def set_config(
     """Set configuration values in the .env file.
 
     By default, updates ~/.anncsu/.env
+
+    Examples:
+        anncsu config set --kid my-key-id
+        anncsu config set --modi-user-id batch-user --modi-loa SPID_L2
     """
     # Use default path if not specified
     if env_file is None:
@@ -382,8 +477,15 @@ def set_config(
         "PDND_ISSUER": issuer,
         "PDND_SUBJECT": subject,
         "PDND_AUDIENCE": audience,
-        "PDND_PURPOSE_ID": purpose_id,
+        "PDND_PURPOSE_ID_PA": purpose_id_pa,
+        "PDND_PURPOSE_ID_COORDINATE": purpose_id_coordinate,
+        "PDND_PURPOSE_ID_ACCESSI": purpose_id_accessi,
+        "PDND_PURPOSE_ID_INTERNI": purpose_id_interni,
+        "PDND_PURPOSE_ID_ODONIMI": purpose_id_odonimi,
         "PDND_KEY_PATH": key_path,
+        "PDND_MODI_USER_ID": modi_user_id,
+        "PDND_MODI_USER_LOCATION": modi_user_location,
+        "PDND_MODI_LOA": modi_loa,
     }
 
     updated_count = 0

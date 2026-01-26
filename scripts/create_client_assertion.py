@@ -18,23 +18,30 @@ Usage:
         --purpose-id <purpose_id> \
         --key-path <path_to_private_key>
 
+    # With API type to load purpose_id from env (PDND_PURPOSE_ID_<API>):
+    python create_client_assertion.py create --api-type pa --from-env
+
     # With defaults from .env file (CLI params override):
     python create_client_assertion.py create --purpose-id <new_purpose_id>
 
-    # Using only environment variables:
-    python create_client_assertion.py create --from-env
+    # Using only environment variables (requires --api-type):
+    python create_client_assertion.py create --api-type coordinate --from-env
 
 Environment Variables (prefix: PDND_):
-    PDND_KID            - Key ID (kid) header parameter
-    PDND_ISSUER         - Issuer (iss) claim
-    PDND_SUBJECT        - Subject (sub) claim
-    PDND_AUDIENCE       - Audience (aud) claim
-    PDND_PURPOSE_ID     - Purpose ID for the request
-    PDND_KEY_PATH       - Path to private key file
-    PDND_PRIVATE_KEY    - Private key content (alternative to PDND_KEY_PATH)
-    PDND_ALG            - Algorithm (default: RS256)
-    PDND_TYP            - Token type (default: JWT)
-    PDND_VALIDITY_MINUTES - Validity in minutes (default: 43200)
+    PDND_KID                  - Key ID (kid) header parameter
+    PDND_ISSUER               - Issuer (iss) claim
+    PDND_SUBJECT              - Subject (sub) claim
+    PDND_AUDIENCE             - Audience (aud) claim
+    PDND_PURPOSE_ID_PA        - Purpose ID for PA Consultazione API
+    PDND_PURPOSE_ID_COORDINATE - Purpose ID for Coordinate API
+    PDND_PURPOSE_ID_ACCESSI   - Purpose ID for Accessi API
+    PDND_PURPOSE_ID_INTERNI   - Purpose ID for Interni API
+    PDND_PURPOSE_ID_ODONIMI   - Purpose ID for Odonimi API
+    PDND_KEY_PATH             - Path to private key file
+    PDND_PRIVATE_KEY          - Private key content (alternative to PDND_KEY_PATH)
+    PDND_ALG                  - Algorithm (default: RS256)
+    PDND_TYP                  - Token type (default: JWT)
+    PDND_VALIDITY_MINUTES     - Validity in minutes (default: 43200)
 
 Requirements:
     - Python 3.12+
@@ -52,7 +59,12 @@ import typer
 from pydantic import ValidationError
 from rich.console import Console
 
-from anncsu.common.config import ClientAssertionSettings
+from anncsu.common.config import (
+    APIType,
+    ClientAssertionSettings,
+    EmptyPurposeIDError,
+    MissingPurposeIDError,
+)
 from anncsu.common.pdnd_assertion import (
     ClientAssertionConfig,
     ClientAssertionError,
@@ -137,9 +149,19 @@ def create(
         str | None,
         typer.Option(
             "--purpose-id",
-            help="Purpose ID for the PDND request. Overrides PDND_PURPOSE_ID env var.",
+            help="Purpose ID for the PDND request. Overrides --api-type derived value.",
             show_default=False,
             metavar="PURPOSE_ID",
+            rich_help_panel="JWT Claims",
+        ),
+    ] = None,
+    api_type: Annotated[
+        str | None,
+        typer.Option(
+            "--api-type",
+            help="API type to load purpose_id from env (pa, coordinate, accessi, interni, odonimi).",
+            show_default=False,
+            metavar="API_TYPE",
             rich_help_panel="JWT Claims",
         ),
     ] = None,
@@ -230,10 +252,21 @@ def create(
         python create_client_assertion.py create --from-env
     """
     try:
+        # Parse api_type if provided
+        resolved_api_type: APIType | None = None
+        if api_type is not None:
+            try:
+                resolved_api_type = APIType.from_cli_command(api_type.lower())
+            except ValueError:
+                valid_types = ", ".join(t.cli_command for t in APIType)
+                console.print(f"[red]Error: Invalid --api-type '{api_type}'.[/red]")
+                console.print(f"[yellow]Valid types: {valid_types}[/yellow]")
+                raise typer.Exit(code=1) from None
+
         # Try to load settings from environment
         env_settings = _load_env_settings()
 
-        # If --from-env is used, require env settings to be available
+        # If --from-env is used, require env settings and api_type
         if from_env:
             if env_settings is None:
                 console.print(
@@ -242,11 +275,36 @@ def create(
                 )
                 console.print(
                     "[yellow]Required: PDND_KID, PDND_ISSUER, PDND_SUBJECT, "
-                    "PDND_AUDIENCE, PDND_PURPOSE_ID, and either PDND_KEY_PATH "
+                    "PDND_AUDIENCE, PDND_PURPOSE_ID_<API>, and either PDND_KEY_PATH "
                     "or PDND_PRIVATE_KEY[/yellow]"
                 )
                 raise typer.Exit(code=1)
-            config = env_settings.to_config()
+
+            if resolved_api_type is None and purpose_id is None:
+                console.print(
+                    "[red]Error: --from-env requires either --api-type or --purpose-id.[/red]"
+                )
+                console.print(
+                    "[yellow]Use --api-type to load purpose_id from PDND_PURPOSE_ID_<API> "
+                    "or specify --purpose-id directly.[/yellow]"
+                )
+                raise typer.Exit(code=1)
+
+            config = env_settings.to_config(resolved_api_type)
+            # Override purpose_id if explicitly provided
+            if purpose_id is not None:
+                config = ClientAssertionConfig(
+                    kid=config.kid,
+                    alg=config.alg,
+                    typ=config.typ,
+                    issuer=config.issuer,
+                    subject=config.subject,
+                    audience=config.audience,
+                    purpose_id=purpose_id,
+                    validity_minutes=config.validity_minutes,
+                    private_key=config.private_key,
+                    key_path=config.key_path,
+                )
         else:
             # Merge CLI options with environment defaults
             # CLI options override environment values
@@ -275,15 +333,19 @@ def create(
                     env_settings.audience if env_settings else _get_env_var("AUDIENCE")
                 )
             )
-            final_purpose_id = (
-                purpose_id
-                if purpose_id is not None
-                else (
-                    env_settings.purpose_id
-                    if env_settings
-                    else _get_env_var("PURPOSE_ID")
-                )
-            )
+            # Determine purpose_id: CLI --purpose-id > --api-type from env > error
+            final_purpose_id: str | None = None
+            if purpose_id is not None:
+                final_purpose_id = purpose_id
+            elif resolved_api_type is not None and env_settings is not None:
+                try:
+                    final_purpose_id = env_settings.get_purpose_id(resolved_api_type)
+                except EmptyPurposeIDError:
+                    console.print(
+                        f"[red]Error: Purpose ID for {resolved_api_type.description} "
+                        f"({resolved_api_type.env_var_name}) is empty.[/red]"
+                    )
+                    raise typer.Exit(code=1) from None
             final_alg = (
                 alg
                 if alg is not None
@@ -341,7 +403,9 @@ def create(
             if not final_audience:
                 missing_fields.append("--audience or PDND_AUDIENCE")
             if not final_purpose_id:
-                missing_fields.append("--purpose-id or PDND_PURPOSE_ID")
+                missing_fields.append(
+                    "--purpose-id or --api-type with PDND_PURPOSE_ID_<API>"
+                )
             if not final_key_path and not final_private_key:
                 missing_fields.append("--key-path or PDND_KEY_PATH/PDND_PRIVATE_KEY")
 
@@ -382,6 +446,9 @@ def create(
 
     except ClientAssertionError as e:
         console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1) from None
+    except (MissingPurposeIDError, EmptyPurposeIDError) as e:
+        console.print(f"[red]Configuration error: {e}[/red]")
         raise typer.Exit(code=1) from None
     except ValidationError as e:
         console.print(f"[red]Validation error: {e}[/red]")

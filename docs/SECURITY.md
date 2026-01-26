@@ -183,7 +183,11 @@ All environment variables use the `PDND_` prefix:
 | `PDND_ISSUER` | Yes | Issuer (iss) claim - your client_id |
 | `PDND_SUBJECT` | Yes | Subject (sub) claim - your client_id |
 | `PDND_AUDIENCE` | Yes | Audience (aud) claim - PDND token endpoint URL |
-| `PDND_PURPOSE_ID` | Yes | Purpose ID for the PDND request |
+| `PDND_PURPOSE_ID_PA` | Yes | Purpose ID for PA Consultazione API |
+| `PDND_PURPOSE_ID_COORDINATE` | Yes | Purpose ID for Coordinate API |
+| `PDND_PURPOSE_ID_ACCESSI` | Yes* | Purpose ID for Accessi API (can be empty) |
+| `PDND_PURPOSE_ID_INTERNI` | Yes* | Purpose ID for Interni API (can be empty) |
+| `PDND_PURPOSE_ID_ODONIMI` | Yes* | Purpose ID for Odonimi API (can be empty) |
 | `PDND_PRIVATE_KEY` | One required | RSA private key content in PEM format (string) |
 | `PDND_KEY_PATH` | One required | Path to the RSA private key file |
 | `PDND_ALG` | No | Algorithm (default: "RS256") |
@@ -198,7 +202,14 @@ PDND_KID=my-key-id
 PDND_ISSUER=my-client-id
 PDND_SUBJECT=my-client-id
 PDND_AUDIENCE=https://auth.interop.pagopa.it/token.oauth2
-PDND_PURPOSE_ID=my-purpose-id
+
+# Purpose ID for each API type (ALL must be present, can be empty if not used)
+PDND_PURPOSE_ID_PA=your-purpose-id-for-pa-consultazione
+PDND_PURPOSE_ID_COORDINATE=your-purpose-id-for-coordinate-api
+PDND_PURPOSE_ID_ACCESSI=
+PDND_PURPOSE_ID_INTERNI=
+PDND_PURPOSE_ID_ODONIMI=
+
 PDND_KEY_PATH=./private_key.pem
 # Or use PDND_PRIVATE_KEY for inline key content
 ```
@@ -210,7 +221,14 @@ export PDND_KID="my-key-id"
 export PDND_ISSUER="my-client-id"
 export PDND_SUBJECT="my-client-id"
 export PDND_AUDIENCE="https://auth.interop.pagopa.it/token.oauth2"
-export PDND_PURPOSE_ID="my-purpose-id"
+
+# Purpose ID for each API type (ALL must be present, can be empty if not used)
+export PDND_PURPOSE_ID_PA="your-purpose-id-for-pa-consultazione"
+export PDND_PURPOSE_ID_COORDINATE="your-purpose-id-for-coordinate-api"
+export PDND_PURPOSE_ID_ACCESSI=""
+export PDND_PURPOSE_ID_INTERNI=""
+export PDND_PURPOSE_ID_ODONIMI=""
+
 export PDND_KEY_PATH="./private_key.pem"
 ```
 

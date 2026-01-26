@@ -1128,3 +1128,346 @@ class TestCoordinateStatus:
             assert result.exit_code == 0
             # Verify httpx.Client was called with verify=False
             mock_client.assert_called_once_with(verify=False)
+
+
+class TestCoordinateModIHeaders:
+    """Tests for ModI headers integration in coordinate commands."""
+
+    def test_update_sends_modi_headers_when_configured(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Test that update command sends ModI headers when audit context is configured."""
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.has_modi_audit_context = True
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    manager.has_modi_generator = True
+                    manager.get_modi_headers.return_value = {
+                        "Agid-JWT-Signature": "mock.jwt.signature",
+                        "Agid-JWT-TrackingEvidence": "mock.jwt.tracking",
+                    }
+                    mock_manager.return_value = manager
+
+                    with patch(
+                        "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                    ) as mock_sdk:
+                        sdk = MagicMock()
+                        response = MagicMock()
+                        response.id_richiesta = "REQ-MODI-123"
+                        response.esito = "OK"
+                        response.messaggio = "Success with ModI"
+                        response.dati = []
+                        sdk.json_post.gestionecoordinate.return_value = response
+                        mock_sdk.return_value = sdk
+
+                        result = cli_runner.invoke(
+                            app,
+                            [
+                                "coordinate",
+                                "update",
+                                "--codcom",
+                                "H501",
+                                "--progr-civico",
+                                "12345",
+                                "--x",
+                                "12.4963655",
+                                "--y",
+                                "41.9027835",
+                            ],
+                        )
+
+            assert result.exit_code == 0
+
+            # Verify gestionecoordinate was called with http_headers containing ModI headers
+            sdk.json_post.gestionecoordinate.assert_called_once()
+            call_kwargs = sdk.json_post.gestionecoordinate.call_args[1]
+            assert "http_headers" in call_kwargs
+            assert (
+                call_kwargs["http_headers"]["Agid-JWT-Signature"]
+                == "mock.jwt.signature"
+            )
+            assert (
+                call_kwargs["http_headers"]["Agid-JWT-TrackingEvidence"]
+                == "mock.jwt.tracking"
+            )
+
+    def test_update_no_modi_headers_when_not_configured(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Test that update command does not send ModI headers when not configured."""
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.has_modi_audit_context = False
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    manager.has_modi_generator = False
+                    manager.get_modi_headers.return_value = {}
+                    mock_manager.return_value = manager
+
+                    with patch(
+                        "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                    ) as mock_sdk:
+                        sdk = MagicMock()
+                        response = MagicMock()
+                        response.id_richiesta = "REQ-NO-MODI"
+                        response.esito = "OK"
+                        response.messaggio = None
+                        response.dati = []
+                        sdk.json_post.gestionecoordinate.return_value = response
+                        mock_sdk.return_value = sdk
+
+                        result = cli_runner.invoke(
+                            app,
+                            [
+                                "coordinate",
+                                "update",
+                                "--codcom",
+                                "H501",
+                                "--progr-civico",
+                                "12345",
+                            ],
+                        )
+
+            assert result.exit_code == 0
+
+            # Verify gestionecoordinate was called (http_headers may be empty or None)
+            sdk.json_post.gestionecoordinate.assert_called_once()
+            call_kwargs = sdk.json_post.gestionecoordinate.call_args[1]
+            # Either no http_headers, None, or empty dict
+            http_headers = call_kwargs.get("http_headers") or {}
+            assert "Agid-JWT-Signature" not in http_headers
+            assert "Agid-JWT-TrackingEvidence" not in http_headers
+
+    def test_dry_run_sends_modi_headers_for_both_updates(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Test that dry-run sends ModI headers for both test update and restore."""
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.has_modi_audit_context = True
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    manager.has_modi_generator = True
+                    # Return different headers for each call (they should be different)
+                    manager.get_modi_headers.side_effect = [
+                        {
+                            "Agid-JWT-Signature": "test.update.sig",
+                            "Agid-JWT-TrackingEvidence": "test.update.track",
+                        },
+                        {
+                            "Agid-JWT-Signature": "restore.sig",
+                            "Agid-JWT-TrackingEvidence": "restore.track",
+                        },
+                    ]
+                    mock_manager.return_value = manager
+
+                    with patch(
+                        "anncsu.cli.commands.coordinate.AnncsuConsultazione"
+                    ) as mock_consult_sdk:
+                        consult_sdk = MagicMock()
+                        # Mock odonimo response
+                        odonimo_response = MagicMock()
+                        odonimo_response.data = [MagicMock()]
+                        odonimo_response.data[0].prognaz = "987654"
+                        odonimo_response.data[0].dug = "VIA"
+                        odonimo_response.data[0].denomuff = "ROMA"
+                        consult_sdk.queryparam.elencoodonimiprog_get_query_param.return_value = odonimo_response
+                        # Mock access response
+                        search_response = MagicMock()
+                        search_response.data = [MagicMock()]
+                        search_response.data[0].prognazacc = "123456789"
+                        search_response.data[0].coord_x = "12.4963655"
+                        search_response.data[0].coord_y = "41.9027835"
+                        search_response.data[0].quota = "21"
+                        search_response.data[0].metodo = "4"
+                        search_response.data[0].civico = "1"
+                        consult_sdk.queryparam.elencoaccessiprog_get_query_param.return_value = search_response
+                        mock_consult_sdk.return_value = consult_sdk
+
+                        with patch(
+                            "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                        ) as mock_coord_sdk:
+                            coord_sdk = MagicMock()
+                            update_response = MagicMock()
+                            update_response.id_richiesta = "REQ-TEST"
+                            update_response.esito = "OK"
+                            update_response.messaggio = None
+                            update_response.dati = []
+                            restore_response = MagicMock()
+                            restore_response.id_richiesta = "REQ-RESTORE"
+                            restore_response.esito = "OK"
+                            restore_response.messaggio = None
+                            restore_response.dati = []
+                            coord_sdk.json_post.gestionecoordinate.side_effect = [
+                                update_response,
+                                restore_response,
+                            ]
+                            mock_coord_sdk.return_value = coord_sdk
+
+                            result = cli_runner.invoke(
+                                app,
+                                [
+                                    "coordinate",
+                                    "dry-run",
+                                    "--codcom",
+                                    "H501",
+                                    "--denom",
+                                    "VklBIFJPTUE=",
+                                ],
+                            )
+
+            assert result.exit_code == 0
+
+            # Verify gestionecoordinate was called twice with ModI headers
+            assert coord_sdk.json_post.gestionecoordinate.call_count == 2
+
+            # Check first call (test update)
+            first_call = coord_sdk.json_post.gestionecoordinate.call_args_list[0]
+            first_headers = first_call[1].get("http_headers", {})
+            assert first_headers.get("Agid-JWT-Signature") == "test.update.sig"
+            assert first_headers.get("Agid-JWT-TrackingEvidence") == "test.update.track"
+
+            # Check second call (restore)
+            second_call = coord_sdk.json_post.gestionecoordinate.call_args_list[1]
+            second_headers = second_call[1].get("http_headers", {})
+            assert second_headers.get("Agid-JWT-Signature") == "restore.sig"
+            assert second_headers.get("Agid-JWT-TrackingEvidence") == "restore.track"
+
+    def test_modi_audience_derived_from_server_url(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Test that ModI audience is derived from the API server URL."""
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.has_modi_audit_context = True
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    manager.has_modi_generator = True
+                    manager.get_modi_headers.return_value = {
+                        "Agid-JWT-Signature": "mock.sig",
+                        "Agid-JWT-TrackingEvidence": "mock.track",
+                    }
+                    mock_manager.return_value = manager
+
+                    with patch(
+                        "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                    ) as mock_sdk:
+                        sdk = MagicMock()
+                        response = MagicMock()
+                        response.id_richiesta = "REQ-123"
+                        response.esito = "OK"
+                        response.messaggio = None
+                        response.dati = []
+                        sdk.json_post.gestionecoordinate.return_value = response
+                        mock_sdk.return_value = sdk
+
+                        result = cli_runner.invoke(
+                            app,
+                            [
+                                "coordinate",
+                                "update",
+                                "--codcom",
+                                "H501",
+                                "--progr-civico",
+                                "12345",
+                                "--production",  # Use production environment
+                            ],
+                        )
+
+            assert result.exit_code == 0
+
+            # Verify PDNDAuthManager was created with modi_audience from production server
+            mock_manager.assert_called()
+            call_kwargs = mock_manager.call_args[1]
+            # Modi audience should be the base URL of the API
+            assert "modi_audience" in call_kwargs
+            assert "modipa.agenziaentrate.it" in call_kwargs["modi_audience"]
+
+    def test_status_command_does_not_send_modi_headers(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Test that status command does not require ModI headers (GET request)."""
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.has_modi_audit_context = True  # Even if configured
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    mock_manager.return_value = manager
+
+                    with patch(
+                        "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                    ) as mock_sdk:
+                        sdk = MagicMock()
+                        status_response = MagicMock()
+                        status_response.status = "OK"
+                        sdk.status.show_status.return_value = status_response
+                        mock_sdk.return_value = sdk
+
+                        result = cli_runner.invoke(app, ["coordinate", "status"])
+
+            assert result.exit_code == 0
+
+            # Status command (GET) should not call get_modi_headers
+            # ModI headers are only for POST requests with payload
+            manager.get_modi_headers.assert_not_called()

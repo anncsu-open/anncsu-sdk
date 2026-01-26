@@ -308,7 +308,11 @@ sdk = AnncsuConsultazione(security=Security(bearer=token_response.access_token))
 | `PDND_ISSUER` | Issuer claim - your client_id |
 | `PDND_SUBJECT` | Subject claim - your client_id |
 | `PDND_AUDIENCE` | Audience claim - must end with `/client-assertion` |
-| `PDND_PURPOSE_ID` | Purpose ID for the request |
+| `PDND_PURPOSE_ID_PA` | Purpose ID for PA Consultazione API |
+| `PDND_PURPOSE_ID_COORDINATE` | Purpose ID for Coordinate API |
+| `PDND_PURPOSE_ID_ACCESSI` | Purpose ID for Accessi API (can be empty) |
+| `PDND_PURPOSE_ID_INTERNI` | Purpose ID for Interni API (can be empty) |
+| `PDND_PURPOSE_ID_ODONIMI` | Purpose ID for Odonimi API (can be empty) |
 | `PDND_PRIVATE_KEY` | Private key content (or use `PDND_KEY_PATH`) |
 | `PDND_KEY_PATH` | Path to private key file (or use `PDND_PRIVATE_KEY`) |
 
@@ -319,7 +323,14 @@ PDND_KID=my-key-id
 PDND_ISSUER=my-client-id
 PDND_SUBJECT=my-client-id
 PDND_AUDIENCE=auth.uat.interop.pagopa.it/client-assertion
-PDND_PURPOSE_ID=my-purpose-id
+
+# Purpose ID for each API type (ALL must be present, can be empty if not used)
+PDND_PURPOSE_ID_PA=your-purpose-id-for-pa-consultazione
+PDND_PURPOSE_ID_COORDINATE=your-purpose-id-for-coordinate-api
+PDND_PURPOSE_ID_ACCESSI=
+PDND_PURPOSE_ID_INTERNI=
+PDND_PURPOSE_ID_ODONIMI=
+
 PDND_KEY_PATH=./private_key.pem
 ```
 

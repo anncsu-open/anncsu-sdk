@@ -18,6 +18,11 @@ import pytest
 if TYPE_CHECKING:
     pass
 
+from anncsu.common.config import APIType
+
+# Default api_type for tests
+TEST_API_TYPE = APIType.PA
+
 
 # Helper to create JWT tokens for testing
 def create_test_jwt(
@@ -92,7 +97,7 @@ class TestPDNDAuthManagerInitialization:
         settings = MagicMock()
         settings.to_config.return_value = MagicMock()
 
-        manager = PDNDAuthManager(settings=settings)
+        manager = PDNDAuthManager(api_type=TEST_API_TYPE, settings=settings)
 
         assert manager is not None
         assert manager.settings == settings
@@ -103,17 +108,26 @@ class TestPDNDAuthManagerInitialization:
 
         config = MagicMock()
 
-        manager = PDNDAuthManager(config=config)
+        manager = PDNDAuthManager(api_type=TEST_API_TYPE, config=config)
 
         assert manager is not None
         assert manager.config == config
+
+    def test_manager_requires_api_type(self):
+        """Test that manager requires api_type parameter."""
+        from anncsu.common.auth import PDNDAuthManager
+
+        config = MagicMock()
+
+        with pytest.raises(TypeError, match="api_type"):
+            PDNDAuthManager(config=config)
 
     def test_manager_requires_settings_or_config(self):
         """Test that manager requires either settings or config."""
         from anncsu.common.auth import PDNDAuthManager
 
         with pytest.raises(ValueError, match="Either 'settings' or 'config'"):
-            PDNDAuthManager()
+            PDNDAuthManager(api_type=TEST_API_TYPE)
 
     def test_manager_prefers_config_over_settings(self):
         """Test that config takes precedence over settings."""
@@ -122,7 +136,9 @@ class TestPDNDAuthManagerInitialization:
         settings = MagicMock()
         config = MagicMock()
 
-        manager = PDNDAuthManager(settings=settings, config=config)
+        manager = PDNDAuthManager(
+            api_type=TEST_API_TYPE, settings=settings, config=config
+        )
 
         # Config should be used directly, settings.to_config() not called
         settings.to_config.assert_not_called()
@@ -136,9 +152,9 @@ class TestPDNDAuthManagerInitialization:
         mock_config = MagicMock()
         settings.to_config.return_value = mock_config
 
-        manager = PDNDAuthManager(settings=settings)
+        manager = PDNDAuthManager(api_type=TEST_API_TYPE, settings=settings)
 
-        settings.to_config.assert_called_once()
+        settings.to_config.assert_called_once_with(TEST_API_TYPE)
         assert manager.config == mock_config
 
     def test_manager_accepts_token_endpoint(self):
@@ -148,7 +164,9 @@ class TestPDNDAuthManagerInitialization:
         config = MagicMock()
         endpoint = "https://auth.example.com/token.oauth2"
 
-        manager = PDNDAuthManager(config=config, token_endpoint=endpoint)
+        manager = PDNDAuthManager(
+            api_type=TEST_API_TYPE, config=config, token_endpoint=endpoint
+        )
 
         assert manager.token_endpoint == endpoint
 
@@ -159,6 +177,7 @@ class TestPDNDAuthManagerInitialization:
         config = MagicMock()
 
         manager = PDNDAuthManager(
+            api_type=TEST_API_TYPE,
             config=config,
             client_assertion_threshold_seconds=3600,  # 1 hour
             access_token_threshold_seconds=60,  # 1 minute
@@ -173,7 +192,7 @@ class TestPDNDAuthManagerInitialization:
 
         config = MagicMock()
 
-        manager = PDNDAuthManager(config=config)
+        manager = PDNDAuthManager(api_type=TEST_API_TYPE, config=config)
 
         # Default client assertion threshold: 1 day (86400 seconds)
         assert manager.client_assertion_threshold_seconds == 86400
@@ -195,7 +214,7 @@ class TestPDNDAuthManagerClientAssertion:
             "anncsu.common.auth.create_client_assertion",
             return_value=mock_assertion,
         ) as mock_create:
-            manager = PDNDAuthManager(config=config)
+            manager = PDNDAuthManager(api_type=TEST_API_TYPE, config=config)
             assertion = manager.get_client_assertion()
 
             mock_create.assert_called_once_with(config)
@@ -212,7 +231,7 @@ class TestPDNDAuthManagerClientAssertion:
             "anncsu.common.auth.create_client_assertion",
             return_value=mock_assertion,
         ) as mock_create:
-            manager = PDNDAuthManager(config=config)
+            manager = PDNDAuthManager(api_type=TEST_API_TYPE, config=config)
 
             # Get assertion twice
             assertion1 = manager.get_client_assertion()
@@ -234,7 +253,7 @@ class TestPDNDAuthManagerClientAssertion:
             "anncsu.common.auth.create_client_assertion",
             return_value=new_assertion,
         ) as mock_create:
-            manager = PDNDAuthManager(config=config)
+            manager = PDNDAuthManager(api_type=TEST_API_TYPE, config=config)
 
             # Manually set an expired assertion in the cache
             manager._client_assertion = expired_assertion
@@ -264,6 +283,7 @@ class TestPDNDAuthManagerClientAssertion:
             return_value=new_assertion,
         ) as mock_create:
             manager = PDNDAuthManager(
+                api_type=TEST_API_TYPE,
                 config=config,
                 client_assertion_threshold_seconds=86400,  # 1 day
             )
@@ -288,7 +308,7 @@ class TestPDNDAuthManagerClientAssertion:
         with patch(
             "anncsu.common.auth.create_client_assertion", return_value=assertion
         ):
-            manager = PDNDAuthManager(config=config)
+            manager = PDNDAuthManager(api_type=TEST_API_TYPE, config=config)
             manager.get_client_assertion()
 
             ttl = manager.client_assertion_ttl()
@@ -304,7 +324,7 @@ class TestPDNDAuthManagerClientAssertion:
 
         config = MagicMock()
 
-        manager = PDNDAuthManager(config=config)
+        manager = PDNDAuthManager(api_type=TEST_API_TYPE, config=config)
 
         # No assertion yet
         assert manager.is_client_assertion_expired() is True
@@ -342,6 +362,7 @@ class TestPDNDAuthManagerAccessToken:
             ) as mock_get_token,
         ):
             manager = PDNDAuthManager(
+                api_type=TEST_API_TYPE,
                 config=config,
                 token_endpoint="https://auth.example.com/token.oauth2",
             )
@@ -372,6 +393,7 @@ class TestPDNDAuthManagerAccessToken:
             ) as mock_get_token,
         ):
             manager = PDNDAuthManager(
+                api_type=TEST_API_TYPE,
                 config=config,
                 token_endpoint="https://auth.example.com/token.oauth2",
             )
@@ -409,6 +431,7 @@ class TestPDNDAuthManagerAccessToken:
             ) as mock_get_token,
         ):
             manager = PDNDAuthManager(
+                api_type=TEST_API_TYPE,
                 config=config,
                 token_endpoint="https://auth.example.com/token.oauth2",
             )
@@ -449,6 +472,7 @@ class TestPDNDAuthManagerAccessToken:
             ),
         ):
             manager = PDNDAuthManager(
+                api_type=TEST_API_TYPE,
                 config=config,
                 token_endpoint="https://auth.example.com/token.oauth2",
                 access_token_threshold_seconds=60,
@@ -485,6 +509,7 @@ class TestPDNDAuthManagerAccessToken:
             ),
         ):
             manager = PDNDAuthManager(
+                api_type=TEST_API_TYPE,
                 config=config,
                 token_endpoint="https://auth.example.com/token.oauth2",
             )
@@ -503,6 +528,7 @@ class TestPDNDAuthManagerAccessToken:
         config = MagicMock()
 
         manager = PDNDAuthManager(
+            api_type=TEST_API_TYPE,
             config=config,
             token_endpoint="https://auth.example.com/token.oauth2",
         )
@@ -529,6 +555,7 @@ class TestPDNDAuthManagerRefreshCallback:
         config = MagicMock()
 
         manager = PDNDAuthManager(
+            api_type=TEST_API_TYPE,
             config=config,
             token_endpoint="https://auth.example.com/token.oauth2",
         )
@@ -560,6 +587,7 @@ class TestPDNDAuthManagerRefreshCallback:
             ),
         ):
             manager = PDNDAuthManager(
+                api_type=TEST_API_TYPE,
                 config=config,
                 token_endpoint="https://auth.example.com/token.oauth2",
             )
@@ -594,6 +622,7 @@ class TestPDNDAuthManagerRefreshCallback:
             ) as mock_get_token,
         ):
             manager = PDNDAuthManager(
+                api_type=TEST_API_TYPE,
                 config=config,
                 token_endpoint="https://auth.example.com/token.oauth2",
             )
@@ -621,6 +650,7 @@ class TestPDNDAuthManagerRefreshCallback:
         config.issuer = "test-client-id"
 
         manager = PDNDAuthManager(
+            api_type=TEST_API_TYPE,
             config=config,
             token_endpoint="https://auth.example.com/token.oauth2",
         )
@@ -664,6 +694,7 @@ class TestPDNDAuthManagerSecurity:
             ),
         ):
             manager = PDNDAuthManager(
+                api_type=TEST_API_TYPE,
                 config=config,
                 token_endpoint="https://auth.example.com/token.oauth2",
             )
@@ -696,6 +727,7 @@ class TestPDNDAuthManagerSecurity:
             ) as mock_get_token,
         ):
             manager = PDNDAuthManager(
+                api_type=TEST_API_TYPE,
                 config=config,
                 token_endpoint="https://auth.example.com/token.oauth2",
             )
@@ -723,7 +755,7 @@ class TestPDNDAuthManagerErrors:
             "anncsu.common.auth.create_client_assertion",
             side_effect=JWTGenerationError("Key error"),
         ):
-            manager = PDNDAuthManager(config=config)
+            manager = PDNDAuthManager(api_type=TEST_API_TYPE, config=config)
 
             with pytest.raises(JWTGenerationError):
                 manager.get_client_assertion()
@@ -748,6 +780,7 @@ class TestPDNDAuthManagerErrors:
             ),
         ):
             manager = PDNDAuthManager(
+                api_type=TEST_API_TYPE,
                 config=config,
                 token_endpoint="https://auth.example.com/token.oauth2",
             )
@@ -794,6 +827,7 @@ class TestPDNDAuthManagerErrors:
             ),
         ):
             manager = PDNDAuthManager(
+                api_type=TEST_API_TYPE,
                 config=config,
                 token_endpoint="https://auth.example.com/token.oauth2",
             )
@@ -818,3 +852,163 @@ class TestPDNDAuthManagerExports:
         from anncsu.common import PDNDAuthManager
 
         assert PDNDAuthManager is not None
+
+
+class TestPDNDAuthManagerModIHeaders:
+    """Tests for ModI header generation in PDNDAuthManager."""
+
+    @pytest.fixture
+    def mock_config(self):
+        """Create a mock ClientAssertionConfig."""
+        config = MagicMock()
+        config.issuer = "test-issuer"
+        config.kid = "test-kid"
+        config.audience = "https://auth.test.example.com"
+        return config
+
+    @pytest.fixture
+    def auth_manager_without_modi(self, mock_config):
+        """Create an auth manager without ModI configuration."""
+        from anncsu.common.auth import PDNDAuthManager
+
+        return PDNDAuthManager(
+            api_type=TEST_API_TYPE,
+            config=mock_config,
+            token_endpoint="https://auth.test.example.com/token",
+        )
+
+    @pytest.fixture
+    def mock_settings_with_modi(self, mock_private_key):
+        """Create real ClientAssertionSettings with ModI audit context configured."""
+        from anncsu.common.config import ClientAssertionSettings
+
+        # Create real settings instance with ModI audit context
+        settings = ClientAssertionSettings(
+            kid="test-kid",
+            issuer="test-issuer",
+            subject="test-subject",
+            audience="https://auth.test.example.com/client-assertion",
+            private_key=mock_private_key.read_text(),
+            purpose_id_pa="test-purpose-id-pa",
+            purpose_id_coordinate="test-purpose-id-coordinate",
+            purpose_id_accessi="",
+            purpose_id_interni="",
+            purpose_id_odonimi="",
+            modi_user_id="batch-user-001",
+            modi_user_location="server-batch-01",
+            modi_loa="SPID_L2",
+            _env_file=None,  # Don't load .env file
+        )
+
+        return settings
+
+    def test_has_modi_generator_false_by_default(self, auth_manager_without_modi):
+        """Test that has_modi_generator is False when no settings provided."""
+        assert auth_manager_without_modi.has_modi_generator is False
+
+    def test_has_modi_generator_false_when_no_audit_context(self, mock_config):
+        """Test that has_modi_generator is False when settings has no audit context."""
+        from anncsu.common.auth import PDNDAuthManager
+
+        settings = MagicMock()
+        settings.has_modi_audit_context = False
+        settings.to_config.return_value = mock_config
+
+        manager = PDNDAuthManager(
+            api_type=TEST_API_TYPE,
+            settings=settings,
+            config=mock_config,
+            token_endpoint="https://auth.test.example.com/token",
+        )
+
+        assert manager.has_modi_generator is False
+
+    def test_has_modi_generator_true_when_audit_context_present(
+        self, mock_settings_with_modi
+    ):
+        """Test that has_modi_generator is True when settings has audit context and modi_audience."""
+        from anncsu.common.auth import PDNDAuthManager
+
+        manager = PDNDAuthManager(
+            api_type=TEST_API_TYPE,
+            settings=mock_settings_with_modi,
+            token_endpoint="https://auth.test.example.com/token",
+            modi_audience="https://modipa-val.anpr.interno.it",
+        )
+
+        assert manager.has_modi_generator is True
+
+    def test_get_modi_headers_returns_empty_when_no_generator(
+        self, auth_manager_without_modi
+    ):
+        """Test that get_modi_headers returns empty dict when no generator."""
+        payload = {"codcom": "H501", "operazione": "M"}
+        headers = auth_manager_without_modi.get_modi_headers(payload)
+
+        assert headers == {}
+
+    def test_get_modi_headers_returns_headers_when_generator_present(
+        self, mock_settings_with_modi
+    ):
+        """Test that get_modi_headers returns ModI headers when generator present."""
+        from anncsu.common.auth import PDNDAuthManager
+
+        manager = PDNDAuthManager(
+            api_type=TEST_API_TYPE,
+            settings=mock_settings_with_modi,
+            token_endpoint="https://auth.test.example.com/token",
+            modi_audience="https://modipa-val.anpr.interno.it",
+        )
+
+        payload = {"codcom": "H501", "operazione": "M"}
+        headers = manager.get_modi_headers(payload)
+
+        assert "Agid-JWT-Signature" in headers
+        assert "Agid-JWT-TrackingEvidence" in headers
+        # Headers should be JWT strings
+        assert headers["Agid-JWT-Signature"].count(".") == 2
+        assert headers["Agid-JWT-TrackingEvidence"].count(".") == 2
+
+    def test_get_modi_headers_uses_api_audience(self, mock_settings_with_modi):
+        """Test that ModI headers use the specified api_audience."""
+        from anncsu.common.auth import PDNDAuthManager
+
+        manager = PDNDAuthManager(
+            api_type=TEST_API_TYPE,
+            settings=mock_settings_with_modi,
+            token_endpoint="https://auth.test.example.com/token",
+            modi_audience="https://modipa-val.anpr.interno.it/coordinate",
+        )
+
+        payload = {"test": "data"}
+        headers = manager.get_modi_headers(payload)
+
+        # Decode signature JWT and check audience
+        signature_jwt = headers["Agid-JWT-Signature"]
+        payload_b64 = signature_jwt.split(".")[1]
+        padding = 4 - len(payload_b64) % 4
+        if padding != 4:
+            payload_b64 += "=" * padding
+        jwt_payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+
+        assert jwt_payload["aud"] == "https://modipa-val.anpr.interno.it/coordinate"
+
+    def test_modi_headers_differ_for_different_payloads(self, mock_settings_with_modi):
+        """Test that ModI headers are different for different payloads."""
+        from anncsu.common.auth import PDNDAuthManager
+
+        manager = PDNDAuthManager(
+            api_type=TEST_API_TYPE,
+            settings=mock_settings_with_modi,
+            token_endpoint="https://auth.test.example.com/token",
+            modi_audience="https://modipa-val.anpr.interno.it",
+        )
+
+        payload1 = {"codcom": "H501", "progr_civico": 12345}
+        payload2 = {"codcom": "H501", "progr_civico": 67890}
+
+        headers1 = manager.get_modi_headers(payload1)
+        headers2 = manager.get_modi_headers(payload2)
+
+        # Signatures should be different due to different payload digests
+        assert headers1["Agid-JWT-Signature"] != headers2["Agid-JWT-Signature"]

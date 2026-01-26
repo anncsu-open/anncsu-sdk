@@ -71,7 +71,8 @@ from anncsu.common.session import (
 )
 
 if TYPE_CHECKING:
-    from anncsu.common.config import ClientAssertionSettings
+    from anncsu.common.config import APIType, ClientAssertionSettings
+    from anncsu.common.modi import ModIHeaderGenerator
 
 
 # Default thresholds
@@ -122,12 +123,16 @@ class PDNDAuthManager:
     """Manages PDND authentication lifecycle.
 
     This class handles the entire PDND authentication flow:
-    - Generates and caches client assertions
+    - Generates and caches client assertions (with API-specific purpose_id)
     - Obtains and caches access tokens
     - Automatically regenerates tokens when expired or expiring soon
     - Provides a refresh callback for TokenValidationHook integration
 
+    Each API type requires its own PDNDAuthManager instance because each
+    uses a different purpose_id for authentication.
+
     Attributes:
+        api_type: The API type this manager authenticates for.
         settings: Optional ClientAssertionSettings (converted to config).
         config: ClientAssertionConfig for generating client assertions.
         token_endpoint: PDND token endpoint URL.
@@ -137,7 +142,9 @@ class PDNDAuthManager:
             expiration (default: 60).
 
     Example:
+        >>> from anncsu.common.config import APIType
         >>> auth = PDNDAuthManager(
+        ...     api_type=APIType.PA,
         ...     settings=ClientAssertionSettings(),
         ...     token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",
         ... )
@@ -147,6 +154,7 @@ class PDNDAuthManager:
     def __init__(
         self,
         *,
+        api_type: "APIType",
         settings: "ClientAssertionSettings | None" = None,
         config: ClientAssertionConfig | None = None,
         token_endpoint: str | None = None,
@@ -154,12 +162,16 @@ class PDNDAuthManager:
         access_token_threshold_seconds: int = DEFAULT_ACCESS_TOKEN_THRESHOLD,
         session_persistence: bool = False,
         config_dir: Path | None = None,
+        modi_audience: str | None = None,
     ):
         """Initialize the PDND Auth Manager.
 
         Args:
+            api_type: The API type (REQUIRED). Determines which purpose_id
+                to use for client assertion generation and which session file
+                to use for token persistence.
             settings: ClientAssertionSettings to load configuration from.
-                Will be converted to ClientAssertionConfig.
+                Will be converted to ClientAssertionConfig using api_type.
             config: ClientAssertionConfig for generating client assertions.
                 Takes precedence over settings if both provided.
             token_endpoint: PDND token endpoint URL for obtaining access tokens.
@@ -171,15 +183,26 @@ class PDNDAuthManager:
                 Default is False.
             config_dir: Custom config directory for session file.
                 Defaults to ~/.anncsu/
+            modi_audience: Audience URL for ModI headers (required for APIs
+                that need ModI security headers like Coordinate API).
+                Example: "https://modipa-val.anpr.interno.it"
 
         Raises:
-            ValueError: If neither settings nor config is provided.
+            ValueError: If api_type is None or if neither settings nor config is provided.
+            EmptyPurposeIDError: If the purpose_id for the API is empty.
         """
+        if api_type is None:
+            raise ValueError(
+                "api_type is required. Each API requires its own authentication "
+                "because each uses a different purpose_id."
+            )
+
         if settings is None and config is None:
             raise ValueError(
                 "Either 'settings' or 'config' must be provided to PDNDAuthManager"
             )
 
+        self.api_type = api_type
         self.settings = settings
         self.token_endpoint = token_endpoint
         self.client_assertion_threshold_seconds = client_assertion_threshold_seconds
@@ -187,11 +210,11 @@ class PDNDAuthManager:
         self.session_persistence = session_persistence
         self.config_dir = config_dir
 
-        # Convert settings to config if needed
+        # Convert settings to config if needed (using api_type for purpose_id)
         if config is not None:
             self.config = config
         elif settings is not None:
-            self.config = settings.to_config()
+            self.config = settings.to_config(api_type)
         else:
             # This should never happen due to validation above
             raise ValueError("No configuration available")
@@ -200,9 +223,48 @@ class PDNDAuthManager:
         self._client_assertion: str | None = None
         self._access_token: str | None = None
 
+        # ModI header generator (optional, for APIs requiring ModI security)
+        self._modi_generator: "ModIHeaderGenerator | None" = None
+        self._init_modi_generator(settings, modi_audience)
+
         # Load session from file if persistence is enabled
         if self.session_persistence:
             self._load_session()
+
+    def _init_modi_generator(
+        self,
+        settings: "ClientAssertionSettings | None",
+        modi_audience: str | None,
+    ) -> None:
+        """Initialize the ModI header generator if audit context is configured.
+
+        Args:
+            settings: ClientAssertionSettings with optional ModI audit context.
+            modi_audience: Audience URL for ModI JWTs.
+        """
+        if settings is None:
+            return
+
+        if not settings.has_modi_audit_context:
+            return
+
+        if modi_audience is None:
+            return
+
+        # Import here to avoid circular imports
+        from anncsu.common.modi import (
+            ModIHeaderGenerator,
+            create_modi_config_from_settings,
+        )
+
+        # Create ModI config from settings
+        modi_config = create_modi_config_from_settings(settings, modi_audience)
+
+        # Get audit context
+        audit_context = settings.get_modi_audit_context()
+
+        # Create generator
+        self._modi_generator = ModIHeaderGenerator(modi_config, audit_context)
 
     def get_client_assertion(self) -> str:
         """Get a valid client assertion, generating one if needed.
@@ -392,6 +454,44 @@ class PDNDAuthManager:
         token = self.get_access_token()
         return Security(bearer=token, validate_expiration=validate_expiration)
 
+    @property
+    def has_modi_generator(self) -> bool:
+        """Check if ModI header generator is configured.
+
+        Returns:
+            True if ModI headers can be generated for requests.
+        """
+        return self._modi_generator is not None
+
+    def get_modi_headers(self, payload: dict) -> dict[str, str]:
+        """Generate ModI security headers for a request payload.
+
+        This method generates fresh ModI JWTs for each call. The headers
+        include:
+        - Agid-JWT-Signature: Contains digest of the payload (INTEGRITY_REST_02)
+        - Agid-JWT-TrackingEvidence: Contains audit information (AUDIT_REST_02)
+
+        Args:
+            payload: The request body dictionary to sign.
+
+        Returns:
+            Dictionary with ModI headers, or empty dict if no generator configured.
+
+        Example:
+            >>> auth = PDNDAuthManager(
+            ...     settings=settings,
+            ...     token_endpoint=endpoint,
+            ...     modi_audience="https://modipa-val.anpr.interno.it",
+            ... )
+            >>> payload = {"codcom": "H501", "operazione": "M"}
+            >>> headers = auth.get_modi_headers(payload)
+            >>> # headers = {"Agid-JWT-Signature": "...", "Agid-JWT-TrackingEvidence": "..."}
+        """
+        if self._modi_generator is None:
+            return {}
+
+        return self._modi_generator.generate_headers(payload)
+
     def get_refresh_callback(self) -> Callable[[], str]:
         """Get a callback function for token refresh.
 
@@ -420,11 +520,11 @@ class PDNDAuthManager:
         """Load session from file if it exists and tokens are valid.
 
         Only loads tokens if:
-        - Session file exists
+        - Session file exists for this API type
         - Token endpoint matches (or session has no endpoint)
         - Tokens are not expired
         """
-        session = load_session(config_dir=self.config_dir)
+        session = load_session(api_type=self.api_type, config_dir=self.config_dir)
         if session is None:
             return
 
@@ -460,14 +560,14 @@ class PDNDAuthManager:
             access_token=self._access_token,
             token_endpoint=self.token_endpoint,
         )
-        save_session(session, config_dir=self.config_dir)
+        save_session(session, api_type=self.api_type, config_dir=self.config_dir)
 
     def clear_session(self) -> None:
-        """Clear the session file and cached tokens."""
+        """Clear the session file and cached tokens for this API type."""
         self._client_assertion = None
         self._access_token = None
         if self.session_persistence:
-            clear_session(config_dir=self.config_dir)
+            clear_session(api_type=self.api_type, config_dir=self.config_dir)
 
 
 __all__ = [

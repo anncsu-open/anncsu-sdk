@@ -485,19 +485,35 @@ Original coordinates to restore manually:
 
 The CLI reads configuration from environment variables (with `PDND_` prefix) or a `.env` file:
 
+### PDND Configuration
+
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `PDND_KID` | Yes | Key ID (kid) header parameter |
 | `PDND_ISSUER` | Yes | Issuer (iss) claim - your client_id |
 | `PDND_SUBJECT` | Yes | Subject (sub) claim - your client_id |
 | `PDND_AUDIENCE` | Yes | Audience (aud) - PDND client-assertion endpoint |
-| `PDND_PURPOSE_ID` | Yes | Purpose ID for the PDND request |
+| `PDND_PURPOSE_ID_PA` | Yes | Purpose ID for PA Consultazione API |
+| `PDND_PURPOSE_ID_COORDINATE` | Yes | Purpose ID for Coordinate API |
+| `PDND_PURPOSE_ID_ACCESSI` | Yes* | Purpose ID for Accessi API (can be empty) |
+| `PDND_PURPOSE_ID_INTERNI` | Yes* | Purpose ID for Interni API (can be empty) |
+| `PDND_PURPOSE_ID_ODONIMI` | Yes* | Purpose ID for Odonimi API (can be empty) |
 | `PDND_KEY_PATH` | One required | Path to RSA private key file |
 | `PDND_PRIVATE_KEY` | One required | RSA private key content (alternative to KEY_PATH) |
 | `PDND_TOKEN_ENDPOINT` | Yes | PDND token endpoint URL |
 | `PDND_ALG` | No | Algorithm (default: RS256) |
 | `PDND_TYP` | No | Token type (default: JWT) |
 | `PDND_VALIDITY_MINUTES` | No | Assertion validity in minutes (default: 43200 = 30 days) |
+
+### ModI Audit Context (for Coordinate API)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `MODI_USER_ID` | For Coordinate | User identifier in the consumer domain |
+| `MODI_USER_LOCATION` | For Coordinate | Workstation/system identifier |
+| `MODI_LOA` | For Coordinate | Level of Assurance (e.g., SPID_L2, CIE_L3) |
+
+> **Note**: ModI variables are required only for Coordinate API write operations (`update`, `dry-run`). If not configured, the CLI will attempt requests without ModI headers, which will fail for APIs requiring them.
 
 ### Example `.env` file
 
@@ -507,12 +523,115 @@ PDND_KID=your-key-id
 PDND_ISSUER=your-client-id
 PDND_SUBJECT=your-client-id
 PDND_AUDIENCE=https://auth.uat.interop.pagopa.it/client-assertion
-PDND_PURPOSE_ID=your-purpose-id
+
+# Purpose ID for each API type (ALL must be present, can be empty if not used)
+PDND_PURPOSE_ID_PA=your-purpose-id-for-pa-consultazione
+PDND_PURPOSE_ID_COORDINATE=your-purpose-id-for-coordinate-api
+PDND_PURPOSE_ID_ACCESSI=
+PDND_PURPOSE_ID_INTERNI=
+PDND_PURPOSE_ID_ODONIMI=
+
 PDND_KEY_PATH=./private_key.pem
 PDND_TOKEN_ENDPOINT=https://auth.uat.interop.pagopa.it/token.oauth2
 
 # Optional
 PDND_VALIDITY_MINUTES=43200
+
+# ModI Audit Context (required for Coordinate API)
+MODI_USER_ID=batch-user-001
+MODI_USER_LOCATION=server-batch-01
+MODI_LOA=SPID_L2
+```
+
+---
+
+## ModI Headers (Coordinate API)
+
+The Coordinate API requires ModI (Modello di Interoperabilità) security headers in addition to the standard bearer token. These headers implement the AGID interoperability patterns:
+
+- **INTEGRITY_REST_02**: Integrity of REST message payload in PDND
+- **AUDIT_REST_02**: Forwarding of tracked data in the Consumer domain
+
+### Configuration
+
+To enable ModI headers, add these environment variables to your `.env`:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `MODI_USER_ID` | Yes* | User identifier in the consumer domain |
+| `MODI_USER_LOCATION` | Yes* | Workstation/system identifier from which the request originates |
+| `MODI_LOA` | Yes* | Level of Assurance in the authentication process |
+
+*Required only for Coordinate API (POST requests). If not configured, ModI headers will not be sent.
+
+### Level of Assurance (LoA) Values
+
+| Value | Description |
+|-------|-------------|
+| `SPID_L1` | SPID Level 1 authentication |
+| `SPID_L2` | SPID Level 2 authentication (recommended for batch operations) |
+| `SPID_L3` | SPID Level 3 authentication |
+| `CIE_L1` | CIE Level 1 authentication |
+| `CIE_L2` | CIE Level 2 authentication |
+| `CIE_L3` | CIE Level 3 authentication |
+
+### How It Works
+
+When ModI is configured, the CLI automatically generates two JWT headers for each POST request:
+
+1. **`Agid-JWT-Signature`**: Contains a SHA-256 digest of the request payload, ensuring integrity
+2. **`Agid-JWT-TrackingEvidence`**: Contains audit information (userID, userLocation, LoA) for traceability
+
+These headers are signed using the same RSA private key used for PDND authentication.
+
+### Example Configuration
+
+```env
+# ModI Audit Context
+MODI_USER_ID=system-batch-processor
+MODI_USER_LOCATION=datacenter-rm-01
+MODI_LOA=SPID_L2
+```
+
+### Commands That Use ModI
+
+| Command | ModI Headers |
+|---------|-------------|
+| `anncsu coordinate update` | ✅ Yes - POST request with payload |
+| `anncsu coordinate dry-run` | ✅ Yes - Two POST requests (test + restore) |
+| `anncsu coordinate status` | ❌ No - GET request, no payload |
+| `anncsu auth *` | ❌ No - Authentication only |
+| `anncsu config *` | ❌ No - Local configuration |
+
+### Verifying ModI Configuration
+
+To check if ModI is properly configured:
+
+```bash
+anncsu config show
+```
+
+The output will show:
+```
+┌─────────────────────────────────────────┐
+│ ModI Configuration                      │
+├─────────────────────────────────────────┤
+│ User ID:       system-batch-processor   │
+│ User Location: datacenter-rm-01         │
+│ LoA:           SPID_L2                  │
+│ Status:        ✅ Configured            │
+└─────────────────────────────────────────┘
+```
+
+If ModI is not configured:
+```
+┌─────────────────────────────────────────┐
+│ ModI Configuration                      │
+├─────────────────────────────────────────┤
+│ Status:        ❌ Not configured        │
+│ Note:          Required for Coordinate  │
+│                API write operations     │
+└─────────────────────────────────────────┘
 ```
 
 ---
@@ -622,7 +741,11 @@ curl -s -H "Authorization: Bearer $TOKEN" \
     PDND_ISSUER: ${{ secrets.PDND_ISSUER }}
     PDND_SUBJECT: ${{ secrets.PDND_SUBJECT }}
     PDND_AUDIENCE: ${{ secrets.PDND_AUDIENCE }}
-    PDND_PURPOSE_ID: ${{ secrets.PDND_PURPOSE_ID }}
+    PDND_PURPOSE_ID_PA: ${{ secrets.PDND_PURPOSE_ID_PA }}
+    PDND_PURPOSE_ID_COORDINATE: ${{ secrets.PDND_PURPOSE_ID_COORDINATE }}
+    PDND_PURPOSE_ID_ACCESSI: ""
+    PDND_PURPOSE_ID_INTERNI: ""
+    PDND_PURPOSE_ID_ODONIMI: ""
     PDND_PRIVATE_KEY: ${{ secrets.PDND_PRIVATE_KEY }}
     PDND_TOKEN_ENDPOINT: ${{ secrets.PDND_TOKEN_ENDPOINT }}
   run: |

@@ -73,10 +73,26 @@ class ConfigInfo(BaseModel):
     issuer: str = Field(description="Issuer/Client ID (masked)")
     subject: str = Field(description="Subject (masked)")
     audience: str = Field(description="Audience URL")
-    purpose_id: str = Field(description="Purpose ID (masked)")
+    # Multi-API purpose IDs
+    purpose_id_pa: str = Field(description="Purpose ID for PA API (masked)")
+    purpose_id_coordinate: str = Field(
+        description="Purpose ID for Coordinate API (masked)"
+    )
+    purpose_id_accessi: str = Field(description="Purpose ID for Accessi API (masked)")
+    purpose_id_interni: str = Field(description="Purpose ID for Interni API (masked)")
+    purpose_id_odonimi: str = Field(description="Purpose ID for Odonimi API (masked)")
     key_path: str = Field(description="Path to private key")
     key_exists: bool = Field(description="Whether key file exists")
     validity_minutes: int = Field(description="Assertion validity in minutes")
+    # ModI configuration
+    modi_user_id: str | None = Field(default=None, description="ModI User ID")
+    modi_user_location: str | None = Field(
+        default=None, description="ModI User Location"
+    )
+    modi_loa: str | None = Field(default=None, description="ModI Level of Assurance")
+    modi_configured: bool = Field(
+        default=False, description="Whether ModI is fully configured"
+    )
 
 
 class AssertionInfo(BaseModel):

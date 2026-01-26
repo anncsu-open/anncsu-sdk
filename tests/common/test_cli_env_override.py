@@ -74,12 +74,17 @@ def temp_key_file():
 
 @pytest.fixture
 def env_settings(monkeypatch, temp_key_file):
-    """Set up environment variables for testing."""
+    """Set up environment variables for testing with multi-API support."""
     monkeypatch.setenv("PDND_KID", "env-key-id")
     monkeypatch.setenv("PDND_ISSUER", "env-issuer")
     monkeypatch.setenv("PDND_SUBJECT", "env-subject")
     monkeypatch.setenv("PDND_AUDIENCE", "env.example.com/client-assertion")
-    monkeypatch.setenv("PDND_PURPOSE_ID", "env-purpose-id")
+    # Multi-API purpose IDs
+    monkeypatch.setenv("PDND_PURPOSE_ID_PA", "env-purpose-id-pa")
+    monkeypatch.setenv("PDND_PURPOSE_ID_COORDINATE", "env-purpose-id-coordinate")
+    monkeypatch.setenv("PDND_PURPOSE_ID_ACCESSI", "")
+    monkeypatch.setenv("PDND_PURPOSE_ID_INTERNI", "")
+    monkeypatch.setenv("PDND_PURPOSE_ID_ODONIMI", "")
     monkeypatch.setenv("PDND_KEY_PATH", str(temp_key_file))
     monkeypatch.setenv("PDND_VALIDITY_MINUTES", "60")
     return temp_key_file
@@ -89,15 +94,38 @@ class TestCLIWithEnvVariables:
     """Tests for CLI with environment variable support."""
 
     def test_from_env_uses_environment_variables(self, cli_runner, env_settings):
-        """Test that --from-env uses environment variables."""
+        """Test that --from-env with --api-type uses environment variables."""
         app = _load_cli_app()
 
-        result = cli_runner.invoke(app, ["--from-env", "--no-clear"])
+        result = cli_runner.invoke(
+            app, ["--from-env", "--api-type", "pa", "--no-clear"]
+        )
 
         assert result.exit_code == 0
         # Token should be generated (JWT format: header.payload.signature)
         token = result.stdout.strip()
         assert len(token.split(".")) == 3
+
+    def test_from_env_with_coordinate_api_type(self, cli_runner, env_settings):
+        """Test that --from-env with --api-type coordinate works."""
+        app = _load_cli_app()
+
+        result = cli_runner.invoke(
+            app, ["--from-env", "--api-type", "coordinate", "--no-clear"]
+        )
+
+        assert result.exit_code == 0
+        token = result.stdout.strip()
+        assert len(token.split(".")) == 3
+
+    def test_from_env_without_api_type_fails(self, cli_runner, env_settings):
+        """Test that --from-env without --api-type or --purpose-id fails."""
+        app = _load_cli_app()
+
+        result = cli_runner.invoke(app, ["--from-env", "--no-clear"])
+
+        assert result.exit_code == 1
+        assert "--api-type" in result.stdout or "purpose-id" in result.stdout
 
     def test_cli_param_overrides_env_kid(self, cli_runner, env_settings):
         """Test that CLI --kid overrides PDND_KID environment variable."""
@@ -106,7 +134,9 @@ class TestCLIWithEnvVariables:
 
         app = _load_cli_app()
 
-        result = cli_runner.invoke(app, ["--kid", "cli-override-kid", "--no-clear"])
+        result = cli_runner.invoke(
+            app, ["--api-type", "pa", "--kid", "cli-override-kid", "--no-clear"]
+        )
 
         assert result.exit_code == 0
         token = result.stdout.strip()
@@ -126,7 +156,14 @@ class TestCLIWithEnvVariables:
         app = _load_cli_app()
 
         result = cli_runner.invoke(
-            app, ["--issuer", "cli-override-issuer", "--no-clear"]
+            app,
+            [
+                "--api-type",
+                "pa",
+                "--issuer",
+                "cli-override-issuer",
+                "--no-clear",
+            ],
         )
 
         assert result.exit_code == 0
@@ -147,7 +184,14 @@ class TestCLIWithEnvVariables:
         app = _load_cli_app()
 
         result = cli_runner.invoke(
-            app, ["--subject", "cli-override-subject", "--no-clear"]
+            app,
+            [
+                "--api-type",
+                "pa",
+                "--subject",
+                "cli-override-subject",
+                "--no-clear",
+            ],
         )
 
         assert result.exit_code == 0
@@ -168,7 +212,13 @@ class TestCLIWithEnvVariables:
 
         result = cli_runner.invoke(
             app,
-            ["--audience", "cli.override.com/client-assertion", "--no-clear"],
+            [
+                "--api-type",
+                "pa",
+                "--audience",
+                "cli.override.com/client-assertion",
+                "--no-clear",
+            ],
         )
 
         assert result.exit_code == 0
@@ -181,14 +231,22 @@ class TestCLIWithEnvVariables:
         assert payload["aud"] == "cli.override.com/client-assertion"
 
     def test_cli_param_overrides_env_purpose_id(self, cli_runner, env_settings):
-        """Test that CLI --purpose-id overrides PDND_PURPOSE_ID environment variable."""
+        """Test that CLI --purpose-id overrides --api-type derived purpose_id."""
         import base64
         import json
 
         app = _load_cli_app()
 
+        # Use --api-type pa but override with --purpose-id
         result = cli_runner.invoke(
-            app, ["--purpose-id", "cli-override-purpose", "--no-clear"]
+            app,
+            [
+                "--api-type",
+                "pa",
+                "--purpose-id",
+                "cli-override-purpose",
+                "--no-clear",
+            ],
         )
 
         assert result.exit_code == 0
@@ -200,6 +258,24 @@ class TestCLIWithEnvVariables:
         payload = json.loads(base64.urlsafe_b64decode(payload_b64))
         assert payload["purposeId"] == "cli-override-purpose"
 
+    def test_api_type_loads_correct_purpose_id(self, cli_runner, env_settings):
+        """Test that --api-type loads the correct purpose_id from env."""
+        import base64
+        import json
+
+        app = _load_cli_app()
+
+        result = cli_runner.invoke(app, ["--api-type", "pa", "--no-clear"])
+
+        assert result.exit_code == 0
+        token = result.stdout.strip()
+        payload_b64 = token.split(".")[1]
+        padding = 4 - len(payload_b64) % 4
+        if padding != 4:
+            payload_b64 += "=" * padding
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        assert payload["purposeId"] == "env-purpose-id-pa"
+
     def test_cli_param_overrides_env_validity_minutes(self, cli_runner, env_settings):
         """Test that CLI --validity-minutes overrides PDND_VALIDITY_MINUTES."""
         import base64
@@ -207,7 +283,9 @@ class TestCLIWithEnvVariables:
 
         app = _load_cli_app()
 
-        result = cli_runner.invoke(app, ["--validity-minutes", "120", "--no-clear"])
+        result = cli_runner.invoke(
+            app, ["--api-type", "pa", "--validity-minutes", "120", "--no-clear"]
+        )
 
         assert result.exit_code == 0
         token = result.stdout.strip()
@@ -230,7 +308,14 @@ class TestCLIWithEnvVariables:
 
         try:
             result = cli_runner.invoke(
-                app, ["--key-path", str(cli_key_path), "--no-clear"]
+                app,
+                [
+                    "--api-type",
+                    "pa",
+                    "--key-path",
+                    str(cli_key_path),
+                    "--no-clear",
+                ],
             )
             assert result.exit_code == 0
             token = result.stdout.strip()
@@ -248,6 +333,8 @@ class TestCLIWithEnvVariables:
         result = cli_runner.invoke(
             app,
             [
+                "--api-type",
+                "pa",
                 "--kid",
                 "multi-cli-kid",
                 "--issuer",
@@ -291,13 +378,17 @@ class TestCLIWithoutEnvVariables:
         # Change to temp directory to avoid reading .env file from project root
         monkeypatch.chdir(tmp_path)
 
-        # Clear all PDND env vars
+        # Clear all PDND env vars (including multi-API purpose IDs)
         for key in [
             "PDND_KID",
             "PDND_ISSUER",
             "PDND_SUBJECT",
             "PDND_AUDIENCE",
-            "PDND_PURPOSE_ID",
+            "PDND_PURPOSE_ID_PA",
+            "PDND_PURPOSE_ID_COORDINATE",
+            "PDND_PURPOSE_ID_ACCESSI",
+            "PDND_PURPOSE_ID_INTERNI",
+            "PDND_PURPOSE_ID_ODONIMI",
             "PDND_PRIVATE_KEY",
             "PDND_KEY_PATH",
             "PDND_ALG",
@@ -346,7 +437,9 @@ class TestCLIWithoutEnvVariables:
         """Test that --from-env fails when env vars are not set."""
         app = _load_cli_app()
 
-        result = cli_runner.invoke(app, ["--from-env", "--no-clear"])
+        result = cli_runner.invoke(
+            app, ["--from-env", "--api-type", "pa", "--no-clear"]
+        )
 
         assert result.exit_code == 1
         assert "required environment variables are not set" in result.stdout
@@ -361,12 +454,18 @@ class TestCLIEnvPartialOverride:
         """Test partial env vars completed by CLI params."""
         app = _load_cli_app()
 
-        # Set only some env vars
+        # Set only some env vars (including all required purpose IDs for validation)
         monkeypatch.setenv("PDND_KID", "partial-env-kid")
         monkeypatch.setenv("PDND_ISSUER", "partial-env-issuer")
         monkeypatch.setenv("PDND_KEY_PATH", str(temp_key_file))
+        # All purpose IDs must be present (can be empty)
+        monkeypatch.setenv("PDND_PURPOSE_ID_PA", "")
+        monkeypatch.setenv("PDND_PURPOSE_ID_COORDINATE", "")
+        monkeypatch.setenv("PDND_PURPOSE_ID_ACCESSI", "")
+        monkeypatch.setenv("PDND_PURPOSE_ID_INTERNI", "")
+        monkeypatch.setenv("PDND_PURPOSE_ID_ODONIMI", "")
 
-        # Provide missing params via CLI
+        # Provide missing params via CLI (including --purpose-id to override empty env)
         result = cli_runner.invoke(
             app,
             [

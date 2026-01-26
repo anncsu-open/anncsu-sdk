@@ -18,7 +18,7 @@ from anncsu.cli.models import (
     OriginalCoordinates,
 )
 from anncsu.common import PDNDAuthManager
-from anncsu.common.config import ClientAssertionSettings
+from anncsu.common.config import APIType, ClientAssertionSettings
 from anncsu.common.security import Security as PASecurity
 from anncsu.common.session import get_config_dir
 from anncsu.coordinate import AnncsuCoordinate
@@ -38,9 +38,10 @@ error_console = Console(stderr=True)
 DEFAULT_TOKEN_ENDPOINT = "https://auth.uat.interop.pagopa.it/token.oauth2"
 
 # Default server URLs for coordinate API
+# Note: Uses AgenziaEntrate-PDND path and anncsu-aggiornamento-coordinate endpoint
 SERVERS = {
-    "production": "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate/anncsuaccessi/v1",
-    "validation": "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate/anncsuaccessi/v1",
+    "production": "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1",
+    "validation": "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1",
 }
 
 # Default server URLs for consultazione API
@@ -55,7 +56,10 @@ def _get_consult_sdk(
     server_url: str | None = None,
     verify_ssl: bool = True,
 ) -> AnncsuConsultazione:
-    """Create an authenticated consultazione SDK instance."""
+    """Create an authenticated consultazione SDK instance.
+
+    Uses APIType.PA for authentication (PA Consultazione API).
+    """
     try:
         settings = ClientAssertionSettings()
     except Exception as e:
@@ -64,6 +68,7 @@ def _get_consult_sdk(
 
     try:
         manager = PDNDAuthManager(
+            api_type=APIType.PA,
             settings=settings,
             token_endpoint=token_endpoint,
             session_persistence=True,
@@ -91,8 +96,21 @@ def _get_sdk(
     token_endpoint: str,
     server_url: str | None = None,
     verify_ssl: bool = True,
-) -> AnncsuCoordinate:
-    """Create an authenticated SDK instance."""
+    modi_audience: str | None = None,
+) -> tuple[AnncsuCoordinate, PDNDAuthManager]:
+    """Create an authenticated SDK instance with optional ModI support.
+
+    Uses APIType.COORDINATE for authentication (Coordinate API).
+
+    Args:
+        token_endpoint: PDND token endpoint URL.
+        server_url: API server URL.
+        verify_ssl: Whether to verify SSL certificates.
+        modi_audience: Audience URL for ModI headers (typically the API base URL).
+
+    Returns:
+        Tuple of (SDK instance, PDNDAuthManager for ModI header generation).
+    """
     try:
         settings = ClientAssertionSettings()
     except Exception as e:
@@ -101,10 +119,12 @@ def _get_sdk(
 
     try:
         manager = PDNDAuthManager(
+            api_type=APIType.COORDINATE,
             settings=settings,
             token_endpoint=token_endpoint,
             session_persistence=True,
             config_dir=get_config_dir(),
+            modi_audience=modi_audience,
         )
         access_token = manager.get_access_token()
     except Exception as e:
@@ -117,11 +137,13 @@ def _get_sdk(
     # Create HTTP client with optional SSL verification
     client = httpx.Client(verify=verify_ssl)
 
-    return AnncsuCoordinate(
+    sdk = AnncsuCoordinate(
         security=security,
         server_url=server_url,
         client=client,
     )
+
+    return sdk, manager
 
 
 @coordinate_app.command("update")
@@ -215,11 +237,12 @@ def update(
     if server_url is None:
         server_url = SERVERS["validation"] if validation_env else SERVERS["production"]
 
-    # Create SDK
-    sdk = _get_sdk(
+    # Create SDK with ModI support (modi_audience is the API base URL)
+    sdk, auth_manager = _get_sdk(
         token_endpoint=token_endpoint,
         server_url=server_url,
         verify_ssl=not no_verify_ssl,
+        modi_audience=server_url,
     )
 
     # Build coordinate object if any coordinate provided
@@ -241,8 +264,16 @@ def update(
         )
     )
 
+    # Generate ModI headers if configured
+    http_headers = auth_manager.get_modi_headers(
+        richiesta.model_dump(by_alias=True, exclude_none=True)
+    )
+
     try:
-        response = sdk.json_post.gestionecoordinate(richiesta=richiesta)
+        response = sdk.json_post.gestionecoordinate(
+            richiesta=richiesta,
+            http_headers=http_headers if http_headers else None,
+        )
     except Exception as e:
         error_console.print(f"[red]Error:[/red] API call failed: {e}")
         raise typer.Exit(1) from None
@@ -458,10 +489,11 @@ def dry_run(
     if not json_output:
         console.print("[bold]Step 2:[/bold] Performing test update...\n")
 
-    coord_sdk = _get_sdk(
+    coord_sdk, auth_manager = _get_sdk(
         token_endpoint=token_endpoint,
         server_url=coord_server,
         verify_ssl=not no_verify_ssl,
+        modi_audience=coord_server,
     )
 
     # Build test coordinate (use same values)
@@ -480,9 +512,17 @@ def dry_run(
         )
     )
 
+    # Generate ModI headers for test update
+    test_http_headers = auth_manager.get_modi_headers(
+        test_richiesta.model_dump(by_alias=True, exclude_none=True)
+    )
+
     test_update_result: CoordinateUpdateResult
     try:
-        test_response = coord_sdk.json_post.gestionecoordinate(richiesta=test_richiesta)
+        test_response = coord_sdk.json_post.gestionecoordinate(
+            richiesta=test_richiesta,
+            http_headers=test_http_headers if test_http_headers else None,
+        )
         test_update_result = CoordinateUpdateResult(
             success=test_response.esito == "OK" if test_response.esito else False,
             id_richiesta=test_response.id_richiesta,
@@ -517,13 +557,19 @@ def dry_run(
         )
     )
 
+    # Generate ModI headers for restore (fresh headers for new request)
+    restore_http_headers = auth_manager.get_modi_headers(
+        restore_richiesta.model_dump(by_alias=True, exclude_none=True)
+    )
+
     restore_result: CoordinateUpdateResult | None = None
     restore_failed = False
     error_message: str | None = None
 
     try:
         restore_response = coord_sdk.json_post.gestionecoordinate(
-            richiesta=restore_richiesta
+            richiesta=restore_richiesta,
+            http_headers=restore_http_headers if restore_http_headers else None,
         )
         restore_result = CoordinateUpdateResult(
             success=restore_response.esito == "OK" if restore_response.esito else False,
@@ -650,8 +696,8 @@ def status(
     if server_url is None:
         server_url = SERVERS["validation"] if validation_env else SERVERS["production"]
 
-    # Create SDK
-    sdk = _get_sdk(
+    # Create SDK (no ModI needed for status - GET request)
+    sdk, _ = _get_sdk(
         token_endpoint=token_endpoint,
         server_url=server_url,
         verify_ssl=not no_verify_ssl,
