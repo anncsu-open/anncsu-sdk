@@ -1235,13 +1235,13 @@ class TestCoordinateDryRun:
             "prognazacc" in result.output.lower() or "codcom" in result.output.lower()
         )
 
-    def test_dry_run_prognazacc_mutually_exclusive_with_codcom(
+    def test_dry_run_prognazacc_takes_precedence_over_codcom(
         self, cli_runner: CliRunner
     ) -> None:
-        """Test that --prognazacc is mutually exclusive with --codcom/--denom."""
+        """Test that --prognazacc takes precedence over --codcom/--denom with a warning."""
         from anncsu.cli import app
 
-        # Both --prognazacc and --codcom/--denom - should fail
+        # Both --prognazacc and --codcom/--denom - should show warning and use prognazacc
         result = cli_runner.invoke(
             app,
             [
@@ -1255,13 +1255,10 @@ class TestCoordinateDryRun:
                 "VklBIFJPTUE=",
             ],
         )
-        # Should fail with exit code 1 because --prognazacc is mutually exclusive
-        # with --codcom/--denom
-        assert result.exit_code == 1
-        assert (
-            "mutually exclusive" in result.output.lower()
-            or "cannot use" in result.output.lower()
-        )
+        # Should show a warning that --codcom/--denom are ignored
+        assert "ignoring" in result.output.lower()
+        # Should use prognazacc (direct mode)
+        assert "prognazacc=5256880" in result.output.lower()
 
     def test_dry_run_prognazacc_not_found(
         self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
