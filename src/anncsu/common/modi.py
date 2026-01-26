@@ -163,13 +163,22 @@ class ModIHeaderGenerator:
 
         Returns:
             Dictionary with ModI headers:
+            - "Digest": HTTP Digest header (RFC 3230) - always present
             - "Agid-JWT-Signature": Always present
             - "Agid-JWT-TrackingEvidence": Present if audit_context configured
         """
         headers = {}
 
+        # Compute digest once (used in both HTTP header and JWT)
+        digest_value = self._compute_digest(payload)
+
+        # HTTP Digest header (RFC 3230) - required by ModI INTEGRITY_REST_02
+        headers["Digest"] = digest_value
+
         # Always generate signature header
-        headers["Agid-JWT-Signature"] = self._generate_signature(payload, content_type)
+        headers["Agid-JWT-Signature"] = self._generate_signature(
+            digest_value, content_type
+        )
 
         # Generate tracking header if audit context is configured
         if self._audit_context:
@@ -177,9 +186,29 @@ class ModIHeaderGenerator:
 
         return headers
 
+    def _compute_digest(self, payload: dict[str, Any]) -> str:
+        """Compute SHA-256 digest of payload for HTTP Digest header.
+
+        Uses standard base64 encoding with padding as per RFC 3230.
+
+        Args:
+            payload: Request body to compute digest from.
+
+        Returns:
+            Digest value in format "SHA-256=<base64-encoded-hash>"
+        """
+        # Use compact JSON serialization with sorted keys for determinism
+        payload_bytes = json.dumps(
+            payload, separators=(",", ":"), sort_keys=True
+        ).encode("utf-8")
+        digest = hashlib.sha256(payload_bytes).digest()
+        # Use standard base64 with padding (NOT urlsafe, NOT without padding)
+        digest_b64 = base64.b64encode(digest).decode("utf-8")
+        return f"SHA-256={digest_b64}"
+
     def _generate_signature(
         self,
-        payload: dict[str, Any],
+        digest_value: str,
         content_type: str,
     ) -> str:
         """Generate Agid-JWT-Signature header (INTEGRITY_REST_02).
@@ -188,32 +217,29 @@ class ModIHeaderGenerator:
         - iss: Issuer (client ID)
         - aud: Audience (API URL)
         - iat: Issued at timestamp
+        - nbf: Not before timestamp (same as iat)
         - exp: Expiration timestamp
+        - jti: Unique JWT ID
         - signed_headers: Array with digest and content-type
 
         Args:
-            payload: Request body to compute digest from.
+            digest_value: Pre-computed digest value (format: "SHA-256=<base64>").
             content_type: Content-Type header value.
 
         Returns:
             Signed JWT string.
         """
-        # Compute SHA-256 digest of the payload
-        # Use compact JSON serialization (no spaces) with sorted keys for determinism
-        payload_bytes = json.dumps(
-            payload, separators=(",", ":"), sort_keys=True
-        ).encode("utf-8")
-        digest = hashlib.sha256(payload_bytes).digest()
-        digest_b64 = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
-
         now = datetime.now(timezone.utc)
+        iat = int(now.timestamp())
         claims = {
             "iss": self._config.issuer,
             "aud": self._config.audience,
-            "iat": int(now.timestamp()),
-            "exp": int(now.timestamp()) + self._config.validity_seconds,
+            "iat": iat,
+            "nbf": iat,  # Token valid from issue time
+            "exp": iat + self._config.validity_seconds,
+            "jti": str(uuid.uuid4()),  # Unique ID for each signature
             "signed_headers": [
-                {"digest": f"SHA-256={digest_b64}"},
+                {"digest": digest_value},
                 {"content-type": content_type},
             ],
         }
@@ -243,11 +269,13 @@ class ModIHeaderGenerator:
             raise ValueError("Audit context is required for tracking header")
 
         now = datetime.now(timezone.utc)
+        iat = int(now.timestamp())
         claims = {
             "iss": self._config.issuer,
             "aud": self._config.audience,
-            "iat": int(now.timestamp()),
-            "exp": int(now.timestamp()) + self._config.validity_seconds,
+            "iat": iat,
+            "nbf": iat,  # Token valid from issue time
+            "exp": iat + self._config.validity_seconds,
             "jti": str(uuid.uuid4()),
             "userID": self._audit_context.user_id,
             "userLocation": self._audit_context.user_location,

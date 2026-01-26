@@ -230,14 +230,12 @@ class TestModIHeaderGenerator:
         claims = json.loads(base64.urlsafe_b64decode(payload_b64))
         jwt_digest = claims["signed_headers"][0]["digest"]
 
-        # Compute expected digest
+        # Compute expected digest using standard base64 with padding (RFC 3230)
         payload_bytes = json.dumps(
             payload, separators=(",", ":"), sort_keys=True
         ).encode("utf-8")
         expected_digest = hashlib.sha256(payload_bytes).digest()
-        expected_b64 = (
-            base64.urlsafe_b64encode(expected_digest).decode("utf-8").rstrip("=")
-        )
+        expected_b64 = base64.b64encode(expected_digest).decode("utf-8")
 
         assert jwt_digest == f"SHA-256={expected_b64}"
 
@@ -472,6 +470,243 @@ class TestCreateModiConfigFromSettings:
                 ValidationError, match="PDND_PRIVATE_KEY.*PDND_KEY_PATH"
             ):
                 ClientAssertionSettings(_env_file=None)
+
+
+class TestModIDigestHeader:
+    """Tests for HTTP Digest header generation."""
+
+    def test_generate_headers_includes_digest(self, mock_private_key: Path) -> None:
+        """Test that generate_headers includes HTTP Digest header."""
+        from anncsu.common.modi import ModIConfig, ModIHeaderGenerator
+
+        config = ModIConfig(
+            private_key=mock_private_key.read_bytes(),
+            kid="test-key-id",
+            issuer="test-issuer",
+            audience="https://api.example.com",
+        )
+        generator = ModIHeaderGenerator(config)
+        payload = {"codcom": "H501", "operazione": "M"}
+
+        headers = generator.generate_headers(payload)
+
+        assert "Digest" in headers
+        assert headers["Digest"].startswith("SHA-256=")
+
+    def test_digest_header_uses_standard_base64(self, mock_private_key: Path) -> None:
+        """Test that Digest header uses standard base64 with padding (RFC 3230)."""
+        from anncsu.common.modi import ModIConfig, ModIHeaderGenerator
+
+        config = ModIConfig(
+            private_key=mock_private_key.read_bytes(),
+            kid="test-key-id",
+            issuer="test-issuer",
+            audience="https://api.example.com",
+        )
+        generator = ModIHeaderGenerator(config)
+        payload = {"codcom": "H501", "operazione": "M"}
+
+        headers = generator.generate_headers(payload)
+
+        # Extract the base64 part after "SHA-256="
+        digest_value = headers["Digest"].split("=", 1)[1]
+
+        # Standard base64 should decode without adding padding
+        # and should NOT use urlsafe characters (- or _)
+        assert "-" not in digest_value
+        assert "_" not in digest_value
+
+        # Should be valid standard base64 (may have padding =)
+        import base64
+
+        decoded = base64.b64decode(digest_value)
+        assert len(decoded) == 32  # SHA-256 produces 32 bytes
+
+    def test_digest_header_matches_jwt_signed_headers(
+        self, mock_private_key: Path
+    ) -> None:
+        """Test that Digest header value matches the digest in JWT signed_headers."""
+        from anncsu.common.modi import ModIConfig, ModIHeaderGenerator
+
+        config = ModIConfig(
+            private_key=mock_private_key.read_bytes(),
+            kid="test-key-id",
+            issuer="test-issuer",
+            audience="https://api.example.com",
+        )
+        generator = ModIHeaderGenerator(config)
+        payload = {"codcom": "H501", "operazione": "M"}
+
+        headers = generator.generate_headers(payload)
+
+        # Get Digest header value
+        http_digest = headers["Digest"]
+
+        # Extract digest from JWT signed_headers
+        import base64
+        import json
+
+        parts = headers["Agid-JWT-Signature"].split(".")
+        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+
+        jwt_digest = claims["signed_headers"][0]["digest"]
+
+        # Both should be identical
+        assert http_digest == jwt_digest
+
+    def test_digest_computed_from_compact_json(self, mock_private_key: Path) -> None:
+        """Test that digest is computed from compact JSON with sorted keys."""
+        import base64
+        import hashlib
+        import json
+
+        from anncsu.common.modi import ModIConfig, ModIHeaderGenerator
+
+        config = ModIConfig(
+            private_key=mock_private_key.read_bytes(),
+            kid="test-key-id",
+            issuer="test-issuer",
+            audience="https://api.example.com",
+        )
+        generator = ModIHeaderGenerator(config)
+
+        # Payload with keys in non-alphabetical order
+        payload = {"operazione": "M", "codcom": "H501"}
+
+        headers = generator.generate_headers(payload)
+
+        # Compute expected digest with sorted keys, compact JSON
+        expected_json = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        expected_digest = hashlib.sha256(expected_json.encode("utf-8")).digest()
+        expected_b64 = base64.b64encode(expected_digest).decode("utf-8")
+
+        assert headers["Digest"] == f"SHA-256={expected_b64}"
+
+
+class TestModISignatureJwtNbfClaim:
+    """Tests for nbf (not before) claim in ModI JWTs."""
+
+    def test_signature_jwt_has_nbf_claim(self, mock_private_key: Path) -> None:
+        """Test that signature JWT includes nbf claim."""
+        import base64
+        import json
+
+        from anncsu.common.modi import ModIConfig, ModIHeaderGenerator
+
+        config = ModIConfig(
+            private_key=mock_private_key.read_bytes(),
+            kid="test-key-id",
+            issuer="test-issuer",
+            audience="https://api.example.com",
+        )
+        generator = ModIHeaderGenerator(config)
+        payload = {"codcom": "H501"}
+
+        headers = generator.generate_headers(payload)
+
+        # Decode JWT claims
+        parts = headers["Agid-JWT-Signature"].split(".")
+        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+
+        assert "nbf" in claims
+        # nbf should equal iat (token valid from issue time)
+        assert claims["nbf"] == claims["iat"]
+
+    def test_tracking_jwt_has_nbf_claim(self, mock_private_key: Path) -> None:
+        """Test that tracking JWT includes nbf claim."""
+        import base64
+        import json
+
+        from anncsu.common.modi import (
+            AuditContext,
+            ModIConfig,
+            ModIHeaderGenerator,
+        )
+
+        config = ModIConfig(
+            private_key=mock_private_key.read_bytes(),
+            kid="test-key-id",
+            issuer="test-issuer",
+            audience="https://api.example.com",
+        )
+        audit = AuditContext(
+            user_id="user",
+            user_location="location",
+            loa="SPID_L2",
+        )
+        generator = ModIHeaderGenerator(config, audit)
+        payload = {"codcom": "H501"}
+
+        headers = generator.generate_headers(payload)
+
+        # Decode JWT claims
+        parts = headers["Agid-JWT-TrackingEvidence"].split(".")
+        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+
+        assert "nbf" in claims
+        assert claims["nbf"] == claims["iat"]
+
+
+class TestModISignatureJwtJtiClaim:
+    """Tests for jti claim in Signature JWT."""
+
+    def test_signature_jwt_has_jti_claim(self, mock_private_key: Path) -> None:
+        """Test that signature JWT includes jti claim."""
+        import base64
+        import json
+
+        from anncsu.common.modi import ModIConfig, ModIHeaderGenerator
+
+        config = ModIConfig(
+            private_key=mock_private_key.read_bytes(),
+            kid="test-key-id",
+            issuer="test-issuer",
+            audience="https://api.example.com",
+        )
+        generator = ModIHeaderGenerator(config)
+        payload = {"codcom": "H501"}
+
+        headers = generator.generate_headers(payload)
+
+        # Decode JWT claims
+        parts = headers["Agid-JWT-Signature"].split(".")
+        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+
+        assert "jti" in claims
+        # jti should be a valid UUID string
+        import uuid
+
+        uuid.UUID(claims["jti"])  # Should not raise
+
+    def test_signature_jwt_jti_is_unique(self, mock_private_key: Path) -> None:
+        """Test that each signature JWT has a unique jti."""
+        import base64
+        import json
+
+        from anncsu.common.modi import ModIConfig, ModIHeaderGenerator
+
+        config = ModIConfig(
+            private_key=mock_private_key.read_bytes(),
+            kid="test-key-id",
+            issuer="test-issuer",
+            audience="https://api.example.com",
+        )
+        generator = ModIHeaderGenerator(config)
+        payload = {"codcom": "H501"}
+
+        jtis = set()
+        for _ in range(10):
+            headers = generator.generate_headers(payload)
+            parts = headers["Agid-JWT-Signature"].split(".")
+            payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+            jtis.add(claims["jti"])
+
+        assert len(jtis) == 10
 
 
 class TestModIHeadersIntegration:
