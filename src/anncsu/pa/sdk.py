@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from anncsu.pa.status import Status
 
 
-class Anncsu(BaseSDK):
+class AnncsuConsultazione(BaseSDK):
     r"""ANNCSU REST API: API dei servizi REST di ANNCSU su PDND"""
 
     queryparam: "Queryparam"

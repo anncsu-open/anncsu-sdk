@@ -30,7 +30,7 @@ if TYPE_CHECKING:
         retry,
         retry_async,
     )
-    from .security import get_security
+    from .security import get_security, get_security_from_env
     from .serializers import (
         get_pydantic_model,
         marshal_json,
@@ -49,6 +49,7 @@ if TYPE_CHECKING:
         validate_int,
         validate_open_enum,
     )
+    from .unmarshal_json_response import unmarshal_json_response
     from .url import generate_url, remove_suffix, template_url
     from .values import (
         cast_partial,
@@ -75,6 +76,7 @@ __all__ = [
     "get_query_params",
     "get_response_headers",
     "get_security",
+    "get_security_from_env",
     "HeaderMetadata",
     "Logger",
     "marshal_json",
@@ -104,6 +106,7 @@ __all__ = [
     "template_url",
     "unmarshal",
     "unmarshal_json",
+    "unmarshal_json_response",
     "validate_decimal",
     "validate_const",
     "validate_float",
@@ -129,6 +132,7 @@ _dynamic_imports: dict[str, str] = {
     "get_query_params": ".queryparams",
     "get_response_headers": ".headers",
     "get_security": ".security",
+    "get_security_from_env": ".security",
     "HeaderMetadata": ".metadata",
     "Logger": ".logger",
     "marshal_json": ".serializers",
@@ -158,6 +162,7 @@ _dynamic_imports: dict[str, str] = {
     "template_url": ".url",
     "unmarshal": ".serializers",
     "unmarshal_json": ".serializers",
+    "unmarshal_json_response": ".unmarshal_json_response",
     "validate_decimal": ".serializers",
     "validate_const": ".serializers",
     "validate_float": ".serializers",

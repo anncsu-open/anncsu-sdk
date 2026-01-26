@@ -13,14 +13,14 @@ All ANNCSU APIs share the same authentication mechanism:
 ## Quick Start
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 # Create security configuration with your PDND voucher
 security = Security(bearer="your-pdnd-voucher-token")
 
 # Initialize SDK with security
-sdk = Anncsu(security=security)
+sdk = AnncsuConsultazione(security=security)
 
 # Make authenticated requests
 response = sdk.queryparam.esiste_odonimo_get_query_param(
@@ -183,7 +183,11 @@ All environment variables use the `PDND_` prefix:
 | `PDND_ISSUER` | Yes | Issuer (iss) claim - your client_id |
 | `PDND_SUBJECT` | Yes | Subject (sub) claim - your client_id |
 | `PDND_AUDIENCE` | Yes | Audience (aud) claim - PDND token endpoint URL |
-| `PDND_PURPOSE_ID` | Yes | Purpose ID for the PDND request |
+| `PDND_PURPOSE_ID_PA` | Yes | Purpose ID for PA Consultazione API |
+| `PDND_PURPOSE_ID_COORDINATE` | Yes | Purpose ID for Coordinate API |
+| `PDND_PURPOSE_ID_ACCESSI` | Yes* | Purpose ID for Accessi API (can be empty) |
+| `PDND_PURPOSE_ID_INTERNI` | Yes* | Purpose ID for Interni API (can be empty) |
+| `PDND_PURPOSE_ID_ODONIMI` | Yes* | Purpose ID for Odonimi API (can be empty) |
 | `PDND_PRIVATE_KEY` | One required | RSA private key content in PEM format (string) |
 | `PDND_KEY_PATH` | One required | Path to the RSA private key file |
 | `PDND_ALG` | No | Algorithm (default: "RS256") |
@@ -198,7 +202,14 @@ PDND_KID=my-key-id
 PDND_ISSUER=my-client-id
 PDND_SUBJECT=my-client-id
 PDND_AUDIENCE=https://auth.interop.pagopa.it/token.oauth2
-PDND_PURPOSE_ID=my-purpose-id
+
+# Purpose ID for each API type (ALL must be present, can be empty if not used)
+PDND_PURPOSE_ID_PA=your-purpose-id-for-pa-consultazione
+PDND_PURPOSE_ID_COORDINATE=your-purpose-id-for-coordinate-api
+PDND_PURPOSE_ID_ACCESSI=
+PDND_PURPOSE_ID_INTERNI=
+PDND_PURPOSE_ID_ODONIMI=
+
 PDND_KEY_PATH=./private_key.pem
 # Or use PDND_PRIVATE_KEY for inline key content
 ```
@@ -210,7 +221,14 @@ export PDND_KID="my-key-id"
 export PDND_ISSUER="my-client-id"
 export PDND_SUBJECT="my-client-id"
 export PDND_AUDIENCE="https://auth.interop.pagopa.it/token.oauth2"
-export PDND_PURPOSE_ID="my-purpose-id"
+
+# Purpose ID for each API type (ALL must be present, can be empty if not used)
+export PDND_PURPOSE_ID_PA="your-purpose-id-for-pa-consultazione"
+export PDND_PURPOSE_ID_COORDINATE="your-purpose-id-for-coordinate-api"
+export PDND_PURPOSE_ID_ACCESSI=""
+export PDND_PURPOSE_ID_INTERNI=""
+export PDND_PURPOSE_ID_ODONIMI=""
+
 export PDND_KEY_PATH="./private_key.pem"
 ```
 
@@ -463,14 +481,14 @@ print(f"Expires In: {token_response.expires_in} seconds")
 Use the access token to authenticate API requests:
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 # Create security with the access token
 security = Security(bearer=token_response.access_token)
 
 # Initialize SDK
-sdk = Anncsu(security=security)
+sdk = AnncsuConsultazione(security=security)
 
 # Make authenticated requests
 response = sdk.queryparam.esiste_odonimo_get_query_param(
@@ -485,7 +503,7 @@ Here's the full authentication workflow in one place:
 
 ```python
 from pathlib import Path
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import (
     # Client Assertion
     ClientAssertionConfig,
@@ -518,7 +536,7 @@ token_response = get_access_token(token_config)
 
 # Step 3: Use access token for API calls
 security = Security(bearer=token_response.access_token)
-sdk = Anncsu(security=security)
+sdk = AnncsuConsultazione(security=security)
 
 response = sdk.queryparam.esiste_odonimo_get_query_param(
     codcom="H501",
@@ -549,14 +567,14 @@ token_response = asyncio.run(get_token())
 ## Configure SDK with Security
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 # Create security with your voucher
 security = Security(bearer="your-voucher-token")
 
 # Initialize SDK
-sdk = Anncsu(security=security)
+sdk = AnncsuConsultazione(security=security)
 ```
 
 ### 3. Make Authenticated Requests
@@ -576,7 +594,7 @@ response = sdk.queryparam.esiste_odonimo_get_query_param(
 PDND vouchers have an expiration time. Handle token refresh in your application using the built-in expiration checking:
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security, TokenExpiredError
 
 class TokenManager:
@@ -620,7 +638,7 @@ class TokenManager:
 token_manager = TokenManager(token_config, assertion_config)
 
 # Get SDK with auto-refreshing token
-sdk = Anncsu(security=token_manager.get_security())
+sdk = AnncsuConsultazione(security=token_manager.get_security())
 
 # For long-running applications, call get_security() before each request
 # or implement automatic refresh in your HTTP client
@@ -650,14 +668,14 @@ def get_authenticated_sdk(access_token):
 If you need different tokens for different requests:
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 # SDK 1 with token A
-sdk1 = Anncsu(security=Security(bearer="token-a"))
+sdk1 = AnncsuConsultazione(security=Security(bearer="token-a"))
 
 # SDK 2 with token B
-sdk2 = Anncsu(security=Security(bearer="token-b"))
+sdk2 = AnncsuConsultazione(security=Security(bearer="token-b"))
 
 # Different tokens for different requests
 response1 = sdk1.queryparam.esiste_odonimo_get_query_param(...)
@@ -671,11 +689,11 @@ The same `Security` class works for all ANNCSU API specifications:
 ### Consultazione API
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 security = Security(bearer="your-pdnd-voucher")
-sdk = Anncsu(security=security)
+sdk = AnncsuConsultazione(security=security)
 
 # Query operations
 response = sdk.queryparam.esiste_odonimo_get_query_param(
@@ -704,12 +722,12 @@ security = Security(bearer="your-pdnd-voucher")
 Handle authentication failures gracefully:
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 from anncsu.common.errors import APIError
 
 security = Security(bearer="invalid-token")
-sdk = Anncsu(security=security)
+sdk = AnncsuConsultazione(security=security)
 
 try:
     response = sdk.queryparam.esiste_odonimo_get_query_param(
@@ -729,10 +747,10 @@ except APIError as e:
 ### Missing Token
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 # SDK without security (may fail for protected endpoints)
-sdk = Anncsu()
+sdk = AnncsuConsultazione()
 
 try:
     response = sdk.queryparam.esiste_odonimo_get_query_param(
@@ -780,7 +798,7 @@ except APIError as e:
 # Reuse the same Security instance
 # for multiple SDK instances
 security = Security(bearer=token)
-sdk1 = Anncsu(security=security)
+sdk1 = AnncsuConsultazione(security=security)
 sdk2 = AnotherANNCSUSDK(security=security)
 ```
 
@@ -839,7 +857,7 @@ Use test tokens in integration tests:
 
 ```python
 import os
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from anncsu.common import Security
 
 def test_authenticated_request():
@@ -847,7 +865,7 @@ def test_authenticated_request():
     # Use test token from environment
     test_token = os.getenv("TEST_PDND_VOUCHER")
     security = Security(bearer=test_token)
-    sdk = Anncsu(security=security)
+    sdk = AnncsuConsultazione(security=security)
     
     response = sdk.queryparam.esiste_odonimo_get_query_param(
         codcom="H501",
@@ -1061,9 +1079,201 @@ Ensure your token has appropriate scopes for the operations you need.
 3. **Refresh**: Before expiration (typically 1 hour)
 4. **Revoke**: When no longer needed or compromised
 
+## ModI Headers for Coordinate API
+
+Certain ANNCSU APIs (like Coordinate) require additional ModI (Modello di Interoperabilità) security headers beyond the bearer token:
+
+- **Digest**: SHA-256 hash of the request body (RFC 3230)
+- **Agid-JWT-Signature**: JWT containing integrity proof (INTEGRITY_REST_02)
+- **Agid-JWT-TrackingEvidence**: JWT containing audit information (AUDIT_REST_02)
+
+### ModI Pre-Request Hook
+
+The SDK provides a `ModIPreRequestHook` that automatically injects these headers into HTTP requests. The key advantage is that the hook calculates the digest from the **actual serialized body bytes**, ensuring consistency.
+
+#### Basic Usage
+
+```python
+from anncsu.common.hooks import register_modi_hook
+from anncsu.common.hooks.sdkhooks import SDKHooks
+from anncsu.common.modi import ModIConfig, AuditContext
+
+# Configure ModI
+config = ModIConfig(
+    private_key=key_bytes,          # Same RSA key used for PDND
+    kid="your-pdnd-kid",            # Same KID registered on PDND
+    issuer="your-client-id",        # Same as PDND_ISSUER
+    audience="https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-coordinate/v1",
+)
+
+# Optional: Audit context for tracking
+audit = AuditContext(
+    user_id="batch-user-001",       # User identifier
+    user_location="server-batch-01", # Location/workstation
+    loa="SPID_L2",                  # Level of Assurance
+)
+
+# Register hook with SDK
+hooks = SDKHooks()
+register_modi_hook(hooks, config=config, audit_context=audit)
+```
+
+#### What the Hook Does
+
+1. **Intercepts POST/PUT/PATCH requests** after Speakeasy serializes the body
+2. **Computes SHA-256 digest** from the exact request bytes (`request.content`)
+3. **Generates Agid-JWT-Signature** with the digest in the `signed_headers` claim
+4. **Generates Agid-JWT-TrackingEvidence** (if audit context provided)
+5. **Injects all headers** and returns the modified request
+
+#### Headers Generated
+
+| Header | Description | Always Present |
+|--------|-------------|----------------|
+| `Digest` | `SHA-256=<base64-hash>` of request body | Yes |
+| `Agid-JWT-Signature` | JWT with integrity proof | Yes |
+| `Agid-JWT-TrackingEvidence` | JWT with audit info | Only if audit context |
+
+#### Key Design Decisions
+
+1. **Same KID for all tokens**: The same `KID` and private key are used for:
+   - PDND Client Assertion (to get access token)
+   - Agid-JWT-Signature
+   - Agid-JWT-TrackingEvidence
+
+2. **Digest from actual bytes**: The digest is computed from `request.content` (serialized bytes), not from a Python dictionary. This ensures the digest matches exactly what the server receives.
+
+3. **Skip conditions**: The hook automatically skips:
+   - GET/DELETE/HEAD/OPTIONS requests (no body)
+   - Requests without a body
+   - Requests with empty body
+
+### Configuration Classes
+
+#### ModIConfig
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class ModIConfig:
+    """Configuration for ModI header generation."""
+    private_key: bytes      # RSA private key (PEM format)
+    kid: str                # Key ID (same as PDND_KID)
+    issuer: str             # Client ID (same as PDND_ISSUER)
+    audience: str           # API base URL (NOT token endpoint)
+    alg: str = "RS256"      # JWT algorithm
+    validity_seconds: int = 300  # JWT validity (5 minutes)
+```
+
+#### AuditContext
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class AuditContext:
+    """Audit context for AUDIT_REST_02 pattern."""
+    user_id: str        # User identifier in consumer's domain
+    user_location: str  # Workstation/system identifier
+    loa: str            # Level of Assurance (e.g., "SPID_L2", "CIE_L3")
+```
+
+### Creating ModIConfig from Settings
+
+Use the helper function to create ModIConfig from your existing `ClientAssertionSettings`:
+
+```python
+from anncsu.common.config import ClientAssertionSettings
+from anncsu.common.modi import create_modi_config_from_settings
+
+# Load settings from .env
+settings = ClientAssertionSettings()
+
+# Create ModI config (uses same key as PDND)
+modi_config = create_modi_config_from_settings(
+    settings,
+    api_audience="https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-coordinate/v1"
+)
+```
+
+### Environment Variables for ModI
+
+Add these to your `.env` file for audit context:
+
+```bash
+# ModI Audit Context (optional, for AUDIT_REST_02)
+PDND_MODI_USER_ID=batch-user-001
+PDND_MODI_USER_LOCATION=server-batch-01
+PDND_MODI_LOA=SPID_L2
+```
+
+### Error Handling
+
+```python
+from anncsu.common.hooks import ModIHookError
+
+# The hook returns ModIHookError instead of raising exceptions
+# This follows the Speakeasy hook pattern
+
+# Example error scenarios:
+# - Invalid private key
+# - JWT signing failure
+# - Configuration issues
+
+# Check if result is an error
+result = hook.before_request(ctx, request)
+if isinstance(result, ModIHookError):
+    print(f"ModI error: {result}")
+    print(f"Cause: {result.cause}")
+```
+
+### JWT Claims Structure
+
+#### Agid-JWT-Signature Claims
+
+```json
+{
+  "iss": "your-client-id",
+  "aud": "https://api.example.com",
+  "iat": 1706300000,
+  "nbf": 1706300000,
+  "exp": 1706300300,
+  "jti": "550e8400-e29b-41d4-a716-446655440000",
+  "signed_headers": [
+    {"digest": "SHA-256=X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE="},
+    {"content-type": "application/json"}
+  ]
+}
+```
+
+#### Agid-JWT-TrackingEvidence Claims
+
+```json
+{
+  "iss": "your-client-id",
+  "aud": "https://api.example.com",
+  "iat": 1706300000,
+  "nbf": 1706300000,
+  "exp": 1706300300,
+  "jti": "550e8400-e29b-41d4-a716-446655440001",
+  "userID": "batch-user-001",
+  "userLocation": "server-batch-01",
+  "LoA": "SPID_L2"
+}
+```
+
+### ModI Resources
+
+- [AgID Linee Guida ModI](https://www.agid.gov.it/it/infrastrutture/sistema-pubblico-connettivita/il-nuovo-modello-interoperabilita)
+- [INTEGRITY_REST_02 Pattern](https://docs.italia.it/italia/piano-triennale-ict/lg-modellointeroperabilita-docs/)
+- [AUDIT_REST_02 Pattern](https://docs.italia.it/italia/piano-triennale-ict/lg-modellointeroperabilita-docs/)
+- [Forum Italia - ANNCSU Discussion](https://forum.italia.it/t/risposta-anncsu-aggiornamento-coordinate/45507)
+
 ## Further Reading
 
 - [PDND Authentication Guide](https://docs.pdnd.italia.it/docs/authentication)
 - [JWT Specification (RFC 7519)](https://tools.ietf.org/html/rfc7519)
 - [HTTP Bearer Authentication (RFC 6750)](https://tools.ietf.org/html/rfc6750)
 - [OAuth 2.0 (RFC 6749)](https://tools.ietf.org/html/rfc6749)
+- [HTTP Digest Header (RFC 3230)](https://tools.ietf.org/html/rfc3230)

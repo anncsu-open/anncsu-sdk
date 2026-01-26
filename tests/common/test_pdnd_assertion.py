@@ -600,6 +600,17 @@ class TestPackageExports:
         assert create_client_assertion is not None
 
 
+def _set_multi_api_purpose_ids(
+    monkeypatch, pa="test-pa-purpose", coordinate="test-coord-purpose"
+):
+    """Helper to set all required PDND_PURPOSE_ID_* environment variables."""
+    monkeypatch.setenv("PDND_PURPOSE_ID_PA", pa)
+    monkeypatch.setenv("PDND_PURPOSE_ID_COORDINATE", coordinate)
+    monkeypatch.setenv("PDND_PURPOSE_ID_ACCESSI", "")
+    monkeypatch.setenv("PDND_PURPOSE_ID_INTERNI", "")
+    monkeypatch.setenv("PDND_PURPOSE_ID_ODONIMI", "")
+
+
 class TestClientAssertionSettings:
     """Tests for ClientAssertionSettings class."""
 
@@ -609,7 +620,7 @@ class TestClientAssertionSettings:
         monkeypatch.setenv("PDND_ISSUER", "test-issuer")
         monkeypatch.setenv("PDND_SUBJECT", "test-subject")
         monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
-        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+        _set_multi_api_purpose_ids(monkeypatch)
         monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
 
         settings = ClientAssertionSettings()
@@ -618,7 +629,8 @@ class TestClientAssertionSettings:
         assert settings.issuer == "test-issuer"
         assert settings.subject == "test-subject"
         assert settings.audience == "auth.example.com/client-assertion"
-        assert settings.purpose_id == "test-purpose"
+        assert settings.purpose_id_pa == "test-pa-purpose"
+        assert settings.purpose_id_coordinate == "test-coord-purpose"
         assert settings.private_key == TEST_PRIVATE_KEY.decode("utf-8")
         assert settings.key_path is None
         assert settings.alg == "RS256"
@@ -643,7 +655,11 @@ class TestClientAssertionSettings:
                 "PDND_ISSUER",
                 "PDND_SUBJECT",
                 "PDND_AUDIENCE",
-                "PDND_PURPOSE_ID",
+                "PDND_PURPOSE_ID_PA",
+                "PDND_PURPOSE_ID_COORDINATE",
+                "PDND_PURPOSE_ID_ACCESSI",
+                "PDND_PURPOSE_ID_INTERNI",
+                "PDND_PURPOSE_ID_ODONIMI",
                 "PDND_PRIVATE_KEY",
                 "PDND_KEY_PATH",
             ]:
@@ -654,7 +670,7 @@ class TestClientAssertionSettings:
             monkeypatch.setenv("PDND_ISSUER", "test-issuer")
             monkeypatch.setenv("PDND_SUBJECT", "test-subject")
             monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
-            monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+            _set_multi_api_purpose_ids(monkeypatch)
             monkeypatch.setenv("PDND_KEY_PATH", key_path)
 
             settings = ClientAssertionSettings()
@@ -670,7 +686,7 @@ class TestClientAssertionSettings:
         monkeypatch.setenv("PDND_ISSUER", "test-issuer")
         monkeypatch.setenv("PDND_SUBJECT", "test-subject")
         monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
-        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+        _set_multi_api_purpose_ids(monkeypatch)
         monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
         monkeypatch.setenv("PDND_ALG", "RS256")
         monkeypatch.setenv("PDND_TYP", "JWT")
@@ -695,7 +711,11 @@ class TestClientAssertionSettings:
                 "PDND_ISSUER",
                 "PDND_SUBJECT",
                 "PDND_AUDIENCE",
-                "PDND_PURPOSE_ID",
+                "PDND_PURPOSE_ID_PA",
+                "PDND_PURPOSE_ID_COORDINATE",
+                "PDND_PURPOSE_ID_ACCESSI",
+                "PDND_PURPOSE_ID_INTERNI",
+                "PDND_PURPOSE_ID_ODONIMI",
                 "PDND_PRIVATE_KEY",
                 "PDND_KEY_PATH",
             ]:
@@ -705,7 +725,7 @@ class TestClientAssertionSettings:
             monkeypatch.setenv("PDND_ISSUER", "test-issuer")
             monkeypatch.setenv("PDND_SUBJECT", "test-subject")
             monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
-            monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+            _set_multi_api_purpose_ids(monkeypatch)
             # No PDND_PRIVATE_KEY or PDND_KEY_PATH
 
             with pytest.raises(ValidationError) as exc_info:
@@ -718,27 +738,31 @@ class TestClientAssertionSettings:
 
     def test_settings_to_config_with_private_key(self, monkeypatch):
         """Test converting settings to config with private key."""
+        from anncsu.common.config import APIType
+
         monkeypatch.setenv("PDND_KID", "test-key-id")
         monkeypatch.setenv("PDND_ISSUER", "test-issuer")
         monkeypatch.setenv("PDND_SUBJECT", "test-subject")
         monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
-        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+        _set_multi_api_purpose_ids(monkeypatch)
         monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
 
         settings = ClientAssertionSettings()
-        config = settings.to_config()
+        config = settings.to_config(APIType.PA)
 
         assert isinstance(config, ClientAssertionConfig)
         assert config.kid == "test-key-id"
         assert config.issuer == "test-issuer"
         assert config.subject == "test-subject"
         assert config.audience == "auth.example.com/client-assertion"
-        assert config.purpose_id == "test-purpose"
+        assert config.purpose_id == "test-pa-purpose"
         assert config.private_key == TEST_PRIVATE_KEY
         assert config.key_path is None
 
     def test_settings_to_config_with_key_path(self, monkeypatch, tmp_path):
         """Test converting settings to config with key path."""
+        from anncsu.common.config import APIType
+
         # Create key file in temp directory
         key_file = tmp_path / "test_key.pem"
         key_file.write_bytes(TEST_PRIVATE_KEY)
@@ -755,7 +779,11 @@ class TestClientAssertionSettings:
                 "PDND_ISSUER",
                 "PDND_SUBJECT",
                 "PDND_AUDIENCE",
-                "PDND_PURPOSE_ID",
+                "PDND_PURPOSE_ID_PA",
+                "PDND_PURPOSE_ID_COORDINATE",
+                "PDND_PURPOSE_ID_ACCESSI",
+                "PDND_PURPOSE_ID_INTERNI",
+                "PDND_PURPOSE_ID_ODONIMI",
                 "PDND_PRIVATE_KEY",
                 "PDND_KEY_PATH",
             ]:
@@ -765,29 +793,32 @@ class TestClientAssertionSettings:
             monkeypatch.setenv("PDND_ISSUER", "test-issuer")
             monkeypatch.setenv("PDND_SUBJECT", "test-subject")
             monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
-            monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+            _set_multi_api_purpose_ids(monkeypatch)
             monkeypatch.setenv("PDND_KEY_PATH", key_path)
 
             settings = ClientAssertionSettings()
-            config = settings.to_config()
+            config = settings.to_config(APIType.COORDINATE)
 
             assert isinstance(config, ClientAssertionConfig)
             assert config.key_path == Path(key_path)
             assert config.private_key is None
+            assert config.purpose_id == "test-coord-purpose"
         finally:
             monkeypatch.chdir(original_cwd)
 
     def test_settings_to_config_creates_working_assertion(self, monkeypatch):
         """Test that config from settings can create a valid JWT."""
+        from anncsu.common.config import APIType
+
         monkeypatch.setenv("PDND_KID", "test-key-id")
         monkeypatch.setenv("PDND_ISSUER", "test-issuer")
         monkeypatch.setenv("PDND_SUBJECT", "test-subject")
         monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
-        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+        _set_multi_api_purpose_ids(monkeypatch)
         monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
 
         settings = ClientAssertionSettings()
-        config = settings.to_config()
+        config = settings.to_config(APIType.PA)
         token = create_client_assertion(config)
 
         assert isinstance(token, str)
@@ -799,7 +830,7 @@ class TestClientAssertionSettings:
         monkeypatch.setenv("PDND_ISSUER", "test-issuer")
         monkeypatch.setenv("PDND_SUBJECT", "test-subject")
         monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
-        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+        _set_multi_api_purpose_ids(monkeypatch)
         monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
         monkeypatch.setenv("PDND_UNKNOWN_VAR", "should-be-ignored")
 
@@ -818,7 +849,7 @@ class TestClientAssertionSettings:
         monkeypatch.setenv("PDND_ISSUER", "correct-issuer")
         monkeypatch.setenv("PDND_SUBJECT", "test-subject")
         monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
-        monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+        _set_multi_api_purpose_ids(monkeypatch)
         monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
 
         settings = ClientAssertionSettings()
@@ -834,7 +865,11 @@ class TestClientAssertionSettings:
 PDND_ISSUER=dotenv-issuer
 PDND_SUBJECT=dotenv-subject
 PDND_AUDIENCE=auth.example.com/client-assertion
-PDND_PURPOSE_ID=dotenv-purpose
+PDND_PURPOSE_ID_PA=dotenv-pa-purpose
+PDND_PURPOSE_ID_COORDINATE=dotenv-coord-purpose
+PDND_PURPOSE_ID_ACCESSI=
+PDND_PURPOSE_ID_INTERNI=
+PDND_PURPOSE_ID_ODONIMI=
 PDND_PRIVATE_KEY={TEST_PRIVATE_KEY.decode("utf-8")}
 """
         env_file.write_text(env_content)
@@ -851,7 +886,11 @@ PDND_PRIVATE_KEY={TEST_PRIVATE_KEY.decode("utf-8")}
                 "PDND_ISSUER",
                 "PDND_SUBJECT",
                 "PDND_AUDIENCE",
-                "PDND_PURPOSE_ID",
+                "PDND_PURPOSE_ID_PA",
+                "PDND_PURPOSE_ID_COORDINATE",
+                "PDND_PURPOSE_ID_ACCESSI",
+                "PDND_PURPOSE_ID_INTERNI",
+                "PDND_PURPOSE_ID_ODONIMI",
                 "PDND_PRIVATE_KEY",
                 "PDND_KEY_PATH",
             ]:
@@ -862,6 +901,7 @@ PDND_PRIVATE_KEY={TEST_PRIVATE_KEY.decode("utf-8")}
             assert settings.kid == "dotenv-key-id"
             assert settings.issuer == "dotenv-issuer"
             assert settings.subject == "dotenv-subject"
+            assert settings.purpose_id_pa == "dotenv-pa-purpose"
         finally:
             os.chdir(original_cwd)
 
@@ -878,7 +918,11 @@ PDND_PRIVATE_KEY={TEST_PRIVATE_KEY.decode("utf-8")}
                 "PDND_ISSUER",
                 "PDND_SUBJECT",
                 "PDND_AUDIENCE",
-                "PDND_PURPOSE_ID",
+                "PDND_PURPOSE_ID_PA",
+                "PDND_PURPOSE_ID_COORDINATE",
+                "PDND_PURPOSE_ID_ACCESSI",
+                "PDND_PURPOSE_ID_INTERNI",
+                "PDND_PURPOSE_ID_ODONIMI",
                 "PDND_PRIVATE_KEY",
                 "PDND_KEY_PATH",
             ]:
@@ -888,7 +932,7 @@ PDND_PRIVATE_KEY={TEST_PRIVATE_KEY.decode("utf-8")}
             # Missing PDND_ISSUER
             monkeypatch.setenv("PDND_SUBJECT", "test-subject")
             monkeypatch.setenv("PDND_AUDIENCE", "auth.example.com/client-assertion")
-            monkeypatch.setenv("PDND_PURPOSE_ID", "test-purpose")
+            _set_multi_api_purpose_ids(monkeypatch)
             monkeypatch.setenv("PDND_PRIVATE_KEY", TEST_PRIVATE_KEY.decode("utf-8"))
 
             with pytest.raises(ValidationError) as exc_info:

@@ -24,7 +24,7 @@ Ritorna un valore boolean dell'esistenza dell'odonimo in ANNCSU
 
 <!-- UsageSnippet language="python" operationID="esisteOdonimoGetQueryParam" method="get" path="/esisteodonimo" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -66,7 +66,7 @@ Ritorna un valore boolean dell'esistenza dell'accesso in ANNCSU
 
 <!-- UsageSnippet language="python" operationID="esisteAccessoGetQueryParam" method="get" path="/esisteaccesso" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -109,7 +109,7 @@ Ritorna un elenco di odonimi presenti in ANNCSU
 
 <!-- UsageSnippet language="python" operationID="elencoOdonimiGetQueryParam" method="get" path="/elencoodonimi" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -152,7 +152,7 @@ Ritorna un elenco di accessi presenti in ANNCSU
 
 <!-- UsageSnippet language="python" operationID="elencoAccessiGetQueryParam" method="get" path="/elencoaccessi" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -196,7 +196,7 @@ Ritorna un elenco di odonimi presenti in ANNCSU incluso il progressivo nazionale
 
 <!-- UsageSnippet language="python" operationID="elencoodonimiprogGetQueryParam" method="get" path="/elencoodonimiprog" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -239,7 +239,7 @@ Ritorna un elenco di accessi presenti in ANNCSU incluso il progressivo nazionale
 
 <!-- UsageSnippet language="python" operationID="elencoaccessiprogGetQueryParam" method="get" path="/elencoaccessiprog" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -282,7 +282,7 @@ Cerca in ANNCSU un odonimo per progressivo nazionale e ne ritorna i dati
 
 <!-- UsageSnippet language="python" operationID="prognazareaGetQueryParam" method="get" path="/prognazarea" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:
@@ -324,7 +324,7 @@ Cerca in ANNCSU un accesso per progressivo nazionale accesso e ne ritorna i dati
 
 <!-- UsageSnippet language="python" operationID="prognazaccGetQueryParam" method="get" path="/prognazacc" -->
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 
 with Anncsu() as a_client:

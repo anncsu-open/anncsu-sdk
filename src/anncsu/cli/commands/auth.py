@@ -13,8 +13,35 @@ from rich.table import Table
 
 from anncsu.cli.models import AuthStatus, LoginResult, TokenStatus
 from anncsu.common import PDNDAuthManager
-from anncsu.common.config import ClientAssertionSettings
+from anncsu.common.config import APIType, ClientAssertionSettings
 from anncsu.common.session import get_config_dir
+
+# Module-level state for api_type (set by callback)
+_current_api_type: APIType | None = None
+
+
+def _api_type_callback(ctx: typer.Context, value: str) -> str:
+    """Callback to validate and store api_type."""
+    global _current_api_type
+    try:
+        _current_api_type = APIType(value)
+    except ValueError:
+        valid_values = ", ".join(api.value for api in APIType)
+        raise typer.BadParameter(
+            f"Invalid API type '{value}'. Must be one of: {valid_values}"
+        ) from None
+    return value
+
+
+def _get_api_type() -> APIType:
+    """Get the current api_type (must be set by callback)."""
+    if _current_api_type is None:
+        raise typer.BadParameter("--api option is required")
+    return _current_api_type
+
+
+# Build help text with valid API types
+_api_help = f"API type for authentication. Valid values: {', '.join(api.value for api in APIType)}"
 
 auth_app = typer.Typer(
     name="auth",
@@ -62,6 +89,15 @@ def _format_ttl(ttl_seconds: int | None) -> str:
 
 @auth_app.command("login")
 def login(
+    api: Annotated[
+        str,
+        typer.Option(
+            "--api",
+            "-a",
+            help=_api_help,
+            callback=_api_type_callback,
+        ),
+    ],
     token_endpoint: Annotated[
         str,
         typer.Option(
@@ -79,6 +115,8 @@ def login(
 
     Creates a client assertion (if needed) and exchanges it for an access token.
     """
+    api_type = _get_api_type()
+
     try:
         settings = ClientAssertionSettings()
     except Exception as e:
@@ -89,6 +127,7 @@ def login(
         manager = PDNDAuthManager(
             settings=settings,
             token_endpoint=token_endpoint,
+            api_type=api_type,
             session_persistence=True,
             config_dir=get_config_dir(),
         )
@@ -139,6 +178,15 @@ def login(
 
 @auth_app.command("status")
 def status(
+    api: Annotated[
+        str,
+        typer.Option(
+            "--api",
+            "-a",
+            help=_api_help,
+            callback=_api_type_callback,
+        ),
+    ],
     token_endpoint: Annotated[
         str,
         typer.Option(
@@ -153,6 +201,8 @@ def status(
     ] = False,
 ) -> None:
     """Show current authentication status."""
+    api_type = _get_api_type()
+
     try:
         settings = ClientAssertionSettings()
     except Exception as e:
@@ -163,6 +213,7 @@ def status(
         manager = PDNDAuthManager(
             settings=settings,
             token_endpoint=token_endpoint,
+            api_type=api_type,
             session_persistence=True,
             config_dir=get_config_dir(),
         )
@@ -243,6 +294,15 @@ def status(
 
 @auth_app.command("refresh")
 def refresh(
+    api: Annotated[
+        str,
+        typer.Option(
+            "--api",
+            "-a",
+            help=_api_help,
+            callback=_api_type_callback,
+        ),
+    ],
     token_endpoint: Annotated[
         str,
         typer.Option(
@@ -260,6 +320,8 @@ def refresh(
     ] = False,
 ) -> None:
     """Refresh the access token (and optionally the client assertion)."""
+    api_type = _get_api_type()
+
     try:
         settings = ClientAssertionSettings()
     except Exception as e:
@@ -270,6 +332,7 @@ def refresh(
         manager = PDNDAuthManager(
             settings=settings,
             token_endpoint=token_endpoint,
+            api_type=api_type,
             session_persistence=True,
             config_dir=get_config_dir(),
         )
@@ -292,6 +355,15 @@ def refresh(
 
 @auth_app.command("token")
 def token(
+    api: Annotated[
+        str,
+        typer.Option(
+            "--api",
+            "-a",
+            help=_api_help,
+            callback=_api_type_callback,
+        ),
+    ],
     token_endpoint: Annotated[
         str,
         typer.Option(
@@ -304,8 +376,10 @@ def token(
     """Print the current access token (for piping to other commands).
 
     Example:
-        curl -H "Authorization: Bearer $(anncsu auth token)" https://api.example.com
+        curl -H "Authorization: Bearer $(anncsu auth token --api pa)" https://api.example.com
     """
+    api_type = _get_api_type()
+
     try:
         settings = ClientAssertionSettings()
     except Exception as e:
@@ -316,6 +390,7 @@ def token(
         manager = PDNDAuthManager(
             settings=settings,
             token_endpoint=token_endpoint,
+            api_type=api_type,
             session_persistence=True,
             config_dir=get_config_dir(),
         )
@@ -329,6 +404,15 @@ def token(
 
 @auth_app.command("logout")
 def logout(
+    api: Annotated[
+        str,
+        typer.Option(
+            "--api",
+            "-a",
+            help=_api_help,
+            callback=_api_type_callback,
+        ),
+    ],
     token_endpoint: Annotated[
         str,
         typer.Option(
@@ -343,11 +427,14 @@ def logout(
     Note: This clears local state only. The tokens may still be valid
     on the server until they expire.
     """
+    api_type = _get_api_type()
+
     try:
         settings = ClientAssertionSettings()
         manager = PDNDAuthManager(
             settings=settings,
             token_endpoint=token_endpoint,
+            api_type=api_type,
             session_persistence=True,
             config_dir=get_config_dir(),
         )
@@ -356,6 +443,6 @@ def logout(
         # If settings aren't available, just clear session file directly
         from anncsu.common.session import clear_session
 
-        clear_session(config_dir=get_config_dir())
+        clear_session(api_type=api_type, config_dir=get_config_dir())
 
     console.print("[green]Logout successful.[/green] Session cleared.")

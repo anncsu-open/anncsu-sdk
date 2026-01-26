@@ -5,35 +5,130 @@ This guide documents the workflow for generating and regenerating the SDK with S
 ## Prerequisites
 
 - [Speakeasy CLI](https://www.speakeasy.com/docs/speakeasy-cli/getting-started) installed
-- OpenAPI specification file in `oas/dev/`
+- OpenAPI specification files in `oas/dev/`
 
-## Generation Workflow
+## Regenerating an Existing Package (e.g., `pa`)
 
-### 1. Generate SDK with Speakeasy
+### 1. Run Speakeasy workflow
 
 ```bash
-speakeasy generate sdk \
-  --lang python \
-  --out . \
-  --schema oas/dev/Specifica\ API\ -\ ANNCSU\ –\ Consultazione\ per\ le\ PA.yaml
+speakeasy run --target anncsu
 ```
 
 ### 2. Run post-generation script
 
-After each Speakeasy generation, run the post-generation script to update the package structure:
-
 ```bash
-uv run python scripts/post_speakeasy_generation.py
+uv run python scripts/post_speakeasy_generation.py --package pa
 ```
-
-This script:
-- Removes duplicated infrastructure files from API packages
-- Updates imports to use shared modules in `anncsu.common.sdk`
 
 ### 3. Verify with tests
 
 ```bash
 uv run pytest tests/ -q
+```
+
+## Adding a New API Package
+
+Follow these steps to add a new API package (e.g., `coordinate` for Aggiornamento coordinate):
+
+### 1. Copy the OpenAPI spec to `oas/dev/`
+
+```bash
+cp "path/to/Specifica API - ANNCSU - Aggiornamento coordinate.yml" oas/dev/
+```
+
+### 2. Validate the spec (optional but recommended)
+
+```bash
+spectral lint "oas/dev/Specifica API - ANNCSU - Aggiornamento coordinate.yml" --ruleset oas/.spectral.yaml
+```
+
+### 3. Add source and target to `.speakeasy/workflow.yaml`
+
+Add a new source:
+
+```yaml
+sources:
+  # ... existing sources ...
+  ANNCSU Coordinate API:
+    inputs:
+      - location: oas/dev/Specifica API - ANNCSU - Aggiornamento coordinate.yml
+    transformations:
+      - removeUnused: true
+    output: .speakeasy/out.coordinate.openapi.yaml
+    registry:
+      location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-coordinate-api
+```
+
+Add a new target:
+
+```yaml
+targets:
+  # ... existing targets ...
+  coordinate:
+    target: python
+    source: ANNCSU Coordinate API
+    output: coordinate-sdk
+    codeSamples:
+      registry:
+        location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-coordinate-api-python-code-samples
+      labelOverride:
+        fixedValue: Python (SDK)
+      blocking: false
+```
+
+### 4. Generate the SDK to a staging directory
+
+```bash
+speakeasy run --target coordinate
+```
+
+This generates the SDK in `coordinate-sdk/` (staging directory).
+
+### 5. Copy generated files to `src/anncsu/coordinate/`
+
+```bash
+# Create the package directory
+mkdir -p src/anncsu/coordinate
+
+# Copy API-specific files (NOT infrastructure files)
+cp coordinate-sdk/src/anncsu/__init__.py src/anncsu/coordinate/
+cp coordinate-sdk/src/anncsu/_version.py src/anncsu/coordinate/
+cp coordinate-sdk/src/anncsu/sdk.py src/anncsu/coordinate/
+cp coordinate-sdk/src/anncsu/sdkconfiguration.py src/anncsu/coordinate/
+cp coordinate-sdk/src/anncsu/*.py src/anncsu/coordinate/  # Other endpoint files
+cp -r coordinate-sdk/src/anncsu/models src/anncsu/coordinate/
+cp -r coordinate-sdk/src/anncsu/errors src/anncsu/coordinate/
+```
+
+Do NOT copy: `basesdk.py`, `httpclient.py`, `types/`, `utils/`, `_hooks/`
+
+### 6. Run post-generation script
+
+```bash
+uv run python scripts/post_speakeasy_generation.py --package coordinate
+```
+
+This updates all imports to use `anncsu.common.sdk` and `anncsu.common.*`.
+
+### 7. Add the package to `ALL_PACKAGES` in the script
+
+Edit `scripts/post_speakeasy_generation.py`:
+
+```python
+ALL_PACKAGES = ["pa", "coordinate"]  # Add new package here
+```
+
+### 8. Verify with tests
+
+```bash
+uv run pytest tests/ -q
+```
+
+### 9. Clean up staging directory (optional)
+
+```bash
+rm -rf coordinate-sdk/
 ```
 
 ## Post-Generation Script Options
@@ -43,7 +138,7 @@ uv run pytest tests/ -q
 uv run python scripts/post_speakeasy_generation.py
 
 # Process a specific package
-uv run python scripts/post_speakeasy_generation.py --package pa
+uv run python scripts/post_speakeasy_generation.py --package coordinate
 
 # Process all API packages
 uv run python scripts/post_speakeasy_generation.py --all
@@ -55,19 +150,38 @@ uv run python scripts/post_speakeasy_generation.py --dry-run
 uv run python scripts/post_speakeasy_generation.py --help
 ```
 
-## Adding a New API Package
+## Package Structure
 
-When adding a new API package (e.g., `odonimi` for Aggiornamento odonimi):
+After generation and post-processing:
 
-1. Generate the package with Speakeasy using the appropriate OpenAPI spec
-2. Run the post-generation script:
-   ```bash
-   uv run python scripts/post_speakeasy_generation.py --package odonimi
-   ```
-3. Add the package to the list in `scripts/post_speakeasy_generation.py` for future `--all` runs
+```
+src/anncsu/
+├── common/
+│   ├── sdk/                  # Shared SDK infrastructure (DO NOT DELETE)
+│   │   ├── basesdk.py
+│   │   ├── httpclient.py
+│   │   ├── protocols.py
+│   │   ├── types/
+│   │   └── utils/
+│   ├── errors/               # Shared error classes
+│   └── hooks/                # Shared hooks
+├── pa/                       # Consultazione API
+│   ├── sdk.py
+│   ├── sdkconfiguration.py
+│   ├── models/
+│   └── errors/
+├── coordinate/               # Aggiornamento Coordinate API
+│   ├── sdk.py
+│   ├── sdkconfiguration.py
+│   ├── models/
+│   └── errors/
+└── cli/                      # CLI tool
+```
 
 ## Important Notes
 
 > **WARNING**: The `common/sdk/` directory contains shared infrastructure that is NOT regenerated by Speakeasy. Do not delete it during regeneration.
 
 > **NOTE**: Always run the post-generation script after each Speakeasy regeneration to maintain the correct package structure.
+
+> **NOTE**: Speakeasy may generate SDK class names with suffixes (e.g., `Anncsu1`) to avoid conflicts. You may want to rename these for clarity.

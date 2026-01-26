@@ -173,7 +173,7 @@ class TestSecurityIntegrationWithSDK:
 
     def test_security_in_sdk_workflow(self):
         """Test Security works in complete SDK workflow."""
-        from anncsu.pa import Anncsu
+        from anncsu.pa import AnncsuConsultazione
 
         # Create security
         security = Security(bearer="workflow-token")
@@ -182,7 +182,7 @@ class TestSecurityIntegrationWithSDK:
         assert isinstance(security, BaseModel)
 
         # Create SDK with security
-        sdk = Anncsu(security=security)
+        sdk = AnncsuConsultazione(security=security)
 
         # Verify security is stored
         assert sdk.sdk_configuration.security is not None

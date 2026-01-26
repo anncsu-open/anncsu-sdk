@@ -36,6 +36,9 @@ anncsu auth status
 
 # 6. Use token in API calls (auto-refreshes if expired)
 curl -H "Authorization: Bearer $(anncsu auth token)" https://api.example.com
+
+# 7. Update coordinates for an access point
+anncsu coordinate update --codcom H501 --progr-civico 12345 --x 12.4963655 --y 41.9027835
 ```
 
 ## Commands
@@ -264,9 +267,339 @@ curl -H "Authorization: Bearer $(anncsu auth token)" \
 
 ---
 
+### `anncsu coordinate` - Coordinate Management
+
+Manage geographic coordinates for access points (civici) in ANNCSU.
+
+#### `anncsu coordinate update`
+
+Update coordinates for an access point (civico):
+
+```bash
+anncsu coordinate update --codcom H501 --progr-civico 12345 --x 12.4963655 --y 41.9027835 --metodo 4
+```
+
+Output:
+```
+Operation successful! ID: abc123-def456
+
+┌─────────────────────────────────────────┐
+│ Field              │ Value              │
+├─────────────────────────────────────────┤
+│ ID Richiesta       │ abc123-def456      │
+│ Esito              │ OK                 │
+│ Messaggio          │ Operazione eseguita│
+│ Dati Restituiti    │ 1                  │
+└─────────────────────────────────────────┘
+```
+
+Options:
+- `--codcom, -c` - Codice comune (Belfiore code, e.g. H501 for Roma) **[required]**
+- `--progr-civico, -p` - Progressivo civico (access progressive number) **[required]**
+- `--x` - Coordinata X (longitude). Valid range for Italy: 6.0-18.0
+- `--y` - Coordinata Y (latitude). Valid range for Italy: 36.0-47.0
+- `--z` - Quota (altitude in meters)
+- `--metodo, -m` - Metodo di rilevazione (1-4)
+- `--token-endpoint, -e` - PDND token endpoint URL
+- `--server-url, -s` - API server URL (defaults to validation environment)
+- `--validation/--production` - Use validation (UAT) or production environment
+- `--no-verify-ssl` - Disable SSL certificate verification (use with caution)
+- `--json` - Output as JSON
+
+Example with JSON output:
+```bash
+anncsu coordinate update --codcom H501 --progr-civico 12345 --x 12.4963655 --y 41.9027835 --json
+```
+
+Output:
+```json
+{
+  "success": true,
+  "id_richiesta": "abc123-def456",
+  "esito": "OK",
+  "messaggio": "Operazione eseguita con successo",
+  "dati_count": 1
+}
+```
+
+#### `anncsu coordinate status`
+
+Check the status of the Coordinate API service:
+
+```bash
+anncsu coordinate status
+```
+
+Output:
+```
+Coordinate API Status - Validation (UAT)
+
+┌─────────────────────────────────────────┐
+│ Property           │ Value              │
+├─────────────────────────────────────────┤
+│ Status             │ OK                 │
+│ Server             │ https://modipa-val…│
+│ Response           │ OK                 │
+└─────────────────────────────────────────┘
+```
+
+Options:
+- `--token-endpoint, -e` - PDND token endpoint URL
+- `--server-url, -s` - API server URL
+- `--validation/--production` - Use validation (UAT) or production environment
+- `--no-verify-ssl` - Disable SSL certificate verification
+- `--json` - Output as JSON
+
+Example checking production environment:
+```bash
+anncsu coordinate status --production
+```
+
+Example with JSON output:
+```bash
+anncsu coordinate status --json
+```
+
+Output:
+```json
+{
+  "available": true,
+  "status": "OK",
+  "server_url": "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate/anncsuaccessi/v1",
+  "environment": "validation"
+}
+```
+
+#### `anncsu coordinate dry-run`
+
+Perform a test coordinate update cycle: search for an access point, update coordinates, then immediately restore the original values. This is useful for testing that authentication and configuration are correct without permanently altering data.
+
+**Two Modes of Operation:**
+
+1. **Direct mode (`--prognazacc`)**: Use the progressivo nazionale accesso directly.
+   Skips the odonimo search step - faster if you already know the prognazacc.
+
+2. **Search mode (`--codcom` + `--denom`)**: Search for odonimo then access point.
+   Use this when you only know the municipality code and street name.
+
+```bash
+# Direct mode - use prognazacc directly (faster)
+anncsu coordinate dry-run --prognazacc 5256880
+
+# Search mode - search by municipality and street
+anncsu coordinate dry-run --codcom H501 --denom VklBIFJPTUE=
+```
+
+The command performs these steps:
+1. **Search/Lookup** - Find an access point (direct lookup or search via consultazione API)
+2. **Test Update** - Update the coordinates (using same values)
+3. **Restore** - Immediately restore the original coordinates
+
+**Output (direct mode with `--prognazacc`):**
+```
+Step 1: Looking up access point prognazacc=5256880...
+
+  Found: VIA ROMA
+  Progressivo nazionale odonimo: 907156
+
+Found access point: prognazacc=5256880
+  Civico: 1
+  Coord X: 12.4922309
+  Coord Y: 41.8902102
+  Quota: 0
+  Metodo: 4
+
+Step 2: Performing test update...
+
+Test update completed: OK (esito=0)
+
+Step 3: Restoring original coordinates...
+
+Restore completed: OK (esito=0)
+
+Dry-run Summary:
+
+┌─────────────────────────────────────────────────────────────┐
+│ Step         │ Status │ Details                             │
+├─────────────────────────────────────────────────────────────┤
+│ Search       │ OK     │ Found prognazacc=5256880            │
+│ Test Update  │ OK     │ 0                                   │
+│ Restore      │ OK     │ 0                                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Output (search mode with `--codcom` + `--denom`):**
+```
+Step 1: Searching for odonimo and access point...
+
+  Found odonimo: VIA ROMA
+  Progressivo nazionale: 907156
+
+Found access point: prognazacc=5256880
+  Civico: 1
+  Coord X: 12.4922309
+  Coord Y: 41.8902102
+  Quota: 0
+  Metodo: 4
+
+Step 2: Performing test update...
+
+Test update completed: OK (esito=0)
+
+Step 3: Restoring original coordinates...
+
+Restore completed: OK (esito=0)
+
+Dry-run Summary:
+
+┌─────────────────────────────────────────────────────────────┐
+│ Step         │ Status │ Details                             │
+├─────────────────────────────────────────────────────────────┤
+│ Search       │ OK     │ Found prognazacc=5256880            │
+│ Test Update  │ OK     │ 0                                   │
+│ Restore      │ OK     │ 0                                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Options:
+- `--prognazacc, -p` - Progressivo nazionale accesso (alternative to --codcom/--denom)
+- `--codcom, -c` - Codice comune (Belfiore code, e.g. H501 for Roma). Required with --denom.
+- `--denom, -d` - Denominazione esatta dell'odonimo - base64 encoded. Required with --codcom.
+- `--accparz, -a` - Valore anche parziale del civico. Used with --codcom/--denom.
+- `--token-endpoint, -e` - PDND token endpoint URL
+- `--server-url, -s` - API server URL (defaults to validation environment)
+- `--validation/--production` - Use validation (UAT) or production environment
+- `--no-verify-ssl` - Disable SSL certificate verification (use with caution)
+- `--json` - Output as JSON
+
+> **Note**: You must provide either `--prognazacc` OR both `--codcom` and `--denom`.
+> If `--prognazacc` is provided, `--codcom` and `--denom` are ignored.
+
+**Examples:**
+
+Direct mode - use prognazacc directly (faster):
+```bash
+anncsu coordinate dry-run --prognazacc 5256880
+```
+
+Search mode - search by municipality and street:
+```bash
+anncsu coordinate dry-run --codcom H501 --denom VklBIFJPTUE=
+```
+
+Search mode with specific civico number:
+```bash
+anncsu coordinate dry-run --codcom H501 --denom VklBIFJPTUE= --accparz 10
+```
+
+JSON output (works with both modes):
+```bash
+anncsu coordinate dry-run --prognazacc 5256880 --json
+anncsu coordinate dry-run --codcom H501 --denom VklBIFJPTUE= --json
+```
+
+JSON output (direct mode - `codcom` may be `null`):
+```json
+{
+  "success": true,
+  "original_coordinates": {
+    "prognazacc": "5256880",
+    "codcom": null,
+    "civico": "1",
+    "coord_x": "12.4922309",
+    "coord_y": "41.8902102",
+    "quota": "0",
+    "metodo": "4"
+  },
+  "test_update": {
+    "success": true,
+    "id_richiesta": "REQ-123",
+    "esito": "0",
+    "messaggio": "OK",
+    "dati_count": 0
+  },
+  "restore": {
+    "success": true,
+    "id_richiesta": "REQ-456",
+    "esito": "0",
+    "messaggio": "OK",
+    "dati_count": 0
+  },
+  "restore_failed": false,
+  "error_message": null
+}
+```
+
+JSON output (search mode - `codcom` is populated):
+```json
+{
+  "success": true,
+  "original_coordinates": {
+    "prognazacc": "5256880",
+    "codcom": "H501",
+    "civico": "1",
+    "coord_x": "12.4922309",
+    "coord_y": "41.8902102",
+    "quota": "0",
+    "metodo": "4"
+  },
+  "test_update": {
+    "success": true,
+    "id_richiesta": "REQ-123",
+    "esito": "0",
+    "messaggio": "OK",
+    "dati_count": 0
+  },
+  "restore": {
+    "success": true,
+    "id_richiesta": "REQ-456",
+    "esito": "0",
+    "messaggio": "OK",
+    "dati_count": 0
+  },
+  "restore_failed": false,
+  "error_message": null
+}
+```
+
+**Warning Handling**: If the restore operation fails, the command will display a warning with the original coordinate values so they can be manually restored:
+
+```
+WARNING: Restore failed: <error message>
+
+Original coordinates to restore manually:
+  prognazacc: 123456789
+  codcom: H501
+  coord_x: 12.4963655
+  coord_y: 41.9027835
+  quota: 21
+  metodo: 4
+```
+
+**Handling Access Points Without Coordinates**: When an access point has no existing coordinates (X, Y, and metodo are all empty), the dry-run uses temporary test coordinates for the update test:
+
+| Field | Test Value | Description |
+|-------|------------|-------------|
+| X | `12.4922309` | Longitude (Roma Colosseo area) |
+| Y | `41.8902102` | Latitude (Roma Colosseo area) |
+| Z | `null` | Altitude not specified |
+| metodo | `4` | "Altro" (other method) |
+
+After the test update, the command restores the original empty state. A note is displayed when test coordinates are used:
+
+```
+Note: Access has no coordinates. Using test coordinates (will be cleared after test).
+```
+
+**Note**: If the API does not allow restoring an access point without valid coordinates, the restore operation may fail. In this case, manual intervention may be needed.
+
+---
+
 ## Environment Variables
 
 The CLI reads configuration from environment variables (with `PDND_` prefix) or a `.env` file:
+
+### PDND Configuration
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -274,13 +607,27 @@ The CLI reads configuration from environment variables (with `PDND_` prefix) or 
 | `PDND_ISSUER` | Yes | Issuer (iss) claim - your client_id |
 | `PDND_SUBJECT` | Yes | Subject (sub) claim - your client_id |
 | `PDND_AUDIENCE` | Yes | Audience (aud) - PDND client-assertion endpoint |
-| `PDND_PURPOSE_ID` | Yes | Purpose ID for the PDND request |
+| `PDND_PURPOSE_ID_PA` | Yes | Purpose ID for PA Consultazione API |
+| `PDND_PURPOSE_ID_COORDINATE` | Yes | Purpose ID for Coordinate API |
+| `PDND_PURPOSE_ID_ACCESSI` | Yes* | Purpose ID for Accessi API (can be empty) |
+| `PDND_PURPOSE_ID_INTERNI` | Yes* | Purpose ID for Interni API (can be empty) |
+| `PDND_PURPOSE_ID_ODONIMI` | Yes* | Purpose ID for Odonimi API (can be empty) |
 | `PDND_KEY_PATH` | One required | Path to RSA private key file |
 | `PDND_PRIVATE_KEY` | One required | RSA private key content (alternative to KEY_PATH) |
 | `PDND_TOKEN_ENDPOINT` | Yes | PDND token endpoint URL |
 | `PDND_ALG` | No | Algorithm (default: RS256) |
 | `PDND_TYP` | No | Token type (default: JWT) |
 | `PDND_VALIDITY_MINUTES` | No | Assertion validity in minutes (default: 43200 = 30 days) |
+
+### ModI Audit Context (for Coordinate API)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `MODI_USER_ID` | For Coordinate | User identifier in the consumer domain |
+| `MODI_USER_LOCATION` | For Coordinate | Workstation/system identifier |
+| `MODI_LOA` | For Coordinate | Level of Assurance (e.g., SPID_L2, CIE_L3) |
+
+> **Note**: ModI variables are required only for Coordinate API write operations (`update`, `dry-run`). If not configured, the CLI will attempt requests without ModI headers, which will fail for APIs requiring them.
 
 ### Example `.env` file
 
@@ -290,12 +637,115 @@ PDND_KID=your-key-id
 PDND_ISSUER=your-client-id
 PDND_SUBJECT=your-client-id
 PDND_AUDIENCE=https://auth.uat.interop.pagopa.it/client-assertion
-PDND_PURPOSE_ID=your-purpose-id
+
+# Purpose ID for each API type (ALL must be present, can be empty if not used)
+PDND_PURPOSE_ID_PA=your-purpose-id-for-pa-consultazione
+PDND_PURPOSE_ID_COORDINATE=your-purpose-id-for-coordinate-api
+PDND_PURPOSE_ID_ACCESSI=
+PDND_PURPOSE_ID_INTERNI=
+PDND_PURPOSE_ID_ODONIMI=
+
 PDND_KEY_PATH=./private_key.pem
 PDND_TOKEN_ENDPOINT=https://auth.uat.interop.pagopa.it/token.oauth2
 
 # Optional
 PDND_VALIDITY_MINUTES=43200
+
+# ModI Audit Context (required for Coordinate API)
+MODI_USER_ID=batch-user-001
+MODI_USER_LOCATION=server-batch-01
+MODI_LOA=SPID_L2
+```
+
+---
+
+## ModI Headers (Coordinate API)
+
+The Coordinate API requires ModI (Modello di Interoperabilità) security headers in addition to the standard bearer token. These headers implement the AGID interoperability patterns:
+
+- **INTEGRITY_REST_02**: Integrity of REST message payload in PDND
+- **AUDIT_REST_02**: Forwarding of tracked data in the Consumer domain
+
+### Configuration
+
+To enable ModI headers, add these environment variables to your `.env`:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `MODI_USER_ID` | Yes* | User identifier in the consumer domain |
+| `MODI_USER_LOCATION` | Yes* | Workstation/system identifier from which the request originates |
+| `MODI_LOA` | Yes* | Level of Assurance in the authentication process |
+
+*Required only for Coordinate API (POST requests). If not configured, ModI headers will not be sent.
+
+### Level of Assurance (LoA) Values
+
+| Value | Description |
+|-------|-------------|
+| `SPID_L1` | SPID Level 1 authentication |
+| `SPID_L2` | SPID Level 2 authentication (recommended for batch operations) |
+| `SPID_L3` | SPID Level 3 authentication |
+| `CIE_L1` | CIE Level 1 authentication |
+| `CIE_L2` | CIE Level 2 authentication |
+| `CIE_L3` | CIE Level 3 authentication |
+
+### How It Works
+
+When ModI is configured, the CLI automatically generates two JWT headers for each POST request:
+
+1. **`Agid-JWT-Signature`**: Contains a SHA-256 digest of the request payload, ensuring integrity
+2. **`Agid-JWT-TrackingEvidence`**: Contains audit information (userID, userLocation, LoA) for traceability
+
+These headers are signed using the same RSA private key used for PDND authentication.
+
+### Example Configuration
+
+```env
+# ModI Audit Context
+MODI_USER_ID=system-batch-processor
+MODI_USER_LOCATION=datacenter-rm-01
+MODI_LOA=SPID_L2
+```
+
+### Commands That Use ModI
+
+| Command | ModI Headers |
+|---------|-------------|
+| `anncsu coordinate update` | ✅ Yes - POST request with payload |
+| `anncsu coordinate dry-run` | ✅ Yes - Two POST requests (test + restore) |
+| `anncsu coordinate status` | ❌ No - GET request, no payload |
+| `anncsu auth *` | ❌ No - Authentication only |
+| `anncsu config *` | ❌ No - Local configuration |
+
+### Verifying ModI Configuration
+
+To check if ModI is properly configured:
+
+```bash
+anncsu config show
+```
+
+The output will show:
+```
+┌─────────────────────────────────────────┐
+│ ModI Configuration                      │
+├─────────────────────────────────────────┤
+│ User ID:       system-batch-processor   │
+│ User Location: datacenter-rm-01         │
+│ LoA:           SPID_L2                  │
+│ Status:        ✅ Configured            │
+└─────────────────────────────────────────┘
+```
+
+If ModI is not configured:
+```
+┌─────────────────────────────────────────┐
+│ ModI Configuration                      │
+├─────────────────────────────────────────┤
+│ Status:        ❌ Not configured        │
+│ Note:          Required for Coordinate  │
+│                API write operations     │
+└─────────────────────────────────────────┘
 ```
 
 ---
@@ -405,7 +855,11 @@ curl -s -H "Authorization: Bearer $TOKEN" \
     PDND_ISSUER: ${{ secrets.PDND_ISSUER }}
     PDND_SUBJECT: ${{ secrets.PDND_SUBJECT }}
     PDND_AUDIENCE: ${{ secrets.PDND_AUDIENCE }}
-    PDND_PURPOSE_ID: ${{ secrets.PDND_PURPOSE_ID }}
+    PDND_PURPOSE_ID_PA: ${{ secrets.PDND_PURPOSE_ID_PA }}
+    PDND_PURPOSE_ID_COORDINATE: ${{ secrets.PDND_PURPOSE_ID_COORDINATE }}
+    PDND_PURPOSE_ID_ACCESSI: ""
+    PDND_PURPOSE_ID_INTERNI: ""
+    PDND_PURPOSE_ID_ODONIMI: ""
     PDND_PRIVATE_KEY: ${{ secrets.PDND_PRIVATE_KEY }}
     PDND_TOKEN_ENDPOINT: ${{ secrets.PDND_TOKEN_ENDPOINT }}
   run: |

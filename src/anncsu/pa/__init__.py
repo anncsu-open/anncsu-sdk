@@ -9,7 +9,7 @@ from ._version import (
 from ._version import (
     __title__ as __title__,
 )
-from .sdk import Anncsu
+from .sdk import AnncsuConsultazione
 from .sdkconfiguration import SDKConfiguration
 
 VERSION: str = __version__
@@ -23,7 +23,7 @@ __all__ = [
     "__openapi_doc_version__",
     "__gen_version__",
     "__user_agent__",
-    "Anncsu",
+    "AnncsuConsultazione",
     "SDKConfiguration",
     "VERSION",
     "OPENAPI_DOC_VERSION",

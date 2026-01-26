@@ -35,7 +35,11 @@ PDND_KID=test-key-id
 PDND_ISSUER=test-client-id
 PDND_SUBJECT=test-client-id
 PDND_AUDIENCE=auth.uat.interop.pagopa.it/client-assertion
-PDND_PURPOSE_ID=test-purpose-id
+PDND_PURPOSE_ID_PA=test-purpose-id-pa
+PDND_PURPOSE_ID_COORDINATE=test-purpose-id-coordinate
+PDND_PURPOSE_ID_ACCESSI=
+PDND_PURPOSE_ID_INTERNI=
+PDND_PURPOSE_ID_ODONIMI=
 PDND_KEY_PATH=./test_private_key.pem
 """
     env_file = tmp_path / ".env"

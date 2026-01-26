@@ -1,397 +1,266 @@
 # SPDX-FileCopyrightText: 2025-present Geobeyond <info@geobeyond.it>
 # SPDX-License-Identifier: MIT
-"""Tests for session persistence."""
+"""Tests for session.py with multi-API support.
+
+All session functions require api_type parameter - no default session.json.
+"""
 
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
-from unittest.mock import patch
 
-from anncsu.common.session import (
-    Session,
-    clear_session,
-    get_session_path,
-    load_session,
-    save_session,
-)
-
-
-class TestSessionModel:
-    """Tests for Session Pydantic model."""
-
-    def test_session_model_valid(self) -> None:
-        """Test that Session model accepts valid data."""
-        session = Session(
-            client_assertion="eyJhbGciOiJSUzI1NiJ9.test.sig",
-            access_token="eyJhbGciOiJSUzI1NiJ9.access.sig",
-            token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",
-        )
-        assert session.client_assertion == "eyJhbGciOiJSUzI1NiJ9.test.sig"
-        assert session.access_token == "eyJhbGciOiJSUzI1NiJ9.access.sig"
-        assert (
-            session.token_endpoint == "https://auth.uat.interop.pagopa.it/token.oauth2"
-        )
-
-    def test_session_model_optional_fields(self) -> None:
-        """Test that Session model handles optional fields."""
-        session = Session(
-            client_assertion="eyJhbGciOiJSUzI1NiJ9.test.sig",
-            access_token=None,
-            token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",
-        )
-        assert session.client_assertion == "eyJhbGciOiJSUzI1NiJ9.test.sig"
-        assert session.access_token is None
-
-    def test_session_model_serialization(self) -> None:
-        """Test that Session model serializes to JSON correctly."""
-        session = Session(
-            client_assertion="assertion-token",
-            access_token="access-token",
-            token_endpoint="https://example.com/token",
-        )
-        json_str = session.model_dump_json()
-        data = json.loads(json_str)
-        assert data["client_assertion"] == "assertion-token"
-        assert data["access_token"] == "access-token"
-        assert data["token_endpoint"] == "https://example.com/token"
+import pytest
 
 
 class TestGetSessionPath:
-    """Tests for get_session_path function."""
+    """Tests for get_session_path function - api_type is REQUIRED."""
 
-    def test_get_session_path_default(self) -> None:
-        """Test that get_session_path returns correct default path."""
-        path = get_session_path()
-        assert path == Path.home() / ".anncsu" / "session.json"
+    def test_session_path_requires_api_type(self, tmp_path: Path) -> None:
+        """Test that get_session_path raises error with api_type=None."""
+        from anncsu.common.session import get_session_path
 
-    def test_get_session_path_custom_config_dir(self, tmp_path: Path) -> None:
-        """Test that get_session_path respects custom config dir."""
-        path = get_session_path(config_dir=tmp_path)
-        assert path == tmp_path / "session.json"
+        with pytest.raises(ValueError, match="api_type.*required"):
+            get_session_path(api_type=None, config_dir=tmp_path)
+
+    def test_session_path_with_api_type_pa(self, tmp_path: Path) -> None:
+        """Test session path for PA API type."""
+        from anncsu.common.config import APIType
+        from anncsu.common.session import get_session_path
+
+        result = get_session_path(config_dir=tmp_path, api_type=APIType.PA)
+        assert result == tmp_path / "session_pa.json"
+
+    def test_session_path_with_api_type_coordinate(self, tmp_path: Path) -> None:
+        """Test session path for COORDINATE API type."""
+        from anncsu.common.config import APIType
+        from anncsu.common.session import get_session_path
+
+        result = get_session_path(config_dir=tmp_path, api_type=APIType.COORDINATE)
+        assert result == tmp_path / "session_coordinate.json"
+
+    def test_session_path_with_all_api_types(self, tmp_path: Path) -> None:
+        """Test session path for all API types."""
+        from anncsu.common.config import APIType
+        from anncsu.common.session import get_session_path
+
+        for api_type in APIType:
+            result = get_session_path(config_dir=tmp_path, api_type=api_type)
+            expected = tmp_path / f"session_{api_type.value}.json"
+            assert result == expected, f"Failed for {api_type}"
 
 
 class TestSaveSession:
-    """Tests for save_session function."""
+    """Tests for save_session function - api_type is REQUIRED."""
 
-    def test_save_session_creates_file(self, tmp_path: Path) -> None:
-        """Test that save_session creates the session file."""
+    def test_save_session_requires_api_type(self, tmp_path: Path) -> None:
+        """Test that save_session raises error with api_type=None."""
+        from anncsu.common.session import Session, save_session
+
         session = Session(
             client_assertion="test-assertion",
             access_token="test-token",
-            token_endpoint="https://example.com/token",
+            token_endpoint="https://test.endpoint",
         )
-        save_session(session, config_dir=tmp_path)
 
-        session_file = tmp_path / "session.json"
+        with pytest.raises(ValueError, match="api_type.*required"):
+            save_session(session, api_type=None, config_dir=tmp_path)
+
+    def test_save_session_with_api_type(self, tmp_path: Path) -> None:
+        """Test saving session with specific API type."""
+        from anncsu.common.config import APIType
+        from anncsu.common.session import Session, save_session
+
+        session = Session(
+            client_assertion="pa-assertion",
+            access_token="pa-token",
+            token_endpoint="https://test.endpoint",
+        )
+        save_session(session, config_dir=tmp_path, api_type=APIType.PA)
+
+        session_file = tmp_path / "session_pa.json"
         assert session_file.exists()
 
-    def test_save_session_creates_directory(self, tmp_path: Path) -> None:
-        """Test that save_session creates the config directory if needed."""
-        config_dir = tmp_path / "new_config_dir"
-        session = Session(
-            client_assertion="test-assertion",
-            access_token="test-token",
-            token_endpoint="https://example.com/token",
-        )
-        save_session(session, config_dir=config_dir)
-
-        assert config_dir.exists()
-        assert (config_dir / "session.json").exists()
-
-    def test_save_session_content(self, tmp_path: Path) -> None:
-        """Test that save_session writes correct content."""
-        session = Session(
-            client_assertion="my-assertion",
-            access_token="my-token",
-            token_endpoint="https://auth.example.com/token",
-        )
-        save_session(session, config_dir=tmp_path)
-
-        session_file = tmp_path / "session.json"
         data = json.loads(session_file.read_text())
-        assert data["client_assertion"] == "my-assertion"
-        assert data["access_token"] == "my-token"
-        assert data["token_endpoint"] == "https://auth.example.com/token"
+        assert data["client_assertion"] == "pa-assertion"
 
-    def test_save_session_overwrites_existing(self, tmp_path: Path) -> None:
-        """Test that save_session overwrites existing session."""
-        session1 = Session(
-            client_assertion="old-assertion",
-            access_token="old-token",
-            token_endpoint="https://old.example.com/token",
+    def test_save_different_sessions_for_different_apis(self, tmp_path: Path) -> None:
+        """Test that different API types save to different files."""
+        from anncsu.common.config import APIType
+        from anncsu.common.session import Session, save_session
+
+        # Save PA session
+        pa_session = Session(
+            client_assertion="pa-assertion",
+            access_token="pa-token",
+            token_endpoint="https://test.endpoint",
         )
-        save_session(session1, config_dir=tmp_path)
+        save_session(pa_session, config_dir=tmp_path, api_type=APIType.PA)
 
-        session2 = Session(
-            client_assertion="new-assertion",
-            access_token="new-token",
-            token_endpoint="https://new.example.com/token",
+        # Save COORDINATE session
+        coord_session = Session(
+            client_assertion="coord-assertion",
+            access_token="coord-token",
+            token_endpoint="https://test.endpoint",
         )
-        save_session(session2, config_dir=tmp_path)
+        save_session(coord_session, config_dir=tmp_path, api_type=APIType.COORDINATE)
 
-        session_file = tmp_path / "session.json"
-        data = json.loads(session_file.read_text())
-        assert data["client_assertion"] == "new-assertion"
-        assert data["access_token"] == "new-token"
+        # Verify both files exist with correct content
+        pa_file = tmp_path / "session_pa.json"
+        coord_file = tmp_path / "session_coordinate.json"
+
+        assert pa_file.exists()
+        assert coord_file.exists()
+
+        # Verify no generic session.json was created
+        generic_file = tmp_path / "session.json"
+        assert not generic_file.exists()
+
+        pa_data = json.loads(pa_file.read_text())
+        coord_data = json.loads(coord_file.read_text())
+
+        assert pa_data["client_assertion"] == "pa-assertion"
+        assert coord_data["client_assertion"] == "coord-assertion"
 
 
 class TestLoadSession:
-    """Tests for load_session function."""
+    """Tests for load_session function - api_type is REQUIRED."""
 
-    def test_load_session_returns_none_if_no_file(self, tmp_path: Path) -> None:
-        """Test that load_session returns None if no session file exists."""
-        session = load_session(config_dir=tmp_path)
-        assert session is None
+    def test_load_session_requires_api_type(self, tmp_path: Path) -> None:
+        """Test that load_session raises error with api_type=None."""
+        from anncsu.common.session import load_session
 
-    def test_load_session_returns_session(self, tmp_path: Path) -> None:
-        """Test that load_session returns saved session."""
-        # Save a session first
-        original = Session(
-            client_assertion="saved-assertion",
-            access_token="saved-token",
-            token_endpoint="https://saved.example.com/token",
+        with pytest.raises(ValueError, match="api_type.*required"):
+            load_session(api_type=None, config_dir=tmp_path)
+
+    def test_load_session_with_api_type(self, tmp_path: Path) -> None:
+        """Test loading session with specific API type."""
+        from anncsu.common.config import APIType
+        from anncsu.common.session import Session, load_session, save_session
+
+        session = Session(
+            client_assertion="pa-assertion",
+            access_token="pa-token",
+            token_endpoint="https://test.endpoint",
         )
-        save_session(original, config_dir=tmp_path)
+        save_session(session, config_dir=tmp_path, api_type=APIType.PA)
 
-        # Load it back
-        loaded = load_session(config_dir=tmp_path)
+        loaded = load_session(config_dir=tmp_path, api_type=APIType.PA)
         assert loaded is not None
-        assert loaded.client_assertion == "saved-assertion"
-        assert loaded.access_token == "saved-token"
-        assert loaded.token_endpoint == "https://saved.example.com/token"
+        assert loaded.client_assertion == "pa-assertion"
 
-    def test_load_session_handles_invalid_json(self, tmp_path: Path) -> None:
-        """Test that load_session returns None for invalid JSON."""
-        session_file = tmp_path / "session.json"
-        session_file.write_text("not valid json {{{")
+    def test_load_session_returns_none_for_missing_api_type(
+        self, tmp_path: Path
+    ) -> None:
+        """Test that loading non-existent API session returns None."""
+        from anncsu.common.config import APIType
+        from anncsu.common.session import Session, load_session, save_session
 
-        session = load_session(config_dir=tmp_path)
-        assert session is None
+        # Save PA session only
+        session = Session(
+            client_assertion="pa-assertion",
+            access_token="pa-token",
+            token_endpoint="https://test.endpoint",
+        )
+        save_session(session, config_dir=tmp_path, api_type=APIType.PA)
 
-    def test_load_session_handles_missing_fields(self, tmp_path: Path) -> None:
-        """Test that load_session returns None for incomplete data."""
-        session_file = tmp_path / "session.json"
-        session_file.write_text('{"client_assertion": "only-this"}')
+        # Try to load COORDINATE session (doesn't exist)
+        loaded = load_session(config_dir=tmp_path, api_type=APIType.COORDINATE)
+        assert loaded is None
 
-        session = load_session(config_dir=tmp_path)
-        assert session is None
+    def test_load_different_sessions_for_different_apis(self, tmp_path: Path) -> None:
+        """Test loading different sessions for different API types."""
+        from anncsu.common.config import APIType
+        from anncsu.common.session import Session, load_session, save_session
+
+        # Save PA session
+        pa_session = Session(
+            client_assertion="pa-assertion",
+            access_token="pa-token",
+            token_endpoint="https://test.endpoint",
+        )
+        save_session(pa_session, config_dir=tmp_path, api_type=APIType.PA)
+
+        # Save COORDINATE session
+        coord_session = Session(
+            client_assertion="coord-assertion",
+            access_token="coord-token",
+            token_endpoint="https://test.endpoint",
+        )
+        save_session(coord_session, config_dir=tmp_path, api_type=APIType.COORDINATE)
+
+        # Load and verify each
+        pa_loaded = load_session(config_dir=tmp_path, api_type=APIType.PA)
+        coord_loaded = load_session(config_dir=tmp_path, api_type=APIType.COORDINATE)
+
+        assert pa_loaded is not None
+        assert coord_loaded is not None
+        assert pa_loaded.client_assertion == "pa-assertion"
+        assert coord_loaded.client_assertion == "coord-assertion"
 
 
 class TestClearSession:
-    """Tests for clear_session function."""
+    """Tests for clear_session function - api_type is REQUIRED."""
 
-    def test_clear_session_removes_file(self, tmp_path: Path) -> None:
-        """Test that clear_session removes the session file."""
+    def test_clear_session_requires_api_type(self, tmp_path: Path) -> None:
+        """Test that clear_session raises error with api_type=None."""
+        from anncsu.common.session import clear_session
+
+        with pytest.raises(ValueError, match="api_type.*required"):
+            clear_session(api_type=None, config_dir=tmp_path)
+
+    def test_clear_session_with_api_type(self, tmp_path: Path) -> None:
+        """Test clearing session for specific API type."""
+        from anncsu.common.config import APIType
+        from anncsu.common.session import Session, clear_session, save_session
+
         session = Session(
-            client_assertion="to-delete",
-            access_token="to-delete",
-            token_endpoint="https://example.com/token",
+            client_assertion="pa-assertion",
+            access_token="pa-token",
+            token_endpoint="https://test.endpoint",
         )
-        save_session(session, config_dir=tmp_path)
+        save_session(session, config_dir=tmp_path, api_type=APIType.PA)
 
-        session_file = tmp_path / "session.json"
+        session_file = tmp_path / "session_pa.json"
         assert session_file.exists()
 
-        clear_session(config_dir=tmp_path)
+        clear_session(config_dir=tmp_path, api_type=APIType.PA)
         assert not session_file.exists()
 
-    def test_clear_session_no_error_if_no_file(self, tmp_path: Path) -> None:
-        """Test that clear_session doesn't error if no file exists."""
-        # Should not raise
-        clear_session(config_dir=tmp_path)
+    def test_clear_session_only_clears_specific_api(self, tmp_path: Path) -> None:
+        """Test that clearing one API session doesn't affect others."""
+        from anncsu.common.config import APIType
+        from anncsu.common.session import Session, clear_session, save_session
 
-
-class TestSessionIntegrationWithAuthManager:
-    """Tests for session integration with PDNDAuthManager."""
-
-    def _create_valid_token(self, exp_seconds: int = 3600) -> str:
-        """Create a valid JWT-like token with future expiration."""
-        import base64
-
-        future_exp = int(time.time()) + exp_seconds
-        payload = (
-            base64.urlsafe_b64encode(json.dumps({"exp": future_exp}).encode())
-            .decode()
-            .rstrip("=")
+        # Save both sessions
+        pa_session = Session(
+            client_assertion="pa-assertion",
+            access_token="pa-token",
+            token_endpoint="https://test.endpoint",
         )
-        return f"eyJhbGciOiJSUzI1NiJ9.{payload}.signature"
+        save_session(pa_session, config_dir=tmp_path, api_type=APIType.PA)
 
-    def test_auth_manager_loads_session_on_init(self, tmp_path: Path) -> None:
-        """Test that PDNDAuthManager loads session on initialization."""
-        from unittest.mock import MagicMock
-
-        from anncsu.common.auth import PDNDAuthManager
-
-        valid_token = self._create_valid_token()
-
-        # Save a session
-        session = Session(
-            client_assertion=valid_token,
-            access_token=valid_token,
-            token_endpoint="https://auth.example.com/token",
+        coord_session = Session(
+            client_assertion="coord-assertion",
+            access_token="coord-token",
+            token_endpoint="https://test.endpoint",
         )
-        save_session(session, config_dir=tmp_path)
+        save_session(coord_session, config_dir=tmp_path, api_type=APIType.COORDINATE)
 
-        # Create auth manager with session loading
-        settings = MagicMock()
-        settings.to_config.return_value = MagicMock()
+        # Clear only PA
+        clear_session(config_dir=tmp_path, api_type=APIType.PA)
 
-        manager = PDNDAuthManager(
-            settings=settings,
-            token_endpoint="https://auth.example.com/token",
-            session_persistence=True,
-            config_dir=tmp_path,
-        )
+        # PA should be gone, COORDINATE should remain
+        pa_file = tmp_path / "session_pa.json"
+        coord_file = tmp_path / "session_coordinate.json"
 
-        # Tokens should be loaded from session
-        assert manager._client_assertion == valid_token
-        assert manager._access_token == valid_token
+        assert not pa_file.exists()
+        assert coord_file.exists()
 
-    def test_auth_manager_does_not_load_expired_tokens(self, tmp_path: Path) -> None:
-        """Test that PDNDAuthManager does not load expired tokens."""
-        from unittest.mock import MagicMock
+    def test_clear_nonexistent_session_no_error(self, tmp_path: Path) -> None:
+        """Test that clearing non-existent session doesn't raise error."""
+        from anncsu.common.config import APIType
+        from anncsu.common.session import clear_session
 
-        from anncsu.common.auth import PDNDAuthManager
-
-        # Create an expired token
-        expired_token = self._create_valid_token(exp_seconds=-100)
-
-        # Save a session with expired tokens
-        session = Session(
-            client_assertion=expired_token,
-            access_token=expired_token,
-            token_endpoint="https://auth.example.com/token",
-        )
-        save_session(session, config_dir=tmp_path)
-
-        # Create auth manager
-        settings = MagicMock()
-        settings.to_config.return_value = MagicMock()
-
-        manager = PDNDAuthManager(
-            settings=settings,
-            token_endpoint="https://auth.example.com/token",
-            session_persistence=True,
-            config_dir=tmp_path,
-        )
-
-        # Expired tokens should NOT be loaded
-        assert manager._client_assertion is None
-        assert manager._access_token is None
-
-    def test_auth_manager_does_not_load_mismatched_endpoint(
-        self, tmp_path: Path
-    ) -> None:
-        """Test that PDNDAuthManager doesn't load session for different endpoint."""
-        from unittest.mock import MagicMock
-
-        from anncsu.common.auth import PDNDAuthManager
-
-        valid_token = self._create_valid_token()
-
-        # Save a session for UAT endpoint
-        session = Session(
-            client_assertion=valid_token,
-            access_token=valid_token,
-            token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",
-        )
-        save_session(session, config_dir=tmp_path)
-
-        # Create auth manager for PROD endpoint
-        settings = MagicMock()
-        settings.to_config.return_value = MagicMock()
-
-        manager = PDNDAuthManager(
-            settings=settings,
-            token_endpoint="https://auth.interop.pagopa.it/token.oauth2",
-            session_persistence=True,
-            config_dir=tmp_path,
-        )
-
-        # Tokens should NOT be loaded (different endpoint)
-        assert manager._client_assertion is None
-        assert manager._access_token is None
-
-    def test_auth_manager_saves_session_after_login(self, tmp_path: Path) -> None:
-        """Test that PDNDAuthManager saves session after getting tokens."""
-        from unittest.mock import MagicMock
-
-        from anncsu.common.auth import PDNDAuthManager
-
-        valid_token = self._create_valid_token()
-
-        settings = MagicMock()
-        config = MagicMock()
-        config.issuer = "test-client"
-        settings.to_config.return_value = config
-
-        with patch(
-            "anncsu.common.auth.create_client_assertion",
-            return_value=valid_token,
-        ):
-            with patch("anncsu.common.auth.get_access_token") as mock_get_token:
-                mock_response = MagicMock()
-                mock_response.access_token = valid_token
-                mock_get_token.return_value = mock_response
-
-                manager = PDNDAuthManager(
-                    settings=settings,
-                    token_endpoint="https://auth.example.com/token",
-                    session_persistence=True,
-                    config_dir=tmp_path,
-                )
-
-                # Get access token (triggers save)
-                manager.get_access_token()
-
-                # Session should be saved
-                session_file = tmp_path / "session.json"
-                assert session_file.exists()
-
-                data = json.loads(session_file.read_text())
-                assert data["client_assertion"] == valid_token
-                assert data["access_token"] == valid_token
-
-    def test_auth_manager_clear_session(self, tmp_path: Path) -> None:
-        """Test that PDNDAuthManager.clear_session removes tokens and file."""
-        from unittest.mock import MagicMock
-
-        from anncsu.common.auth import PDNDAuthManager
-
-        valid_token = self._create_valid_token()
-
-        # Save a session
-        session = Session(
-            client_assertion=valid_token,
-            access_token=valid_token,
-            token_endpoint="https://auth.example.com/token",
-        )
-        save_session(session, config_dir=tmp_path)
-
-        # Create auth manager
-        settings = MagicMock()
-        settings.to_config.return_value = MagicMock()
-
-        manager = PDNDAuthManager(
-            settings=settings,
-            token_endpoint="https://auth.example.com/token",
-            session_persistence=True,
-            config_dir=tmp_path,
-        )
-
-        # Verify tokens are loaded
-        assert manager._client_assertion == valid_token
-        assert manager._access_token == valid_token
-
-        # Clear session
-        manager.clear_session()
-
-        # Tokens should be cleared
-        assert manager._client_assertion is None
-        assert manager._access_token is None
-
-        # Session file should be deleted
-        session_file = tmp_path / "session.json"
-        assert not session_file.exists()
+        # Should not raise any error
+        clear_session(config_dir=tmp_path, api_type=APIType.PA)

@@ -1,23 +1,39 @@
 workflowVersion: 1.0.0
 speakeasyVersion: latest
 sources:
-  ANNCSU REST API:
-    inputs:
-      # Using dev/validation environment specification
-      # Production spec will be added to oas/prod/ when available
-      - location: ../oas/dev/Specifica API - ANNCSU – Consultazione per le PA.yaml
-    transformations:
-      - removeUnused: true
-    output: .speakeasy/out.openapi.yaml
-    registry:
-      location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-rest-api
+    ANNCSU Coordinate API:
+        inputs:
+            - location: oas/dev/Specifica API - ANNCSU - Aggiornamento coordinate.yml
+        transformations:
+            - removeUnused: true
+        output: .speakeasy/out.coordinate.openapi.yaml
+        registry:
+            location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-coordinate-api
+    ANNCSU REST API:
+        inputs:
+            - location: ../oas/dev/Specifica API - ANNCSU – Consultazione per le PA.yaml
+        transformations:
+            - removeUnused: true
+        output: .speakeasy/out.openapi.yaml
+        registry:
+            location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-rest-api
 targets:
-  anncsu:
-    target: python
-    source: ANNCSU REST API
-    codeSamples:
-      registry:
-        location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-rest-api-python-code-samples
-      labelOverride:
-        fixedValue: Python (SDK)
-      blocking: false
+    anncsu:
+        target: python
+        source: ANNCSU REST API
+        codeSamples:
+            registry:
+                location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-rest-api-python-code-samples
+            labelOverride:
+                fixedValue: Python (SDK)
+            blocking: false
+    coordinate:
+        target: python
+        source: ANNCSU Coordinate API
+        output: coordinate-sdk
+        codeSamples:
+            registry:
+                location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-coordinate-api-python-code-samples
+            labelOverride:
+                fixedValue: Python (SDK)
+            blocking: false

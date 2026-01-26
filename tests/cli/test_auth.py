@@ -15,6 +15,9 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from typer.testing import CliRunner
 
+# Default API type for tests
+TEST_API_TYPE = "pa"
+
 
 # Pydantic models for auth status output
 class TokenStatus(BaseModel):
@@ -70,7 +73,9 @@ class TestAuthLogin:
                     manager.client_assertion_ttl.return_value = 2592000  # 30 days
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "login"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "login", "--api", TEST_API_TYPE]
+                    )
 
             assert result.exit_code == 0
             output_lower = result.output.lower()
@@ -103,7 +108,9 @@ class TestAuthLogin:
                     manager.client_assertion_ttl.return_value = 2505600  # 29 days
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "login"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "login", "--api", TEST_API_TYPE]
+                    )
 
             assert result.exit_code == 0
             # Should show expiration/TTL info
@@ -144,6 +151,8 @@ class TestAuthLogin:
                         [
                             "auth",
                             "login",
+                            "--api",
+                            TEST_API_TYPE,
                             "--token-endpoint",
                             "https://custom.endpoint/token",
                         ],
@@ -164,7 +173,9 @@ class TestAuthLogin:
                 "anncsu.cli.commands.auth.ClientAssertionSettings",
                 side_effect=Exception("No configuration found"),
             ):
-                result = cli_runner.invoke(app, ["auth", "login"])
+                result = cli_runner.invoke(
+                    app, ["auth", "login", "--api", TEST_API_TYPE]
+                )
 
             assert result.exit_code == 1
             assert "error" in result.output.lower()
@@ -191,7 +202,9 @@ class TestAuthLogin:
                     )
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "login"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "login", "--api", TEST_API_TYPE]
+                    )
 
             assert result.exit_code == 1
             assert "error" in result.output.lower() or "failed" in result.output.lower()
@@ -219,7 +232,9 @@ class TestAuthLogin:
                     manager.client_assertion_ttl.return_value = 2592000  # 30 days
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "login", "--json"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "login", "--api", TEST_API_TYPE, "--json"]
+                    )
 
             assert result.exit_code == 0
             # Should be valid JSON parseable as Pydantic model
@@ -254,7 +269,9 @@ class TestAuthStatus:
                     manager.client_assertion_ttl.return_value = 1296000  # 15 days
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "status"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "status", "--api", TEST_API_TYPE]
+                    )
 
             assert result.exit_code == 0
             output_lower = result.output.lower()
@@ -289,7 +306,9 @@ class TestAuthStatus:
                     manager.client_assertion_ttl.return_value = 1296000  # 15 days
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "status"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "status", "--api", TEST_API_TYPE]
+                    )
 
             assert result.exit_code == 0
             output_lower = result.output.lower()
@@ -320,7 +339,9 @@ class TestAuthStatus:
                     manager.client_assertion_ttl.return_value = None
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "status"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "status", "--api", TEST_API_TYPE]
+                    )
 
             assert result.exit_code == 0
             output_lower = result.output.lower()
@@ -349,7 +370,10 @@ class TestAuthStatus:
                     manager.client_assertion_ttl.return_value = 1296000  # 15 days
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "status", "--json"])
+                    result = cli_runner.invoke(
+                        app,
+                        ["auth", "status", "--api", TEST_API_TYPE, "--json"],
+                    )
 
             assert result.exit_code == 0
             # Should be valid JSON parseable as Pydantic model
@@ -383,7 +407,9 @@ class TestAuthRefresh:
                     manager.access_token_ttl.return_value = 600  # 10 minutes
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "refresh"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "refresh", "--api", TEST_API_TYPE]
+                    )
 
             assert result.exit_code == 0
             output_lower = result.output.lower()
@@ -419,7 +445,14 @@ class TestAuthRefresh:
                     mock_manager.return_value = manager
 
                     result = cli_runner.invoke(
-                        app, ["auth", "refresh", "--force-assertion"]
+                        app,
+                        [
+                            "auth",
+                            "refresh",
+                            "--api",
+                            TEST_API_TYPE,
+                            "--force-assertion",
+                        ],
                     )
 
             assert result.exit_code == 0
@@ -446,7 +479,9 @@ class TestAuthRefresh:
                     manager.get_access_token.side_effect = Exception("Refresh failed")
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "refresh"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "refresh", "--api", TEST_API_TYPE]
+                    )
 
             assert result.exit_code == 1
             assert "error" in result.output.lower() or "failed" in result.output.lower()
@@ -477,7 +512,9 @@ class TestAuthToken:
                     )
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "token"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "token", "--api", TEST_API_TYPE]
+                    )
 
             assert result.exit_code == 0
             # Output should be just the token, no extra text
@@ -507,7 +544,9 @@ class TestAuthToken:
                     manager.get_access_token.return_value = "the-token-value"
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "token"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "token", "--api", TEST_API_TYPE]
+                    )
 
             assert result.exit_code == 0
             # Should be exactly one line
@@ -532,7 +571,9 @@ class TestAuthToken:
                     manager.get_access_token.side_effect = Exception("No token")
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "token"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "token", "--api", TEST_API_TYPE]
+                    )
 
             assert result.exit_code == 1
 
@@ -557,7 +598,9 @@ class TestAuthToken:
                     manager.get_access_token.return_value = expected_token
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "token"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "token", "--api", TEST_API_TYPE]
+                    )
 
             assert result.exit_code == 0
             # Token should be usable in curl -H "Authorization: Bearer $(anncsu auth token)"
@@ -585,7 +628,9 @@ class TestAuthLogout:
                     manager = MagicMock()
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "logout"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "logout", "--api", TEST_API_TYPE]
+                    )
 
             assert result.exit_code == 0
             output_lower = result.output.lower()
@@ -615,7 +660,9 @@ class TestAuthLogout:
                     manager.is_client_assertion_expired.return_value = True
                     mock_manager.return_value = manager
 
-                    result = cli_runner.invoke(app, ["auth", "logout"])
+                    result = cli_runner.invoke(
+                        app, ["auth", "logout", "--api", TEST_API_TYPE]
+                    )
 
             # Should succeed even if not logged in
             assert result.exit_code == 0

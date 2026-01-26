@@ -1,0 +1,931 @@
+# SPDX-FileCopyrightText: 2025-present Geobeyond <info@geobeyond.it>
+# SPDX-License-Identifier: MIT
+"""Coordinate command group for ANNCSU coordinate management."""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+import httpx
+import typer
+from rich.console import Console
+from rich.table import Table
+
+from anncsu.cli.models import (
+    CoordinateStatusResult,
+    CoordinateUpdateResult,
+    DryRunResult,
+    OriginalCoordinates,
+)
+from anncsu.common import PDNDAuthManager
+from anncsu.common.config import APIType, ClientAssertionSettings
+from anncsu.common.errors import AudienceMismatchError
+from anncsu.common.hooks import SDKHooks, register_modi_hook
+from anncsu.common.modi import AuditContext, ModIConfig
+from anncsu.common.security import Security as PASecurity
+from anncsu.common.session import get_config_dir
+from anncsu.coordinate import AnncsuCoordinate
+from anncsu.coordinate.models import Accesso, Coordinate, Richiesta, Security
+from anncsu.coordinate.models.validated import ValidatedRispostaOperazione
+from anncsu.pa import AnncsuConsultazione
+
+coordinate_app = typer.Typer(
+    name="coordinate",
+    help="Coordinate management commands for ANNCSU.",
+    no_args_is_help=True,
+)
+
+console = Console()
+error_console = Console(stderr=True)
+
+# Default token endpoint for UAT
+DEFAULT_TOKEN_ENDPOINT = "https://auth.uat.interop.pagopa.it/token.oauth2"
+
+# Default server URLs for coordinate API
+# Note: Uses AgenziaEntrate-PDND path and anncsu-aggiornamento-coordinate endpoint
+SERVERS = {
+    "production": "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1",
+    "validation": "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1",
+}
+
+# Default server URLs for consultazione API
+CONSULT_SERVERS = {
+    "production": "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",
+    "validation": "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",
+}
+
+
+def _get_consult_sdk(
+    token_endpoint: str,
+    server_url: str | None = None,
+    verify_ssl: bool = True,
+) -> AnncsuConsultazione:
+    """Create an authenticated consultazione SDK instance.
+
+    Uses APIType.PA for authentication (PA Consultazione API).
+    """
+    try:
+        settings = ClientAssertionSettings()
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Configuration not found: {e}")
+        raise typer.Exit(1) from None
+
+    try:
+        manager = PDNDAuthManager(
+            api_type=APIType.PA,
+            settings=settings,
+            token_endpoint=token_endpoint,
+            session_persistence=True,
+            config_dir=get_config_dir(),
+        )
+        access_token = manager.get_access_token()
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Authentication failed: {e}")
+        raise typer.Exit(1) from None
+
+    # Create security object for consultazione API
+    security = PASecurity(bearer=access_token)
+
+    # Create HTTP client with optional SSL verification
+    client = httpx.Client(verify=verify_ssl)
+
+    return AnncsuConsultazione(
+        security=security,
+        server_url=server_url,
+        client=client,
+    )
+
+
+def _get_sdk(
+    token_endpoint: str,
+    server_url: str | None = None,
+    verify_ssl: bool = True,
+    modi_audience: str | None = None,
+) -> AnncsuCoordinate:
+    """Create an authenticated SDK instance with ModI hook support.
+
+    Uses APIType.COORDINATE for authentication (Coordinate API).
+    The ModI hook is automatically registered and will add required headers
+    (Digest, Agid-JWT-Signature, Agid-JWT-TrackingEvidence) to all POST requests.
+
+    Args:
+        token_endpoint: PDND token endpoint URL.
+        server_url: API server URL.
+        verify_ssl: Whether to verify SSL certificates.
+        modi_audience: Audience URL for ModI headers (typically the API base URL).
+
+    Returns:
+        SDK instance with ModI hooks configured via dependency injection.
+    """
+    try:
+        settings = ClientAssertionSettings()
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Configuration not found: {e}")
+        raise typer.Exit(1) from None
+
+    try:
+        manager = PDNDAuthManager(
+            api_type=APIType.COORDINATE,
+            settings=settings,
+            token_endpoint=token_endpoint,
+            session_persistence=True,
+            config_dir=get_config_dir(),
+        )
+        access_token = manager.get_access_token()
+    except AudienceMismatchError as e:
+        error_console.print(f"[red]Configuration Error:[/red]\n{e}")
+        raise typer.Exit(1) from None
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Authentication failed: {e}")
+        raise typer.Exit(1) from None
+
+    # Create security object for coordinate API
+    security = Security(bearer_auth=access_token)
+
+    # Create HTTP client with optional SSL verification
+    client = httpx.Client(verify=verify_ssl)
+
+    # Create hooks with ModI pre-request hook
+    hooks = SDKHooks()
+
+    # Configure ModI if audience is provided
+    if modi_audience:
+        try:
+            # Load private key from settings
+            private_key: bytes | None = None
+            if settings.private_key:
+                private_key = settings.private_key.encode("utf-8")
+            elif settings.key_path:
+                with open(settings.key_path, "rb") as f:
+                    private_key = f.read()
+
+            if private_key:
+                # Create ModI config
+                modi_config = ModIConfig(
+                    private_key=private_key,
+                    kid=settings.kid,
+                    issuer=settings.issuer,
+                    audience=modi_audience,
+                )
+
+                # Create audit context if configured
+                audit_context: AuditContext | None = None
+                if settings.has_modi_audit_context:
+                    audit_context = settings.get_modi_audit_context()
+
+                # Register ModI hook
+                register_modi_hook(
+                    hooks,
+                    config=modi_config,
+                    audit_context=audit_context,
+                )
+        except Exception as e:
+            error_console.print(
+                f"[yellow]Warning:[/yellow] ModI hook setup failed: {e}"
+            )
+            error_console.print("Continuing without ModI headers (API calls may fail).")
+
+    # Create SDK with hooks via dependency injection
+    sdk = AnncsuCoordinate(
+        security=security,
+        server_url=server_url,
+        client=client,
+        hooks=hooks,  # Dependency injection
+    )
+
+    return sdk
+
+
+@coordinate_app.command("update")
+def update(
+    codcom: Annotated[
+        str,
+        typer.Option(
+            "--codcom",
+            "-c",
+            help="Codice comune (Belfiore code, e.g. H501 for Roma).",
+        ),
+    ],
+    progr_civico: Annotated[
+        str,
+        typer.Option(
+            "--progr-civico",
+            "-p",
+            help="Progressivo civico (access progressive number).",
+        ),
+    ],
+    x: Annotated[
+        str | None,
+        typer.Option(
+            "--x",
+            help="Coordinata X (longitude). Valid range for Italy: 6.0-18.0",
+        ),
+    ] = None,
+    y: Annotated[
+        str | None,
+        typer.Option(
+            "--y",
+            help="Coordinata Y (latitude). Valid range for Italy: 36.0-47.0",
+        ),
+    ] = None,
+    z: Annotated[
+        str | None,
+        typer.Option(
+            "--z",
+            help="Quota (altitude in meters).",
+        ),
+    ] = None,
+    metodo: Annotated[
+        str | None,
+        typer.Option(
+            "--metodo",
+            "-m",
+            help="Metodo di rilevazione (1-4).",
+        ),
+    ] = None,
+    token_endpoint: Annotated[
+        str,
+        typer.Option(
+            "--token-endpoint",
+            "-e",
+            help="PDND token endpoint URL.",
+        ),
+    ] = DEFAULT_TOKEN_ENDPOINT,
+    server_url: Annotated[
+        str | None,
+        typer.Option(
+            "--server-url",
+            "-s",
+            help="API server URL. Defaults to validation environment.",
+        ),
+    ] = None,
+    validation_env: Annotated[
+        bool,
+        typer.Option(
+            "--validation/--production",
+            help="Use validation (UAT) or production environment.",
+        ),
+    ] = True,
+    no_verify_ssl: Annotated[
+        bool,
+        typer.Option(
+            "--no-verify-ssl",
+            help="Disable SSL certificate verification (use with caution).",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON."),
+    ] = False,
+) -> None:
+    """Update coordinates for an access point (civico).
+
+    Example:
+        anncsu coordinate update --codcom H501 --progr-civico 12345 --x 12.4963655 --y 41.9027835 --metodo 4
+    """
+    # Determine server URL
+    if server_url is None:
+        server_url = SERVERS["validation"] if validation_env else SERVERS["production"]
+
+    # Create SDK with ModI hook (modi_audience is the API base URL)
+    # The hook automatically adds Digest, Agid-JWT-Signature, and
+    # Agid-JWT-TrackingEvidence headers to POST requests
+    sdk = _get_sdk(
+        token_endpoint=token_endpoint,
+        server_url=server_url,
+        verify_ssl=not no_verify_ssl,
+        modi_audience=server_url,
+    )
+
+    # Build coordinate object if any coordinate provided
+    coordinate_obj = None
+    if x is not None or y is not None or z is not None or metodo is not None:
+        coordinate_obj = Coordinate(
+            x=x,
+            y=y,
+            z=z,
+            metodo=metodo,
+        )
+
+    # Build request
+    richiesta = Richiesta(
+        accesso=Accesso(
+            codcom=codcom,
+            progr_civico=progr_civico,
+            coordinate=coordinate_obj,
+        )
+    )
+
+    # ModI headers are automatically added by the pre-request hook
+    try:
+        response = sdk.json_post.gestionecoordinate(
+            richiesta=richiesta,
+        )
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] API call failed: {e}")
+        raise typer.Exit(1) from None
+
+    # Validate response using the validated model
+    validated_response = ValidatedRispostaOperazione.model_validate(
+        response.model_dump()
+    )
+
+    # Build result (esito="0" means success per ANNCSU API convention)
+    result = CoordinateUpdateResult(
+        success=validated_response.is_success,
+        id_richiesta=validated_response.id_richiesta,
+        esito=validated_response.esito,
+        messaggio=validated_response.messaggio,
+        dati_count=len(validated_response.dati) if validated_response.dati else 0,
+    )
+
+    if json_output:
+        print(result.model_dump_json(indent=2))
+        return
+
+    # Display table
+    if result.success:
+        console.print(
+            f"[green]Operation successful![/green] ID: {result.id_richiesta}\n"
+        )
+    else:
+        console.print(f"[red]Operation failed.[/red] ID: {result.id_richiesta}\n")
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+
+    table.add_row("ID Richiesta", result.id_richiesta or "N/A")
+    table.add_row("Esito", result.esito or "N/A")
+    table.add_row("Messaggio", result.messaggio or "N/A")
+    table.add_row("Dati Restituiti", str(result.dati_count))
+
+    console.print(table)
+
+
+@coordinate_app.command("dry-run")
+def dry_run(
+    codcom: Annotated[
+        str | None,
+        typer.Option(
+            "--codcom",
+            "-c",
+            help="Codice comune (Belfiore code, e.g. H501 for Roma). Required with --denom.",
+        ),
+    ] = None,
+    denom: Annotated[
+        str | None,
+        typer.Option(
+            "--denom",
+            "-d",
+            help="Denominazione esatta dell'odonimo - base64 encoded. Required with --codcom.",
+        ),
+    ] = None,
+    accparz: Annotated[
+        str | None,
+        typer.Option(
+            "--accparz",
+            "-a",
+            help="Valore anche parziale del civico. Used with --codcom/--denom.",
+        ),
+    ] = None,
+    prognazacc_arg: Annotated[
+        str | None,
+        typer.Option(
+            "--prognazacc",
+            "-p",
+            help="Progressivo nazionale accesso. Alternative to --codcom/--denom.",
+        ),
+    ] = None,
+    token_endpoint: Annotated[
+        str,
+        typer.Option(
+            "--token-endpoint",
+            "-e",
+            help="PDND token endpoint URL.",
+        ),
+    ] = DEFAULT_TOKEN_ENDPOINT,
+    server_url: Annotated[
+        str | None,
+        typer.Option(
+            "--server-url",
+            "-s",
+            help="API server URL. Defaults to validation environment.",
+        ),
+    ] = None,
+    validation_env: Annotated[
+        bool,
+        typer.Option(
+            "--validation/--production",
+            help="Use validation (UAT) or production environment.",
+        ),
+    ] = True,
+    no_verify_ssl: Annotated[
+        bool,
+        typer.Option(
+            "--no-verify-ssl",
+            help="Disable SSL certificate verification (use with caution).",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON."),
+    ] = False,
+) -> None:
+    """Dry-run coordinate update: search, test update, then restore original values.
+
+    This command performs a complete test cycle:
+    1. Search for an access point (using --prognazacc OR --codcom/--denom)
+    2. Save the original coordinates
+    3. Perform a test update (with same or slightly modified coordinates)
+    4. Immediately restore the original coordinates
+
+    If restore fails, a warning is shown with the original values for manual restoration.
+
+    Two Modes of Operation:
+    -----------------------
+    1. Direct mode (--prognazacc): Use the progressivo nazionale accesso directly.
+       Skips the odonimo search step - faster if you already know the prognazacc.
+
+    2. Search mode (--codcom/--denom): Search for odonimo then access point.
+       Use this when you only know the municipality code and street name.
+
+    Handling Access Points Without Coordinates:
+    -------------------------------------------
+    When an access point has no existing coordinates (X, Y, and metodo are empty),
+    the dry-run uses temporary test coordinates for the update test:
+
+    - Test coordinates: Roma Colosseo area (X=12.4922309, Y=41.8902102)
+    - Test metodo: 4 (Altro - other method)
+
+    After the test update, the command restores the original empty state by
+    sending a restore request with the original (empty) values. This ensures
+    the access point returns to its original state without coordinates.
+
+    Note: The restore operation for empty coordinates may fail if the API
+    requires valid coordinates. In this case, manual intervention may be needed.
+
+    Example:
+        # Direct mode - use prognazacc directly
+        anncsu coordinate dry-run --prognazacc 5256880
+
+        # Search mode - search by municipality and street
+        anncsu coordinate dry-run --codcom H501 --denom VklBIFJPTUE=
+        anncsu coordinate dry-run --codcom H501 --denom VklBIFJPTUE= --accparz 10
+    """
+    # Validate input parameters
+    # Either --prognazacc OR (--codcom AND --denom) must be provided
+    if prognazacc_arg:
+        # Direct mode: use prognazacc directly
+        use_direct_mode = True
+        if codcom or denom:
+            # Warn that --codcom/--denom are ignored when --prognazacc is provided
+            if not json_output:
+                console.print(
+                    "[yellow]Note:[/yellow] --prognazacc provided, ignoring --codcom/--denom\n"
+                )
+    elif codcom and denom:
+        # Search mode: use codcom + denom
+        use_direct_mode = False
+    elif codcom and not denom:
+        # codcom without denom
+        error_console.print(
+            "[red]Error:[/red] --codcom requires --denom. "
+            "Provide both or use --prognazacc instead."
+        )
+        raise typer.Exit(1) from None
+    elif denom and not codcom:
+        # denom without codcom
+        error_console.print(
+            "[red]Error:[/red] --denom requires --codcom. "
+            "Provide both or use --prognazacc instead."
+        )
+        raise typer.Exit(1) from None
+    else:
+        # No parameters provided
+        error_console.print(
+            "[red]Error:[/red] Missing required parameters. "
+            "Provide --prognazacc OR (--codcom AND --denom)."
+        )
+        raise typer.Exit(1) from None
+
+    # Determine server URLs
+    coord_server = server_url or (
+        SERVERS["validation"] if validation_env else SERVERS["production"]
+    )
+    consult_server = (
+        CONSULT_SERVERS["validation"]
+        if validation_env
+        else CONSULT_SERVERS["production"]
+    )
+
+    consult_sdk = _get_consult_sdk(
+        token_endpoint=token_endpoint,
+        server_url=consult_server,
+        verify_ssl=not no_verify_ssl,
+    )
+
+    # Step 1: Get access point data
+    # Two modes: direct (--prognazacc) or search (--codcom/--denom)
+
+    if use_direct_mode:
+        # Direct mode: lookup access point by prognazacc
+        if not json_output:
+            console.print(
+                f"[bold]Step 1:[/bold] Looking up access point prognazacc={prognazacc_arg}...\n"
+            )
+
+        try:
+            prognazacc_response = consult_sdk.queryparam.prognazacc_get_query_param(
+                prognazacc=prognazacc_arg
+            )
+        except Exception as e:
+            error_console.print(f"[red]Error:[/red] Access point lookup failed: {e}")
+            raise typer.Exit(1) from None
+
+        if not prognazacc_response.data:
+            error_console.print(
+                f"[red]Error:[/red] No access point found for prognazacc={prognazacc_arg}"
+            )
+            raise typer.Exit(1) from None
+
+        accesso_data = prognazacc_response.data
+        prognazacc = accesso_data.prognazacc or prognazacc_arg
+
+        # For direct mode, we don't have codcom from the search
+        # Use the one from the response if available, otherwise None
+        effective_codcom = codcom  # May be None in direct mode
+
+        if not json_output:
+            console.print(f"  Found: {accesso_data.dug} {accesso_data.denomuff}")
+            if accesso_data.prognaz:
+                console.print(
+                    f"  Progressivo nazionale odonimo: {accesso_data.prognaz}\n"
+                )
+
+    else:
+        # Search mode: search by codcom + denom
+        if not json_output:
+            console.print(
+                "[bold]Step 1:[/bold] Searching for odonimo and access point...\n"
+            )
+
+        # Step 1a: Get progressivo nazionale dell'odonimo
+        try:
+            odonimo_response = consult_sdk.queryparam.elencoodonimiprog_get_query_param(
+                codcom=codcom,
+                denomparz=denom,
+            )
+        except Exception as e:
+            error_console.print(f"[red]Error:[/red] Odonimo search failed: {e}")
+            raise typer.Exit(1) from None
+
+        if not odonimo_response.data or len(odonimo_response.data) == 0:
+            error_console.print(
+                f"[red]Error:[/red] No odonimo found for codcom={codcom}, denom={denom}"
+            )
+            raise typer.Exit(1) from None
+
+        # Use the first odonimo result
+        odonimo_data = odonimo_response.data[0]
+        prognaz = odonimo_data.prognaz
+
+        if not prognaz:
+            error_console.print(
+                "[red]Error:[/red] Odonimo found but no prognaz (progressivo nazionale) available"
+            )
+            raise typer.Exit(1) from None
+
+        if not json_output:
+            console.print(
+                f"  Found odonimo: {odonimo_data.dug} {odonimo_data.denomuff}"
+            )
+            console.print(f"  Progressivo nazionale: {prognaz}\n")
+
+        # Step 1b: Get accessi for this odonimo
+        try:
+            # Use accparz if provided, otherwise use "1" to get at least one result
+            search_accparz = accparz if accparz else "1"
+            search_response = consult_sdk.queryparam.elencoaccessiprog_get_query_param(
+                prognaz=prognaz,
+                accparz=search_accparz,
+            )
+        except Exception as e:
+            error_console.print(f"[red]Error:[/red] Access search failed: {e}")
+            raise typer.Exit(1) from None
+
+        if not search_response.data or len(search_response.data) == 0:
+            error_console.print(
+                f"[red]Error:[/red] No access point found for prognaz={prognaz}"
+            )
+            raise typer.Exit(1) from None
+
+        # Use the first result
+        accesso_data = search_response.data[0]
+        prognazacc = accesso_data.prognazacc
+        effective_codcom = codcom
+
+        if not prognazacc:
+            error_console.print(
+                "[red]Error:[/red] Access point found but no prognazacc available"
+            )
+            raise typer.Exit(1) from None
+
+    # Save original coordinates
+    original = OriginalCoordinates(
+        prognazacc=prognazacc,
+        codcom=effective_codcom,
+        civico=accesso_data.civico,
+        coord_x=accesso_data.coord_x,
+        coord_y=accesso_data.coord_y,
+        quota=accesso_data.quota,
+        metodo=accesso_data.metodo,
+    )
+
+    if not json_output:
+        console.print(f"[green]Found access point:[/green] prognazacc={prognazacc}")
+        console.print(f"  Civico: {original.civico or 'N/A'}")
+        console.print(f"  Coord X: {original.coord_x or 'N/A'}")
+        console.print(f"  Coord Y: {original.coord_y or 'N/A'}")
+        console.print(f"  Quota: {original.quota or 'N/A'}")
+        console.print(f"  Metodo: {original.metodo or 'N/A'}\n")
+
+    # Step 2: Perform test update
+    if not json_output:
+        console.print("[bold]Step 2:[/bold] Performing test update...\n")
+
+    # Create SDK with ModI hook - headers added automatically to POST requests
+    coord_sdk = _get_sdk(
+        token_endpoint=token_endpoint,
+        server_url=coord_server,
+        verify_ssl=not no_verify_ssl,
+        modi_audience=coord_server,
+    )
+
+    # Check if access has existing coordinates
+    has_coordinates = original.coord_x and original.coord_y and original.metodo
+
+    if has_coordinates:
+        # Use existing coordinates for test
+        test_coordinate = Coordinate(
+            x=original.coord_x,
+            y=original.coord_y,
+            z=original.quota,
+            metodo=original.metodo,
+        )
+    else:
+        # Access has no coordinates - use test values (Roma Colosseo area)
+        # These will be restored to empty after the test
+        if not json_output:
+            console.print(
+                "[yellow]Note:[/yellow] Access has no coordinates. "
+                "Using test coordinates (will be cleared after test).\n"
+            )
+        test_coordinate = Coordinate(
+            x="12.4922309",  # Roma - Colosseo longitude
+            y="41.8902102",  # Roma - Colosseo latitude
+            z=None,
+            metodo="4",  # Metodo 4 = Altro
+        )
+
+    test_richiesta = Richiesta(
+        accesso=Accesso(
+            codcom=effective_codcom,
+            progr_civico=prognazacc,
+            coordinate=test_coordinate,
+        )
+    )
+
+    # ModI headers are automatically added by the pre-request hook
+    test_update_result: CoordinateUpdateResult
+    try:
+        test_response = coord_sdk.json_post.gestionecoordinate(
+            richiesta=test_richiesta,
+        )
+        # Validate response (esito="0" means success per ANNCSU API convention)
+        validated_test = ValidatedRispostaOperazione.model_validate(
+            test_response.model_dump()
+        )
+        test_update_result = CoordinateUpdateResult(
+            success=validated_test.is_success,
+            id_richiesta=validated_test.id_richiesta,
+            esito=validated_test.esito,
+            messaggio=validated_test.messaggio,
+            dati_count=len(validated_test.dati) if validated_test.dati else 0,
+        )
+        if not json_output:
+            status = (
+                "[green]OK[/green]"
+                if validated_test.is_success
+                else "[red]FAILED[/red]"
+            )
+            console.print(
+                f"Test update completed: {status} (esito={test_update_result.esito})\n"
+            )
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Test update failed: {e}")
+        raise typer.Exit(1) from None
+
+    # Step 3: Restore original coordinates
+    if not json_output:
+        console.print("[bold]Step 3:[/bold] Restoring original coordinates...\n")
+
+    restore_coordinate = Coordinate(
+        x=original.coord_x,
+        y=original.coord_y,
+        z=original.quota,
+        metodo=original.metodo,
+    )
+
+    restore_richiesta = Richiesta(
+        accesso=Accesso(
+            codcom=effective_codcom,
+            progr_civico=prognazacc,
+            coordinate=restore_coordinate,
+        )
+    )
+
+    # ModI headers are automatically added by the pre-request hook
+    restore_result: CoordinateUpdateResult | None = None
+    restore_failed = False
+    error_message: str | None = None
+
+    try:
+        restore_response = coord_sdk.json_post.gestionecoordinate(
+            richiesta=restore_richiesta,
+        )
+        # Validate response (esito="0" means success per ANNCSU API convention)
+        validated_restore = ValidatedRispostaOperazione.model_validate(
+            restore_response.model_dump()
+        )
+        restore_result = CoordinateUpdateResult(
+            success=validated_restore.is_success,
+            id_richiesta=validated_restore.id_richiesta,
+            esito=validated_restore.esito,
+            messaggio=validated_restore.messaggio,
+            dati_count=len(validated_restore.dati) if validated_restore.dati else 0,
+        )
+        if not json_output:
+            status = (
+                "[green]OK[/green]"
+                if validated_restore.is_success
+                else "[red]FAILED[/red]"
+            )
+            console.print(
+                f"Restore completed: {status} (esito={restore_result.esito})\n"
+            )
+    except Exception as e:
+        restore_failed = True
+        error_message = str(e)
+        error_console.print(f"\n[yellow]WARNING:[/yellow] Restore failed: {e}\n")
+        error_console.print(
+            "[yellow]Original coordinates to restore manually:[/yellow]"
+        )
+        error_console.print(f"  prognazacc: {original.prognazacc}")
+        error_console.print(f"  codcom: {original.codcom}")
+        error_console.print(f"  coord_x: {original.coord_x}")
+        error_console.print(f"  coord_y: {original.coord_y}")
+        error_console.print(f"  quota: {original.quota}")
+        error_console.print(f"  metodo: {original.metodo}\n")
+
+    # Build final result
+    result = DryRunResult(
+        success=not restore_failed and test_update_result.success,
+        original_coordinates=original,
+        test_update=test_update_result,
+        restore=restore_result,
+        restore_failed=restore_failed,
+        error_message=error_message,
+    )
+
+    if json_output:
+        print(result.model_dump_json(indent=2))
+        if restore_failed:
+            raise typer.Exit(1)
+        return
+
+    # Display summary
+    console.print("[bold]Dry-run Summary:[/bold]\n")
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Step", style="cyan")
+    table.add_column("Status")
+    table.add_column("Details")
+
+    table.add_row(
+        "Search",
+        "[green]OK[/green]",
+        f"Found prognazacc={prognazacc}",
+    )
+    table.add_row(
+        "Test Update",
+        "[green]OK[/green]" if test_update_result.success else "[red]FAILED[/red]",
+        test_update_result.messaggio or test_update_result.esito or "N/A",
+    )
+    if restore_result:
+        table.add_row(
+            "Restore",
+            "[green]OK[/green]" if restore_result.success else "[red]FAILED[/red]",
+            restore_result.messaggio or restore_result.esito or "N/A",
+        )
+    else:
+        table.add_row(
+            "Restore",
+            "[red]FAILED[/red]",
+            error_message or "Unknown error",
+        )
+
+    console.print(table)
+
+    if restore_failed:
+        raise typer.Exit(1)
+
+
+@coordinate_app.command("status")
+def status(
+    token_endpoint: Annotated[
+        str,
+        typer.Option(
+            "--token-endpoint",
+            "-e",
+            help="PDND token endpoint URL.",
+        ),
+    ] = DEFAULT_TOKEN_ENDPOINT,
+    server_url: Annotated[
+        str | None,
+        typer.Option(
+            "--server-url",
+            "-s",
+            help="API server URL. Defaults to validation environment.",
+        ),
+    ] = None,
+    validation_env: Annotated[
+        bool,
+        typer.Option(
+            "--validation/--production",
+            help="Use validation (UAT) or production environment.",
+        ),
+    ] = True,
+    no_verify_ssl: Annotated[
+        bool,
+        typer.Option(
+            "--no-verify-ssl",
+            help="Disable SSL certificate verification (use with caution).",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON."),
+    ] = False,
+) -> None:
+    """Check the status of the Coordinate API service.
+
+    Example:
+        anncsu coordinate status
+        anncsu coordinate status --production
+    """
+    # Determine server URL
+    if server_url is None:
+        server_url = SERVERS["validation"] if validation_env else SERVERS["production"]
+
+    # Create SDK (no ModI needed for status - GET request, hook will skip it)
+    sdk = _get_sdk(
+        token_endpoint=token_endpoint,
+        server_url=server_url,
+        verify_ssl=not no_verify_ssl,
+    )
+
+    try:
+        response = sdk.status.show_status()
+        api_status = response.status or "unknown"
+        is_available = api_status.lower() == "ok" or api_status.lower() == "running"
+    except Exception as e:
+        api_status = f"Error: {e}"
+        is_available = False
+
+    result = CoordinateStatusResult(
+        available=is_available,
+        status=api_status,
+        server_url=server_url,
+        environment="validation" if validation_env else "production",
+    )
+
+    if json_output:
+        print(result.model_dump_json(indent=2))
+        return
+
+    # Display result
+    env_label = "Validation (UAT)" if validation_env else "Production"
+    status_icon = "[green]OK[/green]" if is_available else "[red]UNAVAILABLE[/red]"
+
+    console.print(f"\n[bold]Coordinate API Status - {env_label}[/bold]\n")
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Property", style="cyan")
+    table.add_column("Value")
+
+    table.add_row("Status", status_icon)
+    table.add_row("Server", server_url)
+    table.add_row("Response", api_status)
+
+    console.print(table)

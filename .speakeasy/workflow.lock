@@ -1,0 +1,57 @@
+speakeasyVersion: 1.697.5
+sources:
+    ANNCSU Coordinate API:
+        sourceNamespace: anncsu-coordinate-api
+        sourceRevisionDigest: sha256:bb5e672f1588b08480aa22c74b61b358305c0bb1fecedf56890b56f3780c29a4
+        sourceBlobDigest: sha256:791001f3ee0f6647b59ad55caa568e90a8299245fc127dc6ff6a466c0f7360a2
+        tags:
+            - latest
+            - 1.0.1
+targets:
+    coordinate:
+        source: ANNCSU Coordinate API
+        sourceNamespace: anncsu-coordinate-api
+        sourceRevisionDigest: sha256:bb5e672f1588b08480aa22c74b61b358305c0bb1fecedf56890b56f3780c29a4
+        sourceBlobDigest: sha256:791001f3ee0f6647b59ad55caa568e90a8299245fc127dc6ff6a466c0f7360a2
+        codeSamplesNamespace: anncsu-coordinate-api-python-code-samples
+        codeSamplesRevisionDigest: sha256:458eace30f305f5d98bccb007663a62a4472d820dc20da7891f379d869b92c23
+workflow:
+    workflowVersion: 1.0.0
+    speakeasyVersion: latest
+    sources:
+        ANNCSU Coordinate API:
+            inputs:
+                - location: oas/dev/Specifica API - ANNCSU - Aggiornamento coordinate.yml
+            transformations:
+                - removeUnused: true
+            output: .speakeasy/out.coordinate.openapi.yaml
+            registry:
+                location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-coordinate-api
+        ANNCSU REST API:
+            inputs:
+                - location: ../oas/dev/Specifica API - ANNCSU – Consultazione per le PA.yaml
+            transformations:
+                - removeUnused: true
+            output: .speakeasy/out.openapi.yaml
+            registry:
+                location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-rest-api
+    targets:
+        anncsu:
+            target: python
+            source: ANNCSU REST API
+            codeSamples:
+                registry:
+                    location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-rest-api-python-code-samples
+                labelOverride:
+                    fixedValue: Python (SDK)
+                blocking: false
+        coordinate:
+            target: python
+            source: ANNCSU Coordinate API
+            output: coordinate-sdk
+            codeSamples:
+                registry:
+                    location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-coordinate-api-python-code-samples
+                labelOverride:
+                    fixedValue: Python (SDK)
+                blocking: false

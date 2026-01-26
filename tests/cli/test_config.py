@@ -81,7 +81,8 @@ class TestConfigInit:
             assert "PDND_ISSUER" in env_content
             assert "PDND_SUBJECT" in env_content
             assert "PDND_AUDIENCE" in env_content
-            assert "PDND_PURPOSE_ID" in env_content
+            assert "PDND_PURPOSE_ID_PA" in env_content
+            assert "PDND_PURPOSE_ID_COORDINATE" in env_content
             assert "PDND_KEY_PATH" in env_content or "PDND_PRIVATE_KEY" in env_content
 
     def test_init_does_not_overwrite_existing(
@@ -310,9 +311,17 @@ class TestConfigShow:
                 settings.issuer = "test-client-id"
                 settings.subject = "test-client-id"
                 settings.audience = "auth.uat.interop.pagopa.it/client-assertion"
-                settings.purpose_id = "test-purpose-id"
+                settings.purpose_id_pa = "test-purpose-id-pa"
+                settings.purpose_id_coordinate = "test-purpose-id-coordinate"
+                settings.purpose_id_accessi = ""
+                settings.purpose_id_interni = ""
+                settings.purpose_id_odonimi = ""
                 settings.key_path = Path("./test_private_key.pem")
                 settings.validity_minutes = 43200
+                settings.modi_user_id = None
+                settings.modi_user_location = None
+                settings.modi_loa = None
+                settings.has_modi_audit_context = False
                 mock.return_value = settings
 
                 result = cli_runner.invoke(app, ["config", "show"])
@@ -334,9 +343,17 @@ class TestConfigShow:
                 settings.issuer = "client-uuid-12345"
                 settings.subject = "client-uuid-12345"
                 settings.audience = "auth.uat.interop.pagopa.it/client-assertion"
-                settings.purpose_id = "purpose-uuid-12345"
+                settings.purpose_id_pa = "purpose-uuid-pa-12345"
+                settings.purpose_id_coordinate = "purpose-uuid-coord-12345"
+                settings.purpose_id_accessi = ""
+                settings.purpose_id_interni = ""
+                settings.purpose_id_odonimi = ""
                 settings.key_path = Path("./private_key.pem")
                 settings.validity_minutes = 43200
+                settings.modi_user_id = None
+                settings.modi_user_location = None
+                settings.modi_loa = None
+                settings.has_modi_audit_context = False
                 mock.return_value = settings
 
                 result = cli_runner.invoke(app, ["config", "show"])
@@ -556,3 +573,164 @@ class TestConfigSet:
             assert result.exit_code == 0
             env_content = Path("custom.env").read_text()
             assert "new-key-id" in env_content
+
+    def test_set_modi_user_id(self, cli_runner: CliRunner, tmp_path: Path) -> None:
+        """Test that config set can update PDND_MODI_USER_ID."""
+        from anncsu.cli import app
+
+        with patch("anncsu.cli.commands.config.get_config_dir") as mock_config_dir:
+            config_dir = tmp_path / ".anncsu"
+            config_dir.mkdir(parents=True)
+            mock_config_dir.return_value = config_dir
+
+            # Create initial .env
+            (config_dir / ".env").write_text("PDND_KID=test-kid\n")
+
+            result = cli_runner.invoke(
+                app, ["config", "set", "--modi-user-id", "batch-user-001"]
+            )
+
+            assert result.exit_code == 0
+            env_content = (config_dir / ".env").read_text()
+            assert "PDND_MODI_USER_ID=batch-user-001" in env_content
+
+    def test_set_modi_user_location(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Test that config set can update PDND_MODI_USER_LOCATION."""
+        from anncsu.cli import app
+
+        with patch("anncsu.cli.commands.config.get_config_dir") as mock_config_dir:
+            config_dir = tmp_path / ".anncsu"
+            config_dir.mkdir(parents=True)
+            mock_config_dir.return_value = config_dir
+
+            # Create initial .env
+            (config_dir / ".env").write_text("PDND_KID=test-kid\n")
+
+            result = cli_runner.invoke(
+                app,
+                ["config", "set", "--modi-user-location", "server-batch-01"],
+            )
+
+            assert result.exit_code == 0
+            env_content = (config_dir / ".env").read_text()
+            assert "PDND_MODI_USER_LOCATION=server-batch-01" in env_content
+
+    def test_set_modi_loa(self, cli_runner: CliRunner, tmp_path: Path) -> None:
+        """Test that config set can update PDND_MODI_LOA."""
+        from anncsu.cli import app
+
+        with patch("anncsu.cli.commands.config.get_config_dir") as mock_config_dir:
+            config_dir = tmp_path / ".anncsu"
+            config_dir.mkdir(parents=True)
+            mock_config_dir.return_value = config_dir
+
+            # Create initial .env
+            (config_dir / ".env").write_text("PDND_KID=test-kid\n")
+
+            result = cli_runner.invoke(app, ["config", "set", "--modi-loa", "SPID_L2"])
+
+            assert result.exit_code == 0
+            env_content = (config_dir / ".env").read_text()
+            assert "PDND_MODI_LOA=SPID_L2" in env_content
+
+    def test_set_all_modi_values(self, cli_runner: CliRunner, tmp_path: Path) -> None:
+        """Test that config set can update all ModI values at once."""
+        from anncsu.cli import app
+
+        with patch("anncsu.cli.commands.config.get_config_dir") as mock_config_dir:
+            config_dir = tmp_path / ".anncsu"
+            config_dir.mkdir(parents=True)
+            mock_config_dir.return_value = config_dir
+
+            # Create initial .env
+            (config_dir / ".env").write_text("PDND_KID=test-kid\n")
+
+            result = cli_runner.invoke(
+                app,
+                [
+                    "config",
+                    "set",
+                    "--modi-user-id",
+                    "batch-user-001",
+                    "--modi-user-location",
+                    "server-batch-01",
+                    "--modi-loa",
+                    "SPID_L2",
+                ],
+            )
+
+            assert result.exit_code == 0
+            env_content = (config_dir / ".env").read_text()
+            assert "PDND_MODI_USER_ID=batch-user-001" in env_content
+            assert "PDND_MODI_USER_LOCATION=server-batch-01" in env_content
+            assert "PDND_MODI_LOA=SPID_L2" in env_content
+
+    def test_set_modi_preserves_existing_pdnd_values(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Test that setting ModI values preserves existing PDND values."""
+        from anncsu.cli import app
+
+        with patch("anncsu.cli.commands.config.get_config_dir") as mock_config_dir:
+            config_dir = tmp_path / ".anncsu"
+            config_dir.mkdir(parents=True)
+            mock_config_dir.return_value = config_dir
+
+            # Create initial .env with PDND values
+            (config_dir / ".env").write_text(
+                "PDND_KID=existing-kid\n"
+                "PDND_ISSUER=existing-issuer\n"
+                "PDND_PURPOSE_ID_COORDINATE=existing-purpose\n"
+            )
+
+            result = cli_runner.invoke(
+                app, ["config", "set", "--modi-user-id", "new-user"]
+            )
+
+            assert result.exit_code == 0
+            env_content = (config_dir / ".env").read_text()
+            # Existing values preserved
+            assert "PDND_KID=existing-kid" in env_content
+            assert "PDND_ISSUER=existing-issuer" in env_content
+            assert "PDND_PURPOSE_ID_COORDINATE=existing-purpose" in env_content
+            # New ModI value added
+            assert "PDND_MODI_USER_ID=new-user" in env_content
+
+    def test_set_modi_updates_existing_modi_values(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Test that config set updates existing ModI values."""
+        from anncsu.cli import app
+
+        with patch("anncsu.cli.commands.config.get_config_dir") as mock_config_dir:
+            config_dir = tmp_path / ".anncsu"
+            config_dir.mkdir(parents=True)
+            mock_config_dir.return_value = config_dir
+
+            # Create initial .env with existing ModI values
+            (config_dir / ".env").write_text(
+                "PDND_KID=test-kid\nPDND_MODI_USER_ID=old-user\nPDND_MODI_LOA=SPID_L1\n"
+            )
+
+            result = cli_runner.invoke(
+                app,
+                [
+                    "config",
+                    "set",
+                    "--modi-user-id",
+                    "new-user",
+                    "--modi-loa",
+                    "SPID_L2",
+                ],
+            )
+
+            assert result.exit_code == 0
+            env_content = (config_dir / ".env").read_text()
+            # Old values replaced
+            assert "old-user" not in env_content
+            assert "SPID_L1" not in env_content
+            # New values present
+            assert "PDND_MODI_USER_ID=new-user" in env_content
+            assert "PDND_MODI_LOA=SPID_L2" in env_content

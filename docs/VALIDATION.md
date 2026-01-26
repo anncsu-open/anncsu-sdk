@@ -17,10 +17,10 @@ OpenAPI specification-based validation for API responses, useful for development
 All request models inherit from Pydantic's `BaseModel`, providing automatic validation:
 
 ```python
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 from pydantic import ValidationError
 
-sdk = Anncsu()
+sdk = AnncsuConsultazione()
 
 try:
     # This will fail - codcom must be exactly 4 characters
@@ -138,17 +138,17 @@ uv sync --dev
 
 ```python
 from pathlib import Path
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
 # Enable response validation
 # For development/validation environment:
-sdk = Anncsu(
+sdk = AnncsuConsultazione(
     validate_responses=True,
     openapi_spec_path=Path("oas/dev/Specifica API - ANNCSU – Consultazione per le PA.yaml")
 )
 
 # For production environment:
-# sdk = Anncsu(
+# sdk = AnncsuConsultazione(
 #     validate_responses=True,
 #     openapi_spec_path=Path("oas/prod/Specifica API - ANNCSU – Consultazione per le PA.yaml")
 # )
@@ -218,9 +218,9 @@ if not is_valid:
 
 ```python
 from pathlib import Path
-from anncsu.pa import Anncsu
+from anncsu.pa import AnncsuConsultazione
 
-sdk = Anncsu(
+sdk = AnncsuConsultazione(
     # Phase 2: Response validation (opt-in, default: False)
     validate_responses=False,
     
@@ -235,7 +235,7 @@ sdk = Anncsu(
 
 ✅ **DO** enable response validation during development:
 ```python
-sdk = Anncsu(
+sdk = AnncsuConsultazione(
     validate_responses=True,
     openapi_spec_path=Path("oas/spec.yaml")
 )
@@ -258,7 +258,7 @@ field: Annotated[str, Field(min_length=1, max_length=100)]
 
 ❌ **DON'T** enable response validation in production (performance overhead)
 ```python
-sdk = Anncsu()  # validation_responses defaults to False
+sdk = AnncsuConsultazione()  # validation_responses defaults to False
 ```
 
 ✅ **DO** rely on input validation (always enabled, minimal overhead)
