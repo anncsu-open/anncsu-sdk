@@ -139,12 +139,13 @@ class TestClientAssertionSettingsMultiAPI:
     @pytest.fixture
     def base_env_vars(self) -> dict[str, str]:
         """Fixture providing base environment variables (without purpose_id)."""
+        # Use PDND_PRIVATE_KEY instead of PDND_KEY_PATH to avoid file existence check
         return {
             "PDND_KID": "test-kid",
             "PDND_ISSUER": "test-issuer",
             "PDND_SUBJECT": "test-subject",
             "PDND_AUDIENCE": "https://auth.test.example.com/client-assertion",
-            "PDND_KEY_PATH": "/tmp/test_key.pem",
+            "PDND_PRIVATE_KEY": "-----BEGIN RSA PRIVATE KEY-----\ntest-key-content\n-----END RSA PRIVATE KEY-----",
         }
 
     @pytest.fixture
