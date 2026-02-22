@@ -4,6 +4,8 @@ SDK per l'API ANNCSU Aggiornamento Coordinate degli Accessi.
 
 Questa API richiede header ModI aggiuntivi (pattern INTEGRITY_REST_02 e AUDIT_REST_02).
 
+> **Nota sulla terminologia**: L'identificatore di un accesso (civico) è chiamato `prognazacc` (progressivo nazionale accesso) nell'API PA Consultazione e `progr_civico` nell'API Coordinate. **Rappresentano lo stesso valore** - l'identificatore progressivo nazionale univoco di un punto di accesso.
+
 ## Installazione
 
 ```bash

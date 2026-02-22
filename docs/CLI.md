@@ -39,6 +39,9 @@ curl -H "Authorization: Bearer $(anncsu auth token)" https://api.example.com
 
 # 7. Update coordinates for an access point
 anncsu coordinate update --codcom H501 --progr-civico 12345 --x 12.4963655 --y 41.9027835
+
+# 8. Validate a CSV for bulk coordinate updates
+anncsu coordinate bulk validate input.csv
 ```
 
 ## Commands
@@ -270,6 +273,11 @@ curl -H "Authorization: Bearer $(anncsu auth token)" \
 ### `anncsu coordinate` - Coordinate Management
 
 Manage geographic coordinates for access points (civici) in ANNCSU.
+
+> **Terminology Note**: The identifier for an access point is called `prognazacc` (progressivo nazionale accesso) in the PA Consultazione API and `progr_civico` in the Coordinate API. **They represent the same value** - the unique national progressive identifier for an access point (civico). When using the CLI:
+> - `--prognazacc` option in `dry-run` command accepts this identifier
+> - `--progr-civico` option in `update` command accepts this same identifier
+> - The `bulk` command CSV uses `progr_civico` as the column name
 
 #### `anncsu coordinate update`
 
@@ -595,6 +603,142 @@ Note: Access has no coordinates. Using test coordinates (will be cleared after t
 
 ---
 
+### `anncsu coordinate bulk` - Bulk Coordinate Operations
+
+Bulk coordinate operations with CSV input and DuckDB local persistence.
+Supports large-scale coordinate updates with validation, execution tracking,
+dry-run simulation, and resumable operations.
+
+#### `anncsu coordinate bulk validate`
+
+Validate a CSV file for bulk coordinate updates without making any API calls.
+Checks header format, required columns, and validates each row against
+ANNCSU business rules using Pydantic models.
+
+```bash
+anncsu coordinate bulk validate input.csv
+```
+
+Output:
+```
+CSV Validation Report
+
+  File: input.csv
+  Codice Comune: A062
+  Total rows: 100
+  Valid: 98
+  Invalid: 2
+
+┌─────────────────────────────────────┐
+│ Validation Errors                   │
+├─────┬──────────────┬────────────────┤
+│ Row │ progr_civico │ Error          │
+├─────┼──────────────┼────────────────┤
+│ 45  │ 1370588      │ x provided ... │
+│ 78  │ 1370592      │ metodo must .. │
+└─────┴──────────────┴────────────────┘
+```
+
+Options:
+- `--json` - Output results as JSON
+
+JSON output:
+```bash
+anncsu coordinate bulk validate input.csv --json
+```
+
+```json
+{
+  "total_rows": 100,
+  "valid_rows": 98,
+  "invalid_rows": 2,
+  "codcom": "A062",
+  "validation_errors": [
+    {
+      "row_id": 45,
+      "progr_civico": "1370588",
+      "validation_error": "x provided without y"
+    }
+  ]
+}
+```
+
+#### CSV File Format
+
+The input CSV must have a header row with the following columns:
+
+| Column | Required | Description |
+|--------|----------|-------------|
+| `codcom` | Yes | Codice comune (Belfiore code). Must be the same for all rows. |
+| `progr_civico` | Yes | Progressivo civico (access progressive number) |
+| `x` | No | Coordinata X (longitude). Range: 6.0-18.0 |
+| `y` | No | Coordinata Y (latitude). Range: 36.0-47.0 |
+| `z` | No | Quota (altitude in meters) |
+| `metodo` | No | Metodo di rilevazione (1-4) |
+
+**Supported separators**: comma (`,`) and semicolon (`;`). The separator is auto-detected from the header.
+
+**Validation rules**:
+- Header must be present and contain all 6 columns
+- If `x` is provided, `y` must also be provided (and vice versa)
+- `metodo` must be in range 1-4 (when provided)
+- Coordinates must be within Italy bounds (x: 6.0-18.0, y: 36.0-47.0)
+- Empty `x`, `y`, `z`, `metodo` is valid (clears coordinates for that access point)
+- All rows must have the same `codcom`
+
+**Example CSV (comma)**:
+```csv
+codcom,progr_civico,x,y,z,metodo
+A062,100,13.1022000,41.8847600,150,3
+A062,200,14.0000000,42.0000000,,2
+A062,300,,,,,
+```
+
+**Example CSV (semicolon)**:
+```csv
+codcom;progr_civico;x;y;z;metodo
+H501;1000;12.4922;41.8902;;4
+H501;2000;12.5000;41.9000;;3
+```
+
+#### Planned Bulk Commands (Not Yet Implemented)
+
+The following commands are planned but not yet wired to the CLI.
+The underlying business logic exists in the SDK modules.
+
+| Command | Description |
+|---------|-------------|
+| `anncsu coordinate bulk update` | Execute bulk coordinate update from CSV |
+| `anncsu coordinate bulk dry-run` | Dry-run: validate + simulate on 10 records |
+| `anncsu coordinate bulk resume` | Resume an interrupted bulk execution |
+| `anncsu coordinate bulk status` | Show status of current/past bulk execution |
+| `anncsu coordinate bulk report` | Generate report (CSV/JSON) for a completed run |
+| `anncsu coordinate bulk list` | List past bulk executions |
+| `anncsu coordinate bulk clean` | Remove old DuckDB files |
+
+#### DuckDB Persistence
+
+Bulk operations use DuckDB as a local persistence layer for tracking execution state.
+This enables resume after interruption, progress tracking, and report generation.
+
+- **DB location**: `~/.anncsu/bulk/{codcom}_{run_id}.db`
+- **Chunking**: Rows are internally divided in chunks of 50,000 via a generated `chunk_id` column
+- **Rate limiting**: 50,000 API calls/day tracked in the database
+- **Tables**: `bulk_input` (rows + validation), `bulk_results` (API responses), `bulk_runs` (execution metadata), `dryrun_originals` (saved coordinates for restore)
+
+#### Commands That Use ModI (Bulk)
+
+| Command | ModI Headers |
+|---------|-------------|
+| `anncsu coordinate bulk validate` | No - local validation only |
+| `anncsu coordinate bulk update` | Yes - POST requests with payload |
+| `anncsu coordinate bulk dry-run` | Yes - POST requests (update + restore) |
+| `anncsu coordinate bulk resume` | Yes - POST requests with payload |
+| `anncsu coordinate bulk status` | No - local DB query |
+| `anncsu coordinate bulk report` | No - local DB query |
+
+---
+
 ## Environment Variables
 
 The CLI reads configuration from environment variables (with `PDND_` prefix) or a `.env` file:
@@ -609,6 +753,7 @@ The CLI reads configuration from environment variables (with `PDND_` prefix) or 
 | `PDND_AUDIENCE` | Yes | Audience (aud) - PDND client-assertion endpoint |
 | `PDND_PURPOSE_ID_PA` | Yes | Purpose ID for PA Consultazione API |
 | `PDND_PURPOSE_ID_COORDINATE` | Yes | Purpose ID for Coordinate API |
+| `PDND_PURPOSE_ID_COORDINATE_BULK` | Yes* | Purpose ID for Coordinate Bulk API (can be empty) |
 | `PDND_PURPOSE_ID_ACCESSI` | Yes* | Purpose ID for Accessi API (can be empty) |
 | `PDND_PURPOSE_ID_INTERNI` | Yes* | Purpose ID for Interni API (can be empty) |
 | `PDND_PURPOSE_ID_ODONIMI` | Yes* | Purpose ID for Odonimi API (can be empty) |
@@ -641,6 +786,7 @@ PDND_AUDIENCE=https://auth.uat.interop.pagopa.it/client-assertion
 # Purpose ID for each API type (ALL must be present, can be empty if not used)
 PDND_PURPOSE_ID_PA=your-purpose-id-for-pa-consultazione
 PDND_PURPOSE_ID_COORDINATE=your-purpose-id-for-coordinate-api
+PDND_PURPOSE_ID_COORDINATE_BULK=your-purpose-id-for-bulk-api
 PDND_PURPOSE_ID_ACCESSI=
 PDND_PURPOSE_ID_INTERNI=
 PDND_PURPOSE_ID_ODONIMI=
@@ -713,6 +859,9 @@ MODI_LOA=SPID_L2
 |---------|-------------|
 | `anncsu coordinate update` | ✅ Yes - POST request with payload |
 | `anncsu coordinate dry-run` | ✅ Yes - Two POST requests (test + restore) |
+| `anncsu coordinate bulk validate` | ❌ No - Local validation only |
+| `anncsu coordinate bulk update` | ✅ Yes - POST requests with payload |
+| `anncsu coordinate bulk dry-run` | ✅ Yes - POST requests (update + restore) |
 | `anncsu coordinate status` | ❌ No - GET request, no payload |
 | `anncsu auth *` | ❌ No - Authentication only |
 | `anncsu config *` | ❌ No - Local configuration |

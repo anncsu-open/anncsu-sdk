@@ -891,6 +891,7 @@ class TestPDNDAuthManagerModIHeaders:
             private_key=mock_private_key.read_text(),
             purpose_id_pa="test-purpose-id-pa",
             purpose_id_coordinate="test-purpose-id-coordinate",
+            purpose_id_coordinate_bulk="test-purpose-id-coordinate-bulk",
             purpose_id_accessi="",
             purpose_id_interni="",
             purpose_id_odonimi="",

@@ -27,12 +27,19 @@ from anncsu.common.session import get_config_dir
 from anncsu.coordinate import AnncsuCoordinate
 from anncsu.coordinate.models import Accesso, Coordinate, Richiesta, Security
 from anncsu.coordinate.models.validated import ValidatedRispostaOperazione
+from anncsu.cli.commands.bulk import bulk_app
 from anncsu.pa import AnncsuConsultazione
 
 coordinate_app = typer.Typer(
     name="coordinate",
     help="Coordinate management commands for ANNCSU.",
     no_args_is_help=True,
+)
+
+coordinate_app.add_typer(
+    bulk_app,
+    name="bulk",
+    help="Bulk coordinate operations with CSV input.",
 )
 
 console = Console()

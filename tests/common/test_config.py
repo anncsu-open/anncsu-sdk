@@ -23,15 +23,16 @@ class TestAPITypeEnum:
 
         assert APIType.PA.value == "pa"
         assert APIType.COORDINATE.value == "coordinate"
+        assert APIType.COORDINATE_BULK.value == "coordinate_bulk"
         assert APIType.ACCESSI.value == "accessi"
         assert APIType.INTERNI.value == "interni"
         assert APIType.ODONIMI.value == "odonimi"
 
     def test_api_type_count(self) -> None:
-        """Test that we have exactly 5 API types."""
+        """Test that we have exactly 6 API types."""
         from anncsu.common.config import APIType
 
-        assert len(APIType) == 5
+        assert len(APIType) == 6
 
     def test_env_var_name_property(self) -> None:
         """Test that env_var_name returns correct variable names."""
@@ -39,6 +40,7 @@ class TestAPITypeEnum:
 
         assert APIType.PA.env_var_name == "PDND_PURPOSE_ID_PA"
         assert APIType.COORDINATE.env_var_name == "PDND_PURPOSE_ID_COORDINATE"
+        assert APIType.COORDINATE_BULK.env_var_name == "PDND_PURPOSE_ID_COORDINATE_BULK"
         assert APIType.ACCESSI.env_var_name == "PDND_PURPOSE_ID_ACCESSI"
         assert APIType.INTERNI.env_var_name == "PDND_PURPOSE_ID_INTERNI"
         assert APIType.ODONIMI.env_var_name == "PDND_PURPOSE_ID_ODONIMI"
@@ -49,6 +51,7 @@ class TestAPITypeEnum:
 
         assert APIType.PA.cli_command == "pa"
         assert APIType.COORDINATE.cli_command == "coordinate"
+        assert APIType.COORDINATE_BULK.cli_command == "coordinate bulk"
         assert APIType.ACCESSI.cli_command == "accessi"
         assert APIType.INTERNI.cli_command == "interni"
         assert APIType.ODONIMI.cli_command == "odonimi"
@@ -59,6 +62,7 @@ class TestAPITypeEnum:
 
         assert "Consultazione" in APIType.PA.description
         assert "Coordinate" in APIType.COORDINATE.description
+        assert "Massivo" in APIType.COORDINATE_BULK.description
         assert "Accessi" in APIType.ACCESSI.description
         assert "Interni" in APIType.INTERNI.description
         assert "Odonimi" in APIType.ODONIMI.description
@@ -69,6 +73,7 @@ class TestAPITypeEnum:
 
         assert APIType.from_cli_command("pa") == APIType.PA
         assert APIType.from_cli_command("coordinate") == APIType.COORDINATE
+        assert APIType.from_cli_command("coordinate bulk") == APIType.COORDINATE_BULK
         assert APIType.from_cli_command("accessi") == APIType.ACCESSI
         assert APIType.from_cli_command("interni") == APIType.INTERNI
         assert APIType.from_cli_command("odonimi") == APIType.ODONIMI
@@ -154,6 +159,7 @@ class TestClientAssertionSettingsMultiAPI:
         return {
             "PDND_PURPOSE_ID_PA": "pa-purpose-id-123",
             "PDND_PURPOSE_ID_COORDINATE": "coordinate-purpose-id-456",
+            "PDND_PURPOSE_ID_COORDINATE_BULK": "",  # Empty but present
             "PDND_PURPOSE_ID_ACCESSI": "",  # Empty but present
             "PDND_PURPOSE_ID_INTERNI": "",  # Empty but present
             "PDND_PURPOSE_ID_ODONIMI": "",  # Empty but present
@@ -205,6 +211,7 @@ class TestClientAssertionSettingsMultiAPI:
             error_msg = str(exc_info.value)
             assert "PDND_PURPOSE_ID_PA" in error_msg
             assert "PDND_PURPOSE_ID_COORDINATE" in error_msg
+            assert "PDND_PURPOSE_ID_COORDINATE_BULK" in error_msg
             assert "PDND_PURPOSE_ID_ACCESSI" in error_msg
             assert "PDND_PURPOSE_ID_INTERNI" in error_msg
             assert "PDND_PURPOSE_ID_ODONIMI" in error_msg
@@ -332,6 +339,7 @@ class TestClientAssertionSettingsBackwardCompatibility:
             {
                 "PDND_PURPOSE_ID_PA": "pa-id",
                 "PDND_PURPOSE_ID_COORDINATE": "coord-id",
+                "PDND_PURPOSE_ID_COORDINATE_BULK": "",
                 "PDND_PURPOSE_ID_ACCESSI": "",
                 "PDND_PURPOSE_ID_INTERNI": "",
                 "PDND_PURPOSE_ID_ODONIMI": "",
@@ -359,6 +367,7 @@ class TestClientAssertionSettingsBackwardCompatibility:
             # No PDND_PRIVATE_KEY or PDND_KEY_PATH
             "PDND_PURPOSE_ID_PA": "pa-id",
             "PDND_PURPOSE_ID_COORDINATE": "coord-id",
+            "PDND_PURPOSE_ID_COORDINATE_BULK": "",
             "PDND_PURPOSE_ID_ACCESSI": "",
             "PDND_PURPOSE_ID_INTERNI": "",
             "PDND_PURPOSE_ID_ODONIMI": "",
@@ -384,6 +393,7 @@ class TestClientAssertionSettingsModIFields:
             "PDND_KEY_PATH": str(mock_private_key),
             "PDND_PURPOSE_ID_PA": "pa-id",
             "PDND_PURPOSE_ID_COORDINATE": "coord-id",
+            "PDND_PURPOSE_ID_COORDINATE_BULK": "",
             "PDND_PURPOSE_ID_ACCESSI": "",
             "PDND_PURPOSE_ID_INTERNI": "",
             "PDND_PURPOSE_ID_ODONIMI": "",
