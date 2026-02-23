@@ -242,6 +242,53 @@ class TestAuthLogin:
             assert login_result.success is True
             assert login_result.access_token_ttl > 0
 
+    def test_login_shows_environment_mismatch_warning(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Test that auth login shows a warning when audience/endpoint environments mismatch."""
+        import warnings
+
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch(
+                "anncsu.cli.commands.auth.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                mock_settings.return_value = settings
+
+                # Make PDNDAuthManager emit a warning on init (environment mismatch)
+                def manager_with_warning(**kwargs):
+                    warnings.warn(
+                        "PDND environment mismatch: PDND_AUDIENCE refers to production "
+                        "(auth.interop.pagopa.it) but token_endpoint refers to UAT "
+                        "(auth.uat.interop.pagopa.it). "
+                        "Authentication will likely fail.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    manager = MagicMock()
+                    manager.get_access_token.side_effect = Exception(
+                        "Token request failed: 015-0008"
+                    )
+                    return manager
+
+                with patch(
+                    "anncsu.cli.commands.auth.PDNDAuthManager",
+                    side_effect=manager_with_warning,
+                ):
+                    result = cli_runner.invoke(
+                        app, ["auth", "login", "--api", TEST_API_TYPE]
+                    )
+
+            # Should fail (token request fails due to mismatch)
+            assert result.exit_code == 1
+            # The warning about environment mismatch should be visible in output
+            assert (
+                "mismatch" in result.output.lower()
+                or "environment" in result.output.lower()
+            )
+
 
 class TestAuthStatus:
     """Tests for auth status command."""
@@ -666,3 +713,125 @@ class TestAuthLogout:
 
             # Should succeed even if not logged in
             assert result.exit_code == 0
+
+
+class TestAuthLogoutAll:
+    """Tests for auth logout --all flag (clears all session files)."""
+
+    def test_logout_all_clears_all_session_files(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Test that auth logout --all removes all session_*.json files."""
+        from anncsu.cli import app
+
+        # Create fake session files for multiple API types
+        config_dir = tmp_path / ".anncsu"
+        config_dir.mkdir()
+        session_files = [
+            config_dir / "session_pa.json",
+            config_dir / "session_coordinate.json",
+            config_dir / "session_coordinate_bulk.json",
+        ]
+        for sf in session_files:
+            sf.write_text(
+                '{"client_assertion": "x", "access_token": "y", "token_endpoint": "z"}'
+            )
+
+        # All files should exist before logout
+        for sf in session_files:
+            assert sf.exists()
+
+        with patch("anncsu.cli.commands.auth.get_config_dir", return_value=config_dir):
+            result = cli_runner.invoke(app, ["auth", "logout", "--all"])
+
+        assert result.exit_code == 0
+        # All session files should be deleted
+        for sf in session_files:
+            assert not sf.exists(), f"{sf.name} should have been deleted"
+
+    def test_logout_all_shows_count_of_cleared_sessions(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Test that auth logout --all reports number of sessions cleared."""
+        from anncsu.cli import app
+
+        config_dir = tmp_path / ".anncsu"
+        config_dir.mkdir()
+        for name in ["session_pa.json", "session_coordinate.json"]:
+            (config_dir / name).write_text(
+                '{"client_assertion": "x", "access_token": "y", "token_endpoint": "z"}'
+            )
+
+        with patch("anncsu.cli.commands.auth.get_config_dir", return_value=config_dir):
+            result = cli_runner.invoke(app, ["auth", "logout", "--all"])
+
+        assert result.exit_code == 0
+        assert "2" in result.output  # should mention 2 sessions cleared
+
+    def test_logout_all_with_no_sessions(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Test that auth logout --all handles empty config dir gracefully."""
+        from anncsu.cli import app
+
+        config_dir = tmp_path / ".anncsu"
+        config_dir.mkdir()
+
+        with patch("anncsu.cli.commands.auth.get_config_dir", return_value=config_dir):
+            result = cli_runner.invoke(app, ["auth", "logout", "--all"])
+
+        assert result.exit_code == 0
+        output_lower = result.output.lower()
+        assert "no" in output_lower or "0" in output_lower
+
+    def test_logout_all_preserves_non_session_files(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Test that auth logout --all only deletes session_*.json, not .env or other files."""
+        from anncsu.cli import app
+
+        config_dir = tmp_path / ".anncsu"
+        config_dir.mkdir()
+
+        # Create session file + non-session files
+        (config_dir / "session_pa.json").write_text(
+            '{"client_assertion": "x", "access_token": "y", "token_endpoint": "z"}'
+        )
+        env_file = config_dir / ".env"
+        env_file.write_text("PDND_KID=abc")
+        other_file = config_dir / "config.json"
+        other_file.write_text("{}")
+
+        with patch("anncsu.cli.commands.auth.get_config_dir", return_value=config_dir):
+            result = cli_runner.invoke(app, ["auth", "logout", "--all"])
+
+        assert result.exit_code == 0
+        # Session file deleted
+        assert not (config_dir / "session_pa.json").exists()
+        # Non-session files preserved
+        assert env_file.exists()
+        assert other_file.exists()
+
+    def test_logout_all_with_nonexistent_config_dir(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Test that auth logout --all handles missing config dir gracefully."""
+        from anncsu.cli import app
+
+        config_dir = tmp_path / ".anncsu_nonexistent"
+
+        with patch("anncsu.cli.commands.auth.get_config_dir", return_value=config_dir):
+            result = cli_runner.invoke(app, ["auth", "logout", "--all"])
+
+        assert result.exit_code == 0
+
+    def test_logout_all_and_api_are_mutually_exclusive(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Test that --all and --api cannot be used together."""
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(app, ["auth", "logout", "--all", "--api", "pa"])
+
+        # Should fail - mutually exclusive options
+        assert result.exit_code != 0

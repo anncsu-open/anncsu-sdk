@@ -18,7 +18,7 @@ from ._version import (
 )
 
 SERVERS = [
-    "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate/anncsuaccessi/v1",
+    "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate/anncsuaccessi/v1",
     # l'accesso all'API e' protetta dai controlli di accesso su GovWay
     "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate/anncsuaccessi/v1",
     # l'accesso alle API di validazione e' protetta dai controlli di accesso su GovWay

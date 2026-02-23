@@ -734,3 +734,216 @@ class TestModIAudienceMismatchError:
             )
 
             assert manager.has_modi_generator
+
+
+class TestModIUsesEServiceKey:
+    """Tests for verifying that ModI JWTs use the dedicated ModI signing key.
+
+    The Client e-service portachiavi on PDND can hold multiple keys:
+    - Voucher key: for client_assertion (voucher)
+    - ModI signing key: for ModI JWT signing (Agid-JWT-Signature, Agid-JWT-TrackingEvidence)
+
+    When a dedicated ModI signing key is configured, ModI JWTs MUST be signed
+    with it and the JWT header kid MUST be the ModI signing kid.
+    """
+
+    @pytest.fixture
+    def mock_env_with_e_service_key(
+        self, mock_private_key: Path, mock_e_service_private_key: Path
+    ) -> dict[str, str]:
+        """Create environment with BOTH voucher and ModI signing keys configured."""
+        return {
+            # Voucher key (for client_assertion)
+            "PDND_KID": "interop-kid-123",
+            "PDND_ISSUER": "test-client-id",
+            "PDND_SUBJECT": "test-subject",
+            "PDND_AUDIENCE": "https://auth.uat.interop.pagopa.it/client-assertion",
+            "PDND_KEY_PATH": str(mock_private_key),
+            "PDND_PURPOSE_ID_PA": "pa-purpose-id",
+            "PDND_PURPOSE_ID_COORDINATE": "coordinate-purpose-id",
+            "PDND_PURPOSE_ID_COORDINATE_BULK": "",
+            "PDND_PURPOSE_ID_ACCESSI": "",
+            "PDND_PURPOSE_ID_INTERNI": "",
+            "PDND_PURPOSE_ID_ODONIMI": "",
+            # ModI signing key (for Agid-JWT-Signature/TrackingEvidence)
+            "PDND_MODI_KID": "e-service-kid-456",
+            "PDND_MODI_KEY_PATH": str(mock_e_service_private_key),
+            # ModI audit context
+            "PDND_MODI_USER_ID": "test-batch-user",
+            "PDND_MODI_USER_LOCATION": "test-server-01",
+            "PDND_MODI_LOA": "SPID_L2",
+        }
+
+    @pytest.fixture
+    def mock_env_interop_only(self, mock_private_key: Path) -> dict[str, str]:
+        """Create environment with ONLY voucher key (backward compat scenario)."""
+        return {
+            "PDND_KID": "interop-kid-123",
+            "PDND_ISSUER": "test-client-id",
+            "PDND_SUBJECT": "test-subject",
+            "PDND_AUDIENCE": "https://auth.uat.interop.pagopa.it/client-assertion",
+            "PDND_KEY_PATH": str(mock_private_key),
+            "PDND_PURPOSE_ID_PA": "pa-purpose-id",
+            "PDND_PURPOSE_ID_COORDINATE": "coordinate-purpose-id",
+            "PDND_PURPOSE_ID_COORDINATE_BULK": "",
+            "PDND_PURPOSE_ID_ACCESSI": "",
+            "PDND_PURPOSE_ID_INTERNI": "",
+            "PDND_PURPOSE_ID_ODONIMI": "",
+            # ModI audit context
+            "PDND_MODI_USER_ID": "test-batch-user",
+            "PDND_MODI_USER_LOCATION": "test-server-01",
+            "PDND_MODI_LOA": "SPID_L2",
+            # No PDND_MODI_KID, PDND_MODI_PRIVATE_KEY, PDND_MODI_KEY_PATH
+        }
+
+    def test_signature_jwt_kid_matches_e_service_kid(
+        self, mock_env_with_e_service_key: dict[str, str]
+    ) -> None:
+        """Test that Agid-JWT-Signature header kid is e-service kid, not interop."""
+        from anncsu.common.auth import PDNDAuthManager
+        from anncsu.common.config import APIType, ClientAssertionSettings
+
+        with patch.dict("os.environ", mock_env_with_e_service_key, clear=False):
+            settings = ClientAssertionSettings(_env_file=None)
+            manager = PDNDAuthManager(
+                api_type=APIType.COORDINATE,
+                settings=settings,
+                token_endpoint="https://auth.example.com/token",
+                modi_audience="https://api.example.com",
+            )
+
+            payload = {"codcom": "H501", "operazione": "M"}
+            headers = manager.get_modi_headers(payload)
+
+            # Decode JWT header
+            sig_jwt = headers["Agid-JWT-Signature"]
+            parts = sig_jwt.split(".")
+            header_b64 = parts[0] + "=" * (4 - len(parts[0]) % 4)
+            header = json.loads(base64.urlsafe_b64decode(header_b64))
+
+            # kid MUST be e-service kid, NOT interop kid
+            assert header["kid"] == "e-service-kid-456"
+            assert header["kid"] != "interop-kid-123"
+
+    def test_tracking_jwt_kid_matches_e_service_kid(
+        self, mock_env_with_e_service_key: dict[str, str]
+    ) -> None:
+        """Test that Agid-JWT-TrackingEvidence header kid is e-service kid."""
+        from anncsu.common.auth import PDNDAuthManager
+        from anncsu.common.config import APIType, ClientAssertionSettings
+
+        with patch.dict("os.environ", mock_env_with_e_service_key, clear=False):
+            settings = ClientAssertionSettings(_env_file=None)
+            manager = PDNDAuthManager(
+                api_type=APIType.COORDINATE,
+                settings=settings,
+                token_endpoint="https://auth.example.com/token",
+                modi_audience="https://api.example.com",
+            )
+
+            payload = {"codcom": "H501", "operazione": "M"}
+            headers = manager.get_modi_headers(payload)
+
+            # Decode JWT header
+            track_jwt = headers["Agid-JWT-TrackingEvidence"]
+            parts = track_jwt.split(".")
+            header_b64 = parts[0] + "=" * (4 - len(parts[0]) % 4)
+            header = json.loads(base64.urlsafe_b64decode(header_b64))
+
+            # kid MUST be e-service kid
+            assert header["kid"] == "e-service-kid-456"
+
+    def test_jwt_signed_with_e_service_private_key_can_be_verified(
+        self,
+        mock_env_with_e_service_key: dict[str, str],
+        mock_e_service_private_key: Path,
+    ) -> None:
+        """Test that JWT can be verified with e-service public key."""
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+        from anncsu.common.auth import PDNDAuthManager
+        from anncsu.common.config import APIType, ClientAssertionSettings
+
+        # Extract public key from e-service private key
+        private_key_obj = load_pem_private_key(
+            mock_e_service_private_key.read_bytes(), password=None
+        )
+        public_key = private_key_obj.public_key()
+        public_key_pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+
+        with patch.dict("os.environ", mock_env_with_e_service_key, clear=False):
+            settings = ClientAssertionSettings(_env_file=None)
+            manager = PDNDAuthManager(
+                api_type=APIType.COORDINATE,
+                settings=settings,
+                token_endpoint="https://auth.example.com/token",
+                modi_audience="https://api.example.com",
+            )
+
+            payload = {"codcom": "H501", "operazione": "M"}
+            headers = manager.get_modi_headers(payload)
+
+            # Verify the JWT with the e-service public key
+            from authlib.jose import jwt as jose_jwt
+
+            sig_jwt = headers["Agid-JWT-Signature"]
+
+            # This MUST succeed - JWT was signed with e-service key
+            decoded = jose_jwt.decode(sig_jwt, public_key_pem)
+            assert decoded["iss"] == "test-client-id"
+
+    def test_jwt_kid_uses_interop_kid_when_no_e_service_configured(
+        self, mock_env_interop_only: dict[str, str]
+    ) -> None:
+        """Test backward compat: JWT kid is interop kid when no e-service configured."""
+        from anncsu.common.auth import PDNDAuthManager
+        from anncsu.common.config import APIType, ClientAssertionSettings
+
+        with patch.dict("os.environ", mock_env_interop_only, clear=False):
+            settings = ClientAssertionSettings(_env_file=None)
+            manager = PDNDAuthManager(
+                api_type=APIType.COORDINATE,
+                settings=settings,
+                token_endpoint="https://auth.example.com/token",
+                modi_audience="https://api.example.com",
+            )
+
+            payload = {"codcom": "H501", "operazione": "M"}
+            headers = manager.get_modi_headers(payload)
+
+            # Decode JWT header
+            sig_jwt = headers["Agid-JWT-Signature"]
+            parts = sig_jwt.split(".")
+            header_b64 = parts[0] + "=" * (4 - len(parts[0]) % 4)
+            header = json.loads(base64.urlsafe_b64decode(header_b64))
+
+            # Should use interop kid for backward compat
+            assert header["kid"] == "interop-kid-123"
+
+    def test_modi_headers_still_generated_with_only_interop_key(
+        self, mock_env_interop_only: dict[str, str]
+    ) -> None:
+        """Test backward compat: ModI headers are still generated with only interop key."""
+        from anncsu.common.auth import PDNDAuthManager
+        from anncsu.common.config import APIType, ClientAssertionSettings
+
+        with patch.dict("os.environ", mock_env_interop_only, clear=False):
+            settings = ClientAssertionSettings(_env_file=None)
+            manager = PDNDAuthManager(
+                api_type=APIType.COORDINATE,
+                settings=settings,
+                token_endpoint="https://auth.example.com/token",
+                modi_audience="https://api.example.com",
+            )
+
+            payload = {"codcom": "H501", "operazione": "M"}
+            headers = manager.get_modi_headers(payload)
+
+            # All three headers should still be present
+            assert "Digest" in headers
+            assert "Agid-JWT-Signature" in headers
+            assert "Agid-JWT-TrackingEvidence" in headers

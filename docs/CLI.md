@@ -28,20 +28,24 @@ nano ~/.anncsu/.env
 # 3. Validate configuration
 anncsu config validate
 
-# 4. Login (generates assertion + obtains token + saves session)
-anncsu auth login
+# 4. Login for PA API (generates assertion + obtains token + saves session)
+anncsu auth login --api pa
 
-# 5. Check status (loads from ~/.anncsu/session.json)
-anncsu auth status
+# 5. Check status
+anncsu auth status --api pa
 
 # 6. Use token in API calls (auto-refreshes if expired)
-curl -H "Authorization: Bearer $(anncsu auth token)" https://api.example.com
+curl -H "Authorization: Bearer $(anncsu auth token --api pa)" \
+  "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1/elencoodonimi?codcom=H501"
 
 # 7. Update coordinates for an access point
 anncsu coordinate update --codcom H501 --progr-civico 12345 --x 12.4963655 --y 41.9027835
 
 # 8. Validate a CSV for bulk coordinate updates
 anncsu coordinate bulk validate input.csv
+
+# 9. Run a dry-run on a few records before bulk update
+anncsu coordinate bulk dry-run input.csv --max-records 5
 ```
 
 ## Commands
@@ -52,23 +56,33 @@ Manage PDND configuration stored in `.env` file.
 
 #### `anncsu config init`
 
-Generate a template `.env` file with all required variables:
+Generate a template `.env` file with all required PDND configuration variables.
+By default, creates the file at `~/.anncsu/.env`.
 
 ```bash
 anncsu config init
+anncsu config init --output /path/to/custom/.env
+anncsu config init --force  # overwrite existing file
 ```
+
+Options:
+- `--output`, `-o` - Output path for .env file (default: `~/.anncsu/.env`)
+- `--force`, `-f` - Overwrite existing .env file
 
 Output:
 ```
-Created .env.template with the following variables:
-- PDND_KID
-- PDND_ISSUER
-- PDND_SUBJECT
-- PDND_AUDIENCE
-- PDND_PURPOSE_ID
-- PDND_KEY_PATH (or PDND_PRIVATE_KEY)
-- PDND_TOKEN_ENDPOINT
+Created /Users/user/.anncsu/.env
+
+Edit the file with your PDND credentials, then run:
+  anncsu config validate
 ```
+
+The generated template includes:
+- `PDND_KID`, `PDND_ISSUER`, `PDND_SUBJECT`, `PDND_AUDIENCE`
+- `PDND_PURPOSE_ID_PA`, `PDND_PURPOSE_ID_COORDINATE`
+- `PDND_PURPOSE_ID_ACCESSI`, `PDND_PURPOSE_ID_INTERNI`, `PDND_PURPOSE_ID_ODONIMI`
+- `PDND_KEY_PATH`
+- `PDND_VALIDITY_MINUTES` (commented, optional)
 
 #### `anncsu config show`
 
@@ -76,9 +90,13 @@ Display current configuration (with masked sensitive values):
 
 ```bash
 anncsu config show
+anncsu config show --json
 ```
 
-Output:
+Options:
+- `--json` - Output as JSON
+
+Output (3 tables: PDND config, Purpose IDs, ModI):
 ```
 ┌─────────────────────────────────────────┐
 │ PDND Configuration                      │
@@ -87,10 +105,27 @@ Output:
 │ Issuer:        a1b2c3d4-e5f6-...        │
 │ Subject:       a1b2c3d4-e5f6-...        │
 │ Audience:      https://auth.uat...      │
-│ Purpose ID:    12345678-90ab-...        │
-│ Key Path:      ./private_key.pem ✅     │
-│ Token Endpoint: https://auth.uat...     │
+│ Key Path:      ./private_key.pem OK     │
 │ Validity:      43200 minutes (30 days)  │
+└─────────────────────────────────────────┘
+
+┌──────────────────────────────────────────┐
+│ Purpose IDs per API                      │
+├──────────────────────────────────────────┤
+│ PA (Consultazione): 12345678...          │
+│ Coordinate:         abcdef01...          │
+│ Accessi:            Not set              │
+│ Interni:            Not set              │
+│ Odonimi:            Not set              │
+└──────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│ ModI Configuration                      │
+├─────────────────────────────────────────┤
+│ Status:        Configured               │
+│ User ID:       batch-user-001           │
+│ User Location: server-batch-01          │
+│ LoA:           SPID_L2                  │
 └─────────────────────────────────────────┘
 ```
 
@@ -115,6 +150,62 @@ Output (error):
 ❌ Configuration errors:
    - PDND_KID: Missing required field
    - PDND_KEY_PATH: File not found: ./private_key.pem
+```
+
+#### `anncsu config import`
+
+Import an existing `.env` file into `~/.anncsu/.env`. Useful when migrating
+from a project-local `.env` to the centralized config directory.
+
+```bash
+anncsu config import                    # import .env from current directory
+anncsu config import /path/to/.env      # import from specific path
+anncsu config import --force            # overwrite existing config
+```
+
+Options:
+- `--force`, `-f` - Overwrite existing configuration
+
+Output:
+```
+Imported /path/to/.env -> /Users/user/.anncsu/.env
+
+Verify with:
+  anncsu config show
+  anncsu config validate
+```
+
+#### `anncsu config set`
+
+Set individual configuration values in the `.env` file. By default, updates
+`~/.anncsu/.env`. Values not provided are left unchanged.
+
+```bash
+anncsu config set --kid my-key-id
+anncsu config set --purpose-id-pa your-purpose-id
+anncsu config set --modi-user-id batch-user --modi-loa SPID_L2
+anncsu config set --env-file /custom/path/.env --issuer my-client-id
+```
+
+Options:
+- `--kid` - Set PDND_KID
+- `--issuer` - Set PDND_ISSUER
+- `--subject` - Set PDND_SUBJECT
+- `--audience` - Set PDND_AUDIENCE
+- `--purpose-id-pa` - Set PDND_PURPOSE_ID_PA
+- `--purpose-id-coordinate` - Set PDND_PURPOSE_ID_COORDINATE
+- `--purpose-id-accessi` - Set PDND_PURPOSE_ID_ACCESSI
+- `--purpose-id-interni` - Set PDND_PURPOSE_ID_INTERNI
+- `--purpose-id-odonimi` - Set PDND_PURPOSE_ID_ODONIMI
+- `--key-path` - Set PDND_KEY_PATH
+- `--modi-user-id` - Set PDND_MODI_USER_ID (for ModI audit headers)
+- `--modi-user-location` - Set PDND_MODI_USER_LOCATION (for ModI audit headers)
+- `--modi-loa` - Set PDND_MODI_LOA (Level of Assurance, e.g., SPID_L2)
+- `--env-file` - Path to .env file (default: `~/.anncsu/.env`)
+
+Output:
+```
+Updated 2 value(s) in /Users/user/.anncsu/.env
 ```
 
 ---
@@ -169,6 +260,61 @@ Output:
 └─────────────────────────────────────────┘
 ```
 
+#### `anncsu assertion decode`
+
+Decode and display a JWT token (without signature verification).
+Accepts a token as argument or from stdin.
+
+```bash
+anncsu assertion decode eyJhbGciOiJSUzI1NiIs...
+anncsu auth token | anncsu assertion decode
+anncsu assertion decode eyJhbGciOiJSUzI1NiIs... --json
+```
+
+Options:
+- `--json` - Output as JSON
+
+Output:
+```
+┌──────────────────────────────┐
+│ JWT Header                   │
+├──────────────────────────────┤
+│ Algorithm (alg)  RS256       │
+│ Type (typ)       JWT         │
+│ Key ID (kid)     abc123...   │
+└──────────────────────────────┘
+
+┌──────────────────────────────────────┐
+│ JWT Payload                          │
+├──────────────────────────────────────┤
+│ Issuer (iss)     a1b2c3d4-e5f6-...  │
+│ Subject (sub)    a1b2c3d4-e5f6-...  │
+│ Audience (aud)   https://auth.uat...│
+│ Purpose ID       12345678-90ab-...  │
+│ Issued At (iat)  2026-01-18 10:30   │
+│ Expires At (exp) 2026-02-17 10:30   │
+└──────────────────────────────────────┘
+```
+
+JSON output:
+```json
+{
+  "header": {
+    "alg": "RS256",
+    "typ": "JWT",
+    "kid": "abc123..."
+  },
+  "payload": {
+    "iss": "a1b2c3d4-e5f6-...",
+    "sub": "a1b2c3d4-e5f6-...",
+    "aud": "https://auth.uat.interop.pagopa.it/client-assertion",
+    "purposeId": "12345678-90ab-...",
+    "iat": 1737192600,
+    "exp": 1739784600
+  }
+}
+```
+
 ---
 
 ### `anncsu auth` - Authentication
@@ -177,15 +323,23 @@ Authenticate with PDND and manage access tokens.
 
 #### `anncsu auth login`
 
-Perform full authentication flow (assertion + token exchange):
+Perform full authentication flow (assertion + token exchange) for a specific API type:
 
 ```bash
-anncsu auth login
+anncsu auth login --api pa
+anncsu auth login --api coordinate
+anncsu auth login --api coordinate_bulk
+anncsu auth login --api pa --json
 ```
+
+Options:
+- `--api`, `-a` - **(required)** API type. Valid values: `pa`, `coordinate`, `coordinate_bulk`, `accessi`, `interni`, `odonimi`
+- `--token-endpoint`, `-e` - PDND token endpoint URL (default: UAT)
+- `--json` - Output as JSON
 
 Output:
 ```
-✅ Login successful!
+Login successful!
 
 ┌─────────────────────────────────────────┐
 │ Client Assertion                        │
@@ -200,17 +354,19 @@ Output:
 └─────────────────────────────────────────┘
 ```
 
-Options:
-- `--token-endpoint URL` - Override token endpoint from .env
-- `--quiet` - Suppress output, only show errors
-
 #### `anncsu auth status`
 
-Show current authentication status:
+Show current authentication status for a specific API type:
 
 ```bash
-anncsu auth status
+anncsu auth status --api pa
+anncsu auth status --api coordinate --json
 ```
+
+Options:
+- `--api`, `-a` - **(required)** API type
+- `--token-endpoint`, `-e` - PDND token endpoint URL (default: UAT)
+- `--json` - Output as JSON
 
 Output (authenticated):
 ```
@@ -239,12 +395,17 @@ Output (not authenticated):
 Force refresh of the access token:
 
 ```bash
-anncsu auth refresh
+anncsu auth refresh --api pa
+anncsu auth refresh --api coordinate
 ```
+
+Options:
+- `--api`, `-a` - **(required)** API type
+- `--token-endpoint`, `-e` - PDND token endpoint URL (default: UAT)
 
 Output:
 ```
-✅ Token refreshed!
+Token refreshed!
    TTL: 600 seconds
    Expires: 2026-01-18 10:50:00
 ```
@@ -254,8 +415,13 @@ Output:
 Print the current access token (useful for piping):
 
 ```bash
-anncsu auth token
+anncsu auth token --api pa
+anncsu auth token --api coordinate
 ```
+
+Options:
+- `--api`, `-a` - **(required)** API type
+- `--token-endpoint`, `-e` - PDND token endpoint URL (default: UAT)
 
 Output:
 ```
@@ -264,9 +430,30 @@ eyJhbGciOiJSUzI1NiIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJodHRwczovL2F1dGgudWF0...
 
 Usage with curl:
 ```bash
-curl -H "Authorization: Bearer $(anncsu auth token)" \
+curl -H "Authorization: Bearer $(anncsu auth token --api pa)" \
   https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1/esisteodonimo?codcom=H501
 ```
+
+#### `anncsu auth logout`
+
+Clear cached tokens for a specific API type (end session):
+
+```bash
+anncsu auth logout --api pa
+anncsu auth logout --api coordinate
+anncsu auth logout --api coordinate_bulk
+```
+
+Options:
+- `--api`, `-a` - API type for authentication. Valid values: `pa`, `coordinate`, `coordinate_bulk`, `accessi`, `interni`, `odonimi`
+- `--token-endpoint`, `-e` - PDND token endpoint URL (default: UAT)
+
+Output:
+```
+Logout successful. Session cleared.
+```
+
+> **Note**: This clears local state only. The tokens may still be valid on the server until they expire.
 
 ---
 
@@ -816,13 +1003,32 @@ JSON output:
 {
   "run_id": "abc123-def456",
   "total_tested": 10,
-  "updates_succeeded": 10,
-  "updates_failed": 0,
-  "restores_succeeded": 10,
+  "updates_succeeded": 8,
+  "updates_failed": 2,
+  "restores_succeeded": 8,
   "restores_failed": 0,
-  "lookup_failures": 0
+  "lookup_failures": 0,
+  "errors": [
+    {
+      "row_id": 4,
+      "progr_civico": "33013415",
+      "operation": "dryrun_update",
+      "http_status": 400,
+      "error_detail": "body.richiesta.accesso.coordinate.y: Max length is '12', found '13'"
+    },
+    {
+      "row_id": 7,
+      "progr_civico": "33013422",
+      "operation": "dryrun_update",
+      "http_status": 400,
+      "error_detail": "body.richiesta.accesso.coordinate.x: Max length is '12', found '14'"
+    }
+  ]
 }
 ```
+
+When there are errors, the text output also includes an **Error Details** table showing
+row, progr_civico, operation, HTTP status, and error message for each failed operation.
 
 Exits with code 1 if any restores failed (manual intervention may be needed).
 
@@ -1163,7 +1369,7 @@ The ANNCSU APIs are exposed through the GovWay gateway on two environments. Each
 | Environment | Token Endpoint | GovWay Base URL |
 |-------------|---------------|-----------------|
 | UAT (Validation) | `https://auth.uat.interop.pagopa.it/token.oauth2` | `https://modipa-val.agenziaentrate.it/govway/rest/in` |
-| Production | `https://auth.interop.pagopa.it/token.oauth2` | `https://modipa.agenziaentrate.it/govway/rest/in` |
+| Production | `https://auth.interop.pagopa.it/token.oauth2` | `https://modipa.agenziaentrate.gov.it/govway/rest/in` |
 
 ### API Types and GovWay Paths
 
@@ -1318,14 +1524,17 @@ If ModI is not configured:
 
 ## Session Persistence
 
-The CLI automatically persists authentication tokens between sessions in `~/.anncsu/session.json`.
+The CLI automatically persists authentication tokens between sessions. Each API type has its own session file under `~/.anncsu/`.
 
-### Session File Location
+### Session Files per API Type
 
-| Platform | Path |
-|----------|------|
-| Linux/macOS | `~/.anncsu/session.json` |
-| Windows | `%USERPROFILE%\.anncsu\session.json` |
+| API Type | Session File |
+|----------|-------------|
+| PA Consultazione | `~/.anncsu/session_pa.json` |
+| Coordinate (single) | `~/.anncsu/session_coordinate.json` |
+| Coordinate (bulk) | `~/.anncsu/session_coordinate_bulk.json` |
+
+Each session file contains the JWT access token obtained with the purpose ID specific to that API. Tokens are automatically refreshed when expired.
 
 ### Session File Format
 
@@ -1339,10 +1548,11 @@ The CLI automatically persists authentication tokens between sessions in `~/.ann
 
 ### How It Works
 
-1. **Login** (`anncsu auth login`): Saves tokens to session file
-2. **Status** (`anncsu auth status`): Loads and displays tokens from session
-3. **Token** (`anncsu auth token`): Loads token, auto-refreshes if expired
-4. **Logout** (`anncsu auth logout`): Deletes session file
+1. **Login** (`anncsu auth login --api pa`): Saves tokens to API-specific session file
+2. **Status** (`anncsu auth status --api pa`): Loads and displays tokens from session
+3. **Token** (`anncsu auth token --api pa`): Loads token, auto-refreshes if expired
+4. **Logout** (`anncsu auth logout --api pa`): Deletes session file for that API type
+5. **Coordinate commands**: Automatically manage their own session files (PA for lookups, coordinate/coordinate_bulk for writes)
 
 ### Automatic Token Refresh
 
@@ -1359,24 +1569,28 @@ The session file stores the `token_endpoint` URL. If you switch between environm
 
 ```bash
 # UAT environment - saves session with UAT endpoint
-anncsu auth login --token-endpoint https://auth.uat.interop.pagopa.it/token.oauth2
+anncsu auth login --api pa --token-endpoint https://auth.uat.interop.pagopa.it/token.oauth2
 
 # PROD environment - creates new session (different endpoint)
-anncsu auth login --token-endpoint https://auth.interop.pagopa.it/token.oauth2
-
-# Status shows only tokens for current endpoint
-anncsu auth status --token-endpoint https://auth.uat.interop.pagopa.it/token.oauth2
+anncsu auth login --api pa --token-endpoint https://auth.interop.pagopa.it/token.oauth2
 ```
 
 ### Clear Session
 
-To remove all cached tokens:
+To remove cached tokens for a specific API type:
 
 ```bash
-anncsu auth logout
+anncsu auth logout --api pa
+anncsu auth logout --api coordinate
+anncsu auth logout --api coordinate_bulk
 ```
 
-This deletes `~/.anncsu/session.json` and clears in-memory tokens.
+Or delete session files directly:
+
+```bash
+rm ~/.anncsu/session_pa.json
+rm ~/.anncsu/session_coordinate_bulk.json
+```
 
 ---
 
@@ -1400,11 +1614,11 @@ This deletes `~/.anncsu/session.json` and clears in-memory tokens.
 #!/bin/bash
 # Script that uses ANNCSU CLI for authentication
 
-# Login and check status
-anncsu auth login --quiet || exit 1
+# Login for PA Consultazione API
+anncsu auth login --api pa || exit 1
 
 # Get token for API calls
-TOKEN=$(anncsu auth token)
+TOKEN=$(anncsu auth token --api pa)
 
 # Make API call
 curl -s -H "Authorization: Bearer $TOKEN" \
@@ -1430,8 +1644,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
     PDND_PRIVATE_KEY: ${{ secrets.PDND_PRIVATE_KEY }}
     PDND_TOKEN_ENDPOINT: ${{ secrets.PDND_TOKEN_ENDPOINT }}
   run: |
-    anncsu auth login
-    anncsu auth status
+    anncsu auth login --api pa
+    anncsu auth status --api pa
 ```
 
 ---

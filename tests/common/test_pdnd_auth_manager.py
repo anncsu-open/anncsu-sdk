@@ -1013,3 +1013,203 @@ class TestPDNDAuthManagerModIHeaders:
 
         # Signatures should be different due to different payload digests
         assert headers1["Agid-JWT-Signature"] != headers2["Agid-JWT-Signature"]
+
+
+class TestPDNDAuthManagerEnvironmentMismatch:
+    """Tests for audience/token_endpoint environment mismatch detection.
+
+    The audience (from .env) and the token_endpoint must refer to the same
+    PDND environment. A mismatch (e.g. audience points to production but
+    token_endpoint points to UAT) will cause authentication failures.
+    """
+
+    def test_no_warning_when_both_uat(self):
+        """No warning when audience and token_endpoint are both UAT."""
+        from anncsu.common.auth import PDNDAuthManager
+
+        config = MagicMock()
+        config.audience = "auth.uat.interop.pagopa.it/client-assertion"
+
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            PDNDAuthManager(
+                api_type=TEST_API_TYPE,
+                config=config,
+                token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",
+            )
+            env_warnings = [x for x in w if "environment" in str(x.message).lower()]
+            assert len(env_warnings) == 0
+
+    def test_no_warning_when_both_production(self):
+        """No warning when audience and token_endpoint are both production."""
+        from anncsu.common.auth import PDNDAuthManager
+
+        config = MagicMock()
+        config.audience = "auth.interop.pagopa.it/client-assertion"
+
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            PDNDAuthManager(
+                api_type=TEST_API_TYPE,
+                config=config,
+                token_endpoint="https://auth.interop.pagopa.it/token.oauth2",
+            )
+            env_warnings = [x for x in w if "environment" in str(x.message).lower()]
+            assert len(env_warnings) == 0
+
+    def test_warning_when_audience_prod_endpoint_uat(self):
+        """Warning when audience is production but token_endpoint is UAT."""
+        from anncsu.common.auth import PDNDAuthManager
+
+        config = MagicMock()
+        config.audience = "auth.interop.pagopa.it/client-assertion"
+
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            PDNDAuthManager(
+                api_type=TEST_API_TYPE,
+                config=config,
+                token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",
+            )
+            env_warnings = [x for x in w if "environment" in str(x.message).lower()]
+            assert len(env_warnings) == 1
+            assert "uat" in str(env_warnings[0].message).lower()
+
+    def test_warning_when_audience_uat_endpoint_prod(self):
+        """Warning when audience is UAT but token_endpoint is production."""
+        from anncsu.common.auth import PDNDAuthManager
+
+        config = MagicMock()
+        config.audience = "auth.uat.interop.pagopa.it/client-assertion"
+
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            PDNDAuthManager(
+                api_type=TEST_API_TYPE,
+                config=config,
+                token_endpoint="https://auth.interop.pagopa.it/token.oauth2",
+            )
+            env_warnings = [x for x in w if "environment" in str(x.message).lower()]
+            assert len(env_warnings) == 1
+
+    def test_no_warning_when_no_token_endpoint(self):
+        """No warning when token_endpoint is not set."""
+        from anncsu.common.auth import PDNDAuthManager
+
+        config = MagicMock()
+        config.audience = "auth.interop.pagopa.it/client-assertion"
+
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            PDNDAuthManager(
+                api_type=TEST_API_TYPE,
+                config=config,
+            )
+            env_warnings = [x for x in w if "environment" in str(x.message).lower()]
+            assert len(env_warnings) == 0
+
+    def test_warning_message_mentions_both_environments(self):
+        """Warning message should mention both the detected environments."""
+        from anncsu.common.auth import PDNDAuthManager
+
+        config = MagicMock()
+        config.audience = "auth.interop.pagopa.it/client-assertion"
+
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            PDNDAuthManager(
+                api_type=TEST_API_TYPE,
+                config=config,
+                token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",
+            )
+            env_warnings = [x for x in w if "environment" in str(x.message).lower()]
+            msg = str(env_warnings[0].message)
+            # Should mention audience and token_endpoint
+            assert "audience" in msg.lower() or "PDND_AUDIENCE" in msg
+            assert "token_endpoint" in msg.lower() or "token endpoint" in msg.lower()
+
+
+class TestExtractVoucherAudience:
+    """Tests for extract_voucher_audience() function.
+
+    This function extracts the 'aud' claim from a PDND voucher JWT,
+    which is the authoritative URL of the e-service endpoint.
+    """
+
+    def test_extract_voucher_audience_returns_aud_claim(self):
+        """Test extracting aud from a valid JWT voucher."""
+        from anncsu.common.auth import extract_voucher_audience
+
+        expected_aud = "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1"
+        token = create_test_jwt(
+            exp=int(time.time()) + 600,
+            claims={"aud": expected_aud},
+        )
+
+        result = extract_voucher_audience(token)
+
+        assert result == expected_aud
+
+    def test_extract_voucher_audience_returns_none_for_invalid_jwt(self):
+        """Test that invalid JWT returns None."""
+        from anncsu.common.auth import extract_voucher_audience
+
+        assert extract_voucher_audience("not-a-jwt") is None
+        assert extract_voucher_audience("") is None
+        assert extract_voucher_audience("a.b") is None
+
+    def test_extract_voucher_audience_returns_none_for_missing_aud(self):
+        """Test that JWT without aud claim returns None."""
+        from anncsu.common.auth import extract_voucher_audience
+
+        # create_test_jwt sets aud="test-audience" by default,
+        # but we override it via claims to remove it
+        header = {"alg": "RS256", "typ": "JWT"}
+        payload = {"iss": "test", "exp": int(time.time()) + 600}
+
+        def b64(data):
+            return (
+                base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+            )
+
+        token = f"{b64(header)}.{b64(payload)}.fake"
+
+        assert extract_voucher_audience(token) is None
+
+    def test_extract_voucher_audience_returns_none_for_non_string_aud(self):
+        """Test that non-string aud claim returns None (e.g., list)."""
+        from anncsu.common.auth import extract_voucher_audience
+
+        header = {"alg": "RS256", "typ": "JWT"}
+        payload = {
+            "iss": "test",
+            "exp": int(time.time()) + 600,
+            "aud": ["https://example.com", "https://other.com"],
+        }
+
+        def b64(data):
+            return (
+                base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+            )
+
+        token = f"{b64(header)}.{b64(payload)}.fake"
+
+        assert extract_voucher_audience(token) is None
+
+    def test_extract_voucher_audience_is_exported(self):
+        """Test that extract_voucher_audience is in __all__."""
+        from anncsu.common import auth
+
+        assert "extract_voucher_audience" in auth.__all__

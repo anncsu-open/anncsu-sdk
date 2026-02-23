@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Annotated
 
 import httpx
@@ -18,6 +19,7 @@ from anncsu.cli.models import (
     OriginalCoordinates,
 )
 from anncsu.common import PDNDAuthManager
+from anncsu.common.auth import extract_voucher_audience
 from anncsu.common.config import APIType, ClientAssertionSettings
 from anncsu.common.errors import AudienceMismatchError
 from anncsu.common.hooks import SDKHooks, register_modi_hook
@@ -51,13 +53,13 @@ DEFAULT_TOKEN_ENDPOINT = "https://auth.uat.interop.pagopa.it/token.oauth2"
 # Default server URLs for coordinate API
 # Note: Uses AgenziaEntrate-PDND path and anncsu-aggiornamento-coordinate endpoint
 SERVERS = {
-    "production": "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1",
+    "production": "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1",
     "validation": "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1",
 }
 
 # Default server URLs for consultazione API
 CONSULT_SERVERS = {
-    "production": "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",
+    "production": "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione-comune/v1",
     "validation": "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",
 }
 
@@ -78,17 +80,33 @@ def _get_consult_sdk(
         raise typer.Exit(1) from None
 
     try:
-        manager = PDNDAuthManager(
-            api_type=APIType.PA,
-            settings=settings,
-            token_endpoint=token_endpoint,
-            session_persistence=True,
-            config_dir=get_config_dir(),
-        )
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            manager = PDNDAuthManager(
+                api_type=APIType.PA,
+                settings=settings,
+                token_endpoint=token_endpoint,
+                session_persistence=True,
+                config_dir=get_config_dir(),
+            )
+        for w in caught_warnings:
+            error_console.print(f"[yellow]Warning:[/yellow] {w.message}")
         access_token = manager.get_access_token()
     except Exception as e:
         error_console.print(f"[red]Error:[/red] Authentication failed: {e}")
         raise typer.Exit(1) from None
+
+    # Auto-correct server URL from voucher audience if different
+    voucher_aud = extract_voucher_audience(access_token)
+    if voucher_aud and server_url and voucher_aud.rstrip("/") != server_url.rstrip("/"):
+        error_console.print(
+            f"[yellow]URL auto-corrected:[/yellow] "
+            f"Hardcoded URL differs from PDND voucher audience.\n"
+            f"  Configured: {server_url}\n"
+            f"  Voucher aud: {voucher_aud}\n"
+            f"  Using voucher audience as server URL."
+        )
+        server_url = voucher_aud
 
     # Create security object for consultazione API
     security = PASecurity(bearer=access_token)
@@ -133,13 +151,17 @@ def _get_sdk(
         raise typer.Exit(1) from None
 
     try:
-        manager = PDNDAuthManager(
-            api_type=api_type,
-            settings=settings,
-            token_endpoint=token_endpoint,
-            session_persistence=True,
-            config_dir=get_config_dir(),
-        )
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            manager = PDNDAuthManager(
+                api_type=api_type,
+                settings=settings,
+                token_endpoint=token_endpoint,
+                session_persistence=True,
+                config_dir=get_config_dir(),
+            )
+        for w in caught_warnings:
+            error_console.print(f"[yellow]Warning:[/yellow] {w.message}")
         access_token = manager.get_access_token()
     except AudienceMismatchError as e:
         error_console.print(f"[red]Configuration Error:[/red]\n{e}")
@@ -147,6 +169,20 @@ def _get_sdk(
     except Exception as e:
         error_console.print(f"[red]Error:[/red] Authentication failed: {e}")
         raise typer.Exit(1) from None
+
+    # Auto-correct server URL from voucher audience if different
+    voucher_aud = extract_voucher_audience(access_token)
+    if voucher_aud and server_url and voucher_aud.rstrip("/") != server_url.rstrip("/"):
+        error_console.print(
+            f"[yellow]URL auto-corrected:[/yellow] "
+            f"Hardcoded URL differs from PDND voucher audience.\n"
+            f"  Configured: {server_url}\n"
+            f"  Voucher aud: {voucher_aud}\n"
+            f"  Using voucher audience as server URL."
+        )
+        server_url = voucher_aud
+        if modi_audience:
+            modi_audience = voucher_aud
 
     # Create security object for coordinate API
     security = Security(bearer_auth=access_token)
@@ -160,19 +196,39 @@ def _get_sdk(
     # Configure ModI if audience is provided
     if modi_audience:
         try:
-            # Load private key from settings
-            private_key: bytes | None = None
-            if settings.private_key:
-                private_key = settings.private_key.encode("utf-8")
-            elif settings.key_path:
-                with open(settings.key_path, "rb") as f:
-                    private_key = f.read()
+            # Determine which key to use for ModI JWT signing
+            # Prefer dedicated ModI signing key (modi_kid + modi_private_key) when available
+            if settings.has_e_service_key:
+                # Use dedicated ModI signing key (separate from voucher key)
+                modi_kid = settings.modi_kid
+                modi_private_key: bytes | None = None
+                if settings.modi_private_key:
+                    modi_private_key = settings.modi_private_key.encode("utf-8")
+                elif settings.modi_key_path:
+                    with open(settings.modi_key_path, "rb") as f:
+                        modi_private_key = f.read()
+            else:
+                # Fallback to voucher key (backward compatibility)
+                if not getattr(settings, "modi_kid", None):
+                    error_console.print(
+                        "[yellow]Warning:[/yellow] PDND_MODI_KID not configured. "
+                        "Using voucher key for ModI signing. "
+                        "Set PDND_MODI_KID and PDND_MODI_PRIVATE_KEY for a "
+                        "dedicated ModI signing key (required by GovWay in production)."
+                    )
+                modi_kid = settings.kid
+                modi_private_key = None
+                if settings.private_key:
+                    modi_private_key = settings.private_key.encode("utf-8")
+                elif settings.key_path:
+                    with open(settings.key_path, "rb") as f:
+                        modi_private_key = f.read()
 
-            if private_key:
+            if modi_private_key:
                 # Create ModI config
                 modi_config = ModIConfig(
-                    private_key=private_key,
-                    kid=settings.kid,
+                    private_key=modi_private_key,
+                    kid=modi_kid,
                     issuer=settings.issuer,
                     audience=modi_audience,
                 )

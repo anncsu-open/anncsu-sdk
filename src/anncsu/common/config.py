@@ -241,6 +241,32 @@ class ClientAssertionSettings(BaseSettings):
             description="ModI audit: Level of Assurance (e.g., SPID_L2, CIE_L3)",
         ),
     ] = None
+
+    # ModI Signing Key fields (optional, for APIs requiring separate key for ModI JWTs)
+    # Both keys (voucher + ModI signing) live in the same Client e-service portachiavi on PDND.
+    # GovWay enforces that the ModI signing key be different from the voucher key in production.
+    modi_kid: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="ModI signing Key ID (kid for Agid-JWT-Signature/TrackingEvidence)",
+        ),
+    ] = None
+    modi_private_key: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="ModI signing RSA private key content in PEM format",
+        ),
+    ] = None
+    modi_key_path: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Path to ModI signing RSA private key file",
+        ),
+    ] = None
+
     alg: Annotated[
         str,
         Field(description="Algorithm for signing the JWT"),
@@ -325,6 +351,24 @@ class ClientAssertionSettings(BaseSettings):
             self.modi_user_id is not None
             and self.modi_user_location is not None
             and self.modi_loa is not None
+        )
+
+    @property
+    def has_e_service_key(self) -> bool:
+        """Check if a dedicated ModI signing key is configured.
+
+        Both keys (voucher + ModI signing) live in the same Client e-service
+        portachiavi on PDND. This property checks whether a separate key has been
+        configured specifically for signing ModI JWTs (Agid-JWT-Signature, etc.).
+
+        Returns True only when BOTH modi_kid AND a key source (modi_private_key
+        or modi_key_path) are configured. Having modi_kid alone is not sufficient.
+
+        Returns:
+            True if modi_kid and (modi_private_key or modi_key_path) are set.
+        """
+        return self.modi_kid is not None and (
+            self.modi_private_key is not None or self.modi_key_path is not None
         )
 
     def get_modi_audit_context(self) -> "AuditContext | None":

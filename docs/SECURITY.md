@@ -1100,8 +1100,8 @@ from anncsu.common.modi import ModIConfig, AuditContext
 
 # Configure ModI
 config = ModIConfig(
-    private_key=key_bytes,          # Same RSA key used for PDND
-    kid="your-pdnd-kid",            # Same KID registered on PDND
+    private_key=key_bytes,          # RSA key for ModI signing (from Client e-service portachiavi)
+    kid="your-modi-signing-kid",    # KID of the ModI signing key (from Client e-service portachiavi)
     issuer="your-client-id",        # Same as PDND_ISSUER
     audience="https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-coordinate/v1",
 )
@@ -1136,10 +1136,7 @@ register_modi_hook(hooks, config=config, audit_context=audit)
 
 #### Key Design Decisions
 
-1. **Same KID for all tokens**: The same `KID` and private key are used for:
-   - PDND Client Assertion (to get access token)
-   - Agid-JWT-Signature
-   - Agid-JWT-TrackingEvidence
+1. **Key usage depends on PDND portal configuration**: See [PDND Key Architecture](#pdnd-key-architecture-voucher-key-vs-modi-signing-key) below for details on how keys are configured in the PDND portal and how they map to SDK configuration.
 
 2. **Digest from actual bytes**: The digest is computed from `request.content` (serialized bytes), not from a Python dictionary. This ensures the digest matches exactly what the server receives.
 
@@ -1158,13 +1155,15 @@ from dataclasses import dataclass
 @dataclass
 class ModIConfig:
     """Configuration for ModI header generation."""
-    private_key: bytes      # RSA private key (PEM format)
-    kid: str                # Key ID (same as PDND_KID)
+    private_key: bytes      # RSA private key (PEM format) - ModI signing key from Client e-service portachiavi
+    kid: str                # Key ID of the ModI signing key (PDND_MODI_KID)
     issuer: str             # Client ID (same as PDND_ISSUER)
     audience: str           # API base URL (NOT token endpoint)
     alg: str = "RS256"      # JWT algorithm
     validity_seconds: int = 300  # JWT validity (5 minutes)
 ```
+
+> **Important**: The `kid` and `private_key` in ModIConfig should be a **dedicated ModI signing key** from the Client e-service portachiavi, distinct from the voucher key used for `client_assertion`. See [PDND Key Architecture](#pdnd-key-architecture-voucher-key-vs-modi-signing-key) for details.
 
 #### AuditContext
 
@@ -1187,10 +1186,10 @@ Use the helper function to create ModIConfig from your existing `ClientAssertion
 from anncsu.common.config import ClientAssertionSettings
 from anncsu.common.modi import create_modi_config_from_settings
 
-# Load settings from .env
+# Load settings from .env (must include PDND_MODI_KID and PDND_MODI_PRIVATE_KEY)
 settings = ClientAssertionSettings()
 
-# Create ModI config (uses same key as PDND)
+# Create ModI config (uses the dedicated ModI signing key when configured)
 modi_config = create_modi_config_from_settings(
     settings,
     api_audience="https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-coordinate/v1"
@@ -1199,9 +1198,17 @@ modi_config = create_modi_config_from_settings(
 
 ### Environment Variables for ModI
 
-Add these to your `.env` file for audit context:
+Add these to your `.env` file:
 
 ```bash
+# ModI Signing Key (REQUIRED for Coordinate API write operations)
+# Both keys live in the same Client e-service portachiavi on PDND
+# Using a separate key from PDND_KID / PDND_PRIVATE_KEY is recommended (GovWay enforces this)
+PDND_MODI_KID=your-modi-signing-key-id
+PDND_MODI_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
+...e-service private key...
+-----END PRIVATE KEY-----"
+
 # ModI Audit Context (optional, for AUDIT_REST_02)
 PDND_MODI_USER_ID=batch-user-001
 PDND_MODI_USER_LOCATION=server-batch-01
@@ -1269,6 +1276,244 @@ if isinstance(result, ModIHookError):
 - [INTEGRITY_REST_02 Pattern](https://docs.italia.it/italia/piano-triennale-ict/lg-modellointeroperabilita-docs/)
 - [AUDIT_REST_02 Pattern](https://docs.italia.it/italia/piano-triennale-ict/lg-modellointeroperabilita-docs/)
 - [Forum Italia - ANNCSU Discussion](https://forum.italia.it/t/risposta-anncsu-aggiornamento-coordinate/45507)
+
+## PDND Key Architecture: Voucher Key vs ModI Signing Key
+
+### Understanding the PDND Key Model
+
+On the PDND portal, each **Client e-service** (fruitore) has a **portachiavi** (key ring) where multiple RSA public keys can be uploaded. Each key gets its own `kid` (Key ID). The corresponding private keys remain with the fruitore.
+
+The same Client e-service can use **different keys** for different purposes:
+
+| Purpose | Key | Used For |
+|---------|-----|----------|
+| **Voucher key** | `PDND_KID` + `PDND_PRIVATE_KEY` | Signing the `client_assertion` JWT to obtain the access token (voucher) from PDND |
+| **ModI signing key** | `PDND_MODI_KID` + `PDND_MODI_PRIVATE_KEY` | Signing `Agid-JWT-Signature` and `Agid-JWT-TrackingEvidence` headers (message security) |
+
+**Both keys belong to the same Client e-service.** There is no "Client API Interop" involved in our flow. (The "Client API Interop" is a separate client type used only to access PDND's own management APIs programmatically — the API equivalent of the PDND web console.)
+
+The official PDND documentation ([Voucher Bearer con informazioni aggiuntive](https://developer.pagopa.it/pdnd-interoperabilita/guides/manuale-operativo-pdnd-interoperabilita/tutorial/tutorial-per-il-fruitore/come-richiedere-un-voucher-bearer-per-le-api-di-un-erogatore-con-informazioni-aggiuntive)) states:
+
+> *"la chiave privata che firma e il kid della pubblica corrispondente depositata su PDND Interoperabilità **non devono necessariamente essere gli stessi** con i quali si firma la client assertion"*
+
+Translation: The private key that signs [the ModI JWS] and the kid of the corresponding public key deposited on PDND **don't necessarily have to be the same** as those used to sign the client assertion.
+
+In practice, the GovWay gateway ([API PDND](https://govway.org/documentazione/console/profiloModIPA/messaggio/passiPreliminari/apiPDND.html)) enforces this separation strictly for production environments, requiring different keys for the voucher and for ModI message security patterns.
+
+### Why Two Keys Are Needed
+
+When an erogatore's gateway (e.g., GovWay/SOGEI) receives a request with ModI headers, it:
+
+1. Reads the `kid` from the `Agid-JWT-Signature` JWT header
+2. Downloads the corresponding public key from PDND via `GET /keys/{kid}`
+3. Verifies the JWT signature with that public key
+
+If the `kid` in the ModI JWT points to a key that was intended only for voucher authentication, the signature verification may fail with `InteroperabilityInvalidRequest` (400).
+
+### Client Types in the PDND Portal (Clarification)
+
+On the PDND portal (`selfcare.interop.pagopa.it`), under **Fruizione**, there are two client types. Only the first is relevant for our SDK:
+
+| Client Type | Portal Location | Purpose | Relevance to SDK |
+|-------------|-----------------|---------|-------------------|
+| **Client e-service** | Fruizione → I tuoi client e-service | Consume e-services (obtain vouchers, sign ModI headers) | **This is what we use** — both keys live here |
+| **Client API Interop** | Fruizione → I tuoi client API Interop | Access PDND's own management APIs programmatically | **Not used** by this SDK |
+
+Source: [Client, portachiavi e materiale crittografico - Manuale Operativo PDND](https://developer.pagopa.it/pdnd-interoperabilita/guides/pdnd-manuale-operativo/manuale-operativo/client-e-materiale-crittografico)
+
+### How Keys Map to SDK Operations
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│          PDND Client e-service — Key Ring (portachiavi)             │
+│                                                                     │
+│   Key A (PDND_KID)              Key B (PDND_MODI_KID)              │
+│   ├─ Purpose: voucher           ├─ Purpose: ModI signing           │
+│   ├─ Signs: client_assertion    ├─ Signs: Agid-JWT-Signature       │
+│   └─ Sent to: auth.*.pagopa.it  │         Agid-JWT-TrackingEvidence│
+│                                  └─ Sent to: erogatore API         │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  Step 1: Get Voucher (Access Token)                                 │
+│  ┌──────────────────────────────────────────────────────┐           │
+│  │  client_assertion (JWT)                              │           │
+│  │  Signed with: PDND_KID + PDND_PRIVATE_KEY            │           │
+│  │  Keys from:   Client e-service portachiavi (Key A)   │           │
+│  │  Sent to:     auth.interop.pagopa.it/token.oauth2    │           │
+│  └──────────────────────────────────────────────────────┘           │
+│                          │                                          │
+│                          ▼                                          │
+│                   Access Token (voucher)                             │
+│                          │                                          │
+│  Step 2: Call API with ModI Headers                                 │
+│  ┌──────────────────────────────────────────────────────┐           │
+│  │  HTTP POST with headers:                             │           │
+│  │  - Authorization: Bearer <voucher>                   │           │
+│  │  - Digest: SHA-256=...                               │           │
+│  │  - Agid-JWT-Signature (JWT)                          │           │
+│  │    Signed with: PDND_MODI_KID + PDND_MODI_PRIVATE_KEY│           │
+│  │    Keys from:   Client e-service portachiavi (Key B) │           │
+│  │  - Agid-JWT-TrackingEvidence (JWT)                   │           │
+│  │    Signed with: PDND_MODI_KID + PDND_MODI_PRIVATE_KEY│           │
+│  │    Keys from:   Client e-service portachiavi (Key B) │           │
+│  │  Sent to:     modipa.agenziaentrate.gov.it/...       │           │
+│  └──────────────────────────────────────────────────────┘           │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### SDK Environment Variables
+
+The `.env` file should contain **two separate keypairs** from the same Client e-service portachiavi:
+
+```bash
+# ══════════════════════════════════════════════════════════════════
+# KEY A: Voucher Key (client_assertion signing)
+# Source: PDND Portal → Fruizione → I tuoi client e-service → Chiavi pubbliche
+# Used for: client_assertion JWT to obtain voucher (access token)
+# ══════════════════════════════════════════════════════════════════
+PDND_KID=your-voucher-key-id
+PDND_ISSUER=your-client-id
+PDND_SUBJECT=your-client-id
+PDND_AUDIENCE=auth.interop.pagopa.it/client-assertion
+PDND_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
+...voucher private key (for client_assertion)...
+-----END PRIVATE KEY-----"
+
+# ══════════════════════════════════════════════════════════════════
+# KEY B: ModI Signing Key (message security headers)
+# Source: PDND Portal → Fruizione → I tuoi client e-service → Chiavi pubbliche
+# Used for: Agid-JWT-Signature and Agid-JWT-TrackingEvidence headers
+# Can be the same key as Key A (PDND allows it) but GovWay requires different keys
+# ══════════════════════════════════════════════════════════════════
+PDND_MODI_KID=your-modi-signing-key-id
+PDND_MODI_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
+...modi signing private key (for ModI headers)...
+-----END PRIVATE KEY-----"
+
+# ═��════════════════════════════════════════════════════════════════
+# Purpose IDs (from PDND Portal → Fruizione → Le tue finalità)
+# ══════════════════════════════════════════════════════════════════
+PDND_PURPOSE_ID_PA=...
+PDND_PURPOSE_ID_COORDINATE=...
+PDND_PURPOSE_ID_COORDINATE_BULK=...
+
+# ══════════════════════════════════════════════════════════════════
+# ModI Audit Context (optional, for AUDIT_REST_02)
+# ══════════════════════════════════════════════════════════════════
+PDND_MODI_USER_ID=batch-user-001
+PDND_MODI_USER_LOCATION=server-batch-01
+PDND_MODI_LOA=SPID_L2
+```
+
+### PDND Portal Configuration Checklist
+
+To correctly configure a PDND consumer (fruitore), follow these steps on the portal:
+
+1. **Generate two RSA keypairs** (using OpenSSL or similar):
+   ```bash
+   # Keypair A: for voucher (client_assertion)
+   openssl genpkey -algorithm RSA -out voucher-private.pem -pkeyopt rsa_keygen_bits:2048
+   openssl rsa -in voucher-private.pem -pubout -out voucher-public.pem
+
+   # Keypair B: for ModI signing (message security)
+   openssl genpkey -algorithm RSA -out modi-signing-private.pem -pkeyopt rsa_keygen_bits:2048
+   openssl rsa -in modi-signing-private.pem -pubout -out modi-signing-public.pem
+   ```
+
+2. **Upload both public keys to the same Client e-service**:
+   - Go to: Fruizione → I tuoi client e-service → [your client] → Chiavi pubbliche → Aggiungi
+   - Upload `voucher-public.pem` → note the assigned `kid` → this becomes `PDND_KID`
+   - Upload `modi-signing-public.pem` → note the assigned `kid` → this becomes `PDND_MODI_KID`
+   - Keep both private keys secure → `PDND_PRIVATE_KEY` and `PDND_MODI_PRIVATE_KEY`
+
+3. **Associate Client e-service to Purpose**:
+   - Go to: Fruizione → Le tue finalità → [your purpose]
+   - Associate the client e-service to the purpose
+
+> **Note**: PDND allows using the same key for both purposes. However, the GovWay gateway enforces key separation in production, so using two distinct keys is strongly recommended.
+
+### Common Errors from Key Misconfiguration
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `InteroperabilityInvalidRequest` (400) | ModI JWT signed with voucher key instead of dedicated ModI signing key, or kid not recognized | Use `PDND_MODI_KID`/`PDND_MODI_PRIVATE_KEY` for ModI headers |
+| `015-0008 - Unable to generate a token` | client_assertion signed with wrong key or audience mismatch | Verify `PDND_KID`/`PDND_PRIVATE_KEY` match a key in the Client e-service portachiavi |
+| `403 Insufficient token claims` | Voucher does not have the correct purpose for the e-service | Verify the purpose ID and that the client e-service is associated to the purpose |
+
+### References
+
+- [Voucher Bearer con informazioni aggiuntive - Manuale Operativo PDND](https://developer.pagopa.it/pdnd-interoperabilita/guides/manuale-operativo-pdnd-interoperabilita/tutorial/tutorial-per-il-fruitore/come-richiedere-un-voucher-bearer-per-le-api-di-un-erogatore-con-informazioni-aggiuntive) — keys for ModI signing vs client_assertion don't need to be the same
+- [API PDND - GovWay Documentation](https://govway.org/documentazione/console/profiloModIPA/messaggio/passiPreliminari/apiPDND.html) — GovWay enforces key separation for message security patterns
+- [Client, portachiavi e materiale crittografico - Manuale Operativo PDND](https://developer.pagopa.it/pdnd-interoperabilita/guides/pdnd-manuale-operativo/manuale-operativo/client-e-materiale-crittografico) — client types and key management
+- [Utilizzare i voucher - Manuale Operativo PDND](https://developer.pagopa.it/pdnd-interoperabilita/guides/pdnd-manuale-operativo/manuale-operativo/utilizzare-i-voucher) — voucher request flow
+
+## GovWay URL Discrepancies: OAS vs Production
+
+> **The real URL of an e-service is ALWAYS determined by the `aud` claim in the PDND voucher, NEVER from the OAS specs.** OAS files may contain outdated, incorrect, or generic URLs.
+
+### Domain Differences by Environment
+
+| Environment | Domain | SSL Certificate CN |
+|-------------|--------|--------------------|
+| **Validation (UAT)** | `modipa-val.agenziaentrate.it` | `modipa-val.agenziaentrate.it` |
+| **Production** | `modipa.agenziaentrate.gov.it` | `modipa.agenziaentrate.gov.it` |
+
+**Warning**: Production uses `.gov.it`, NOT `.it`. Using `.it` causes SSL errors and `InteroperabilityInvalidRequest` (400) because the JWT `aud` claim doesn't match what GovWay expects.
+
+### E-Service Path Differences by Environment
+
+| E-Service | UAT Path | Production Path | Different? |
+|-----------|----------|-----------------|------------|
+| Consultazione PA | `anncsu-consultazione/v1` | `anncsu-consultazione-comune/v1` | **YES** |
+| Agg. Coordinate | `anncsu-aggiornamento-coordinate/v1` | `anncsu-aggiornamento-coordinate/v1` | No |
+| Agg. Coord. Bulk | `anncsu-aggiornamento-coordinate-grandi-comuni/v1` | `anncsu-aggiornamento-coordinate-grandi-comuni/v1` | No |
+
+### OAS Spec vs Real URL Discrepancies
+
+| Source | Domain | Subject | Path |
+|--------|--------|---------|------|
+| OAS Consultazione | `.gov.it` | `AgenziaEntrate-PDND` | `anncsu-consultazione/v1` |
+| PDND Voucher (prod) | `.gov.it` | `AgenziaEntrate-PDND` | **`anncsu-consultazione-comune/v1`** |
+| OAS Coordinate | `.it` | `AgenziaEntrate` | `anncsuaccessi/v1` |
+| PDND Voucher (prod) | `.gov.it` | `AgenziaEntrate-PDND` | `anncsu-aggiornamento-coordinate/v1` |
+| OAS Coord. Massivo | `.it` | `AgenziaEntrate` | `anncsuaccessi/v1` |
+| PDND Voucher (prod) | `.gov.it` | `AgenziaEntrate-PDND` | `anncsu-aggiornamento-coordinate-grandi-comuni/v1` |
+
+### How to Discover the Correct URL
+
+Decode the PDND voucher for the target e-service and read the `aud` claim:
+
+```bash
+TOKEN=$(anncsu auth token --api pa --token-endpoint https://auth.interop.pagopa.it/token.oauth2 2>/dev/null)
+anncsu assertion decode "$TOKEN" --json | python3 -c "import sys,json; print(json.load(sys.stdin)['payload']['aud'])"
+```
+
+### Automatic URL Correction (Auto-Discovery)
+
+Since Session 49, the SDK auto-corrects hardcoded server URLs by comparing them against the `aud` claim in the PDND voucher. This eliminates the need to manually update `SERVERS` dicts when GovWay paths or domains change.
+
+**How it works:**
+
+1. The CLI obtains a PDND voucher (access token) via `PDNDAuthManager.get_access_token()`
+2. `extract_voucher_audience()` extracts the `aud` claim from the voucher JWT
+3. If `aud` differs from the hardcoded `server_url`, the SDK:
+   - Replaces `server_url` with the voucher `aud`
+   - Updates `modi_audience` (for ModI JWT signing) accordingly
+   - Prints a warning to stderr:
+     ```
+     URL auto-corrected: Hardcoded URL differs from PDND voucher audience.
+       Configured: https://modipa.agenziaentrate.it/govway/rest/in/...
+       Voucher aud: https://modipa.agenziaentrate.gov.it/govway/rest/in/...
+       Using voucher audience as server URL.
+     ```
+
+**Affected functions:**
+- `_get_sdk()` in `coordinate.py` — for coordinate update, status, dry-run
+- `_get_consult_sdk()` in `coordinate.py` — for consultazione PA
+- Bulk operations inherit the behavior via `_get_coord_sdk()` and `_get_consult_sdk_lazy()`
+
+**Backward compatible:** If the voucher cannot be decoded or lacks an `aud` claim, the hardcoded URL is used as fallback.
 
 ## Further Reading
 

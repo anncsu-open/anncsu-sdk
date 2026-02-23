@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import warnings
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -20,9 +21,12 @@ from anncsu.common.session import get_config_dir
 _current_api_type: APIType | None = None
 
 
-def _api_type_callback(ctx: typer.Context, value: str) -> str:
+def _api_type_callback(ctx: typer.Context, value: str | None) -> str | None:
     """Callback to validate and store api_type."""
     global _current_api_type
+    if value is None:
+        _current_api_type = None
+        return value
     try:
         _current_api_type = APIType(value)
     except ValueError:
@@ -51,6 +55,17 @@ auth_app = typer.Typer(
 
 console = Console()
 error_console = Console(stderr=True)
+
+
+def _show_auth_warnings(caught_warnings: list) -> None:
+    """Display captured warnings to the user via stderr.
+
+    Args:
+        caught_warnings: List of warnings.WarningMessage from catch_warnings.
+    """
+    for w in caught_warnings:
+        error_console.print(f"[yellow]Warning:[/yellow] {w.message}")
+
 
 # Default token endpoint for UAT
 DEFAULT_TOKEN_ENDPOINT = "https://auth.uat.interop.pagopa.it/token.oauth2"
@@ -124,13 +139,17 @@ def login(
         raise typer.Exit(1) from None
 
     try:
-        manager = PDNDAuthManager(
-            settings=settings,
-            token_endpoint=token_endpoint,
-            api_type=api_type,
-            session_persistence=True,
-            config_dir=get_config_dir(),
-        )
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            manager = PDNDAuthManager(
+                settings=settings,
+                token_endpoint=token_endpoint,
+                api_type=api_type,
+                session_persistence=True,
+                config_dir=get_config_dir(),
+            )
+        _show_auth_warnings(caught_warnings)
+
         # Force token retrieval (will save session automatically)
         manager.get_access_token()
     except Exception as e:
@@ -210,13 +229,16 @@ def status(
         raise typer.Exit(1) from None
 
     try:
-        manager = PDNDAuthManager(
-            settings=settings,
-            token_endpoint=token_endpoint,
-            api_type=api_type,
-            session_persistence=True,
-            config_dir=get_config_dir(),
-        )
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            manager = PDNDAuthManager(
+                settings=settings,
+                token_endpoint=token_endpoint,
+                api_type=api_type,
+                session_persistence=True,
+                config_dir=get_config_dir(),
+            )
+        _show_auth_warnings(caught_warnings)
     except Exception as e:
         error_console.print(f"[red]Error:[/red] Failed to initialize: {e}")
         raise typer.Exit(1) from None
@@ -329,13 +351,16 @@ def refresh(
         raise typer.Exit(1) from None
 
     try:
-        manager = PDNDAuthManager(
-            settings=settings,
-            token_endpoint=token_endpoint,
-            api_type=api_type,
-            session_persistence=True,
-            config_dir=get_config_dir(),
-        )
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            manager = PDNDAuthManager(
+                settings=settings,
+                token_endpoint=token_endpoint,
+                api_type=api_type,
+                session_persistence=True,
+                config_dir=get_config_dir(),
+            )
+        _show_auth_warnings(caught_warnings)
 
         if force_assertion:
             # Clear cached client assertion to force regeneration
@@ -387,13 +412,16 @@ def token(
         raise typer.Exit(1) from None
 
     try:
-        manager = PDNDAuthManager(
-            settings=settings,
-            token_endpoint=token_endpoint,
-            api_type=api_type,
-            session_persistence=True,
-            config_dir=get_config_dir(),
-        )
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            manager = PDNDAuthManager(
+                settings=settings,
+                token_endpoint=token_endpoint,
+                api_type=api_type,
+                session_persistence=True,
+                config_dir=get_config_dir(),
+            )
+        _show_auth_warnings(caught_warnings)
         access_token = manager.get_access_token()
         # Print only the token, no formatting
         print(access_token)
@@ -405,14 +433,21 @@ def token(
 @auth_app.command("logout")
 def logout(
     api: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--api",
             "-a",
             help=_api_help,
             callback=_api_type_callback,
         ),
-    ],
+    ] = None,
+    all_sessions: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="Clear all session files for every API type.",
+        ),
+    ] = False,
     token_endpoint: Annotated[
         str,
         typer.Option(
@@ -424,20 +459,52 @@ def logout(
 ) -> None:
     """Clear cached tokens (end session).
 
+    Use --api to clear a specific API session, or --all to clear all sessions.
+
     Note: This clears local state only. The tokens may still be valid
     on the server until they expire.
     """
+    if all_sessions and api is not None:
+        error_console.print("[red]Error:[/red] --all and --api are mutually exclusive.")
+        raise typer.Exit(1)
+
+    if not all_sessions and api is None:
+        error_console.print("[red]Error:[/red] Either --api or --all is required.")
+        raise typer.Exit(1)
+
+    if all_sessions:
+        config_dir = get_config_dir()
+        if not config_dir.exists():
+            console.print("[yellow]No sessions found.[/yellow]")
+            return
+
+        session_files = list(config_dir.glob("session_*.json"))
+        for sf in session_files:
+            sf.unlink()
+
+        count = len(session_files)
+        if count == 0:
+            console.print("[yellow]No sessions found.[/yellow]")
+        else:
+            console.print(
+                f"[green]Logout successful.[/green] Cleared {count} session(s)."
+            )
+        return
+
     api_type = _get_api_type()
 
     try:
         settings = ClientAssertionSettings()
-        manager = PDNDAuthManager(
-            settings=settings,
-            token_endpoint=token_endpoint,
-            api_type=api_type,
-            session_persistence=True,
-            config_dir=get_config_dir(),
-        )
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            manager = PDNDAuthManager(
+                settings=settings,
+                token_endpoint=token_endpoint,
+                api_type=api_type,
+                session_persistence=True,
+                config_dir=get_config_dir(),
+            )
+        _show_auth_warnings(caught_warnings)
         manager.clear_session()
     except Exception:
         # If settings aren't available, just clear session file directly

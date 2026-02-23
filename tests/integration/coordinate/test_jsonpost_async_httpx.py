@@ -10,9 +10,7 @@ from pytest_httpx import HTTPXMock
 from anncsu.coordinate import AnncsuCoordinate, errors, models
 
 # Base URL for mocking (production)
-BASE_URL = (
-    "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate/anncsuaccessi/v1"
-)
+BASE_URL = "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate/anncsuaccessi/v1"
 
 
 class TestGestioneCoordinateAsync:

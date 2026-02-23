@@ -319,7 +319,14 @@ def create_modi_config_from_settings(
 ) -> ModIConfig:
     """Create ModIConfig from ClientAssertionSettings.
 
-    Reuses the same RSA key and identifiers from PDND config.
+    Uses the dedicated ModI signing key (modi_kid/modi_private_key/modi_key_path)
+    when available, falling back to the voucher key (kid/private_key/key_path)
+    for backward compatibility.
+
+    Both keys live in the same Client e-service portachiavi on PDND.
+    GovWay enforces that the ModI signing key be different from the voucher
+    key in production. When modi_kid is set, a corresponding ModI signing
+    private key MUST also be configured.
 
     Args:
         settings: PDND client assertion settings.
@@ -329,7 +336,8 @@ def create_modi_config_from_settings(
         ModIConfig ready for header generation.
 
     Raises:
-        ValueError: If no private key is configured.
+        ValueError: If no private key is configured, or if modi_kid is set
+            without a corresponding ModI signing private key.
     """
     # Import here to avoid circular imports
     from anncsu.common.config import ClientAssertionSettings as CAS
@@ -337,17 +345,36 @@ def create_modi_config_from_settings(
     if not isinstance(settings, CAS):
         raise TypeError("settings must be a ClientAssertionSettings instance")
 
-    # Load private key
-    if settings.private_key:
-        private_key = settings.private_key.encode("utf-8")
-    elif settings.key_path:
-        private_key = Path(settings.key_path).read_bytes()
+    # Determine which key to use for ModI JWT signing
+    if settings.has_e_service_key:
+        # Use dedicated ModI signing key (preferred)
+        kid = settings.modi_kid
+        if settings.modi_private_key:
+            private_key = settings.modi_private_key.encode("utf-8")
+        elif settings.modi_key_path:
+            private_key = Path(settings.modi_key_path).read_bytes()
+        else:
+            raise ValueError("ModI signing key configuration error")
+    elif settings.modi_kid is not None:
+        # modi_kid is set but no ModI signing key provided — configuration error
+        raise ValueError(
+            "PDND_MODI_KID is set but no ModI signing private key is configured. "
+            "Set PDND_MODI_PRIVATE_KEY or PDND_MODI_KEY_PATH to provide the "
+            "ModI signing key for Agid-JWT-Signature/TrackingEvidence."
+        )
     else:
-        raise ValueError("No private key configured in settings")
+        # Fallback to voucher key (backward compatibility)
+        kid = settings.kid
+        if settings.private_key:
+            private_key = settings.private_key.encode("utf-8")
+        elif settings.key_path:
+            private_key = Path(settings.key_path).read_bytes()
+        else:
+            raise ValueError("No private key configured in settings")
 
     return ModIConfig(
         private_key=private_key,
-        kid=settings.kid,
+        kid=kid,
         issuer=settings.issuer,
         audience=api_audience,
     )

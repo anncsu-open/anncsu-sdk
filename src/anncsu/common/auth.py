@@ -50,6 +50,7 @@ from __future__ import annotations
 import base64
 import json
 import time
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -80,6 +81,27 @@ DEFAULT_CLIENT_ASSERTION_THRESHOLD = 86400  # 1 day in seconds
 DEFAULT_ACCESS_TOKEN_THRESHOLD = 60  # 60 seconds
 
 
+def _get_jwt_payload(token: str) -> dict | None:
+    """Decode JWT payload without signature verification.
+
+    Args:
+        token: JWT token string.
+
+    Returns:
+        Payload dictionary, or None if decoding fails.
+    """
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+
+        # Decode payload
+        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload_b64))
+    except Exception:
+        return None
+
+
 def _get_jwt_exp(token: str) -> int | None:
     """Extract expiration timestamp from a JWT token.
 
@@ -89,18 +111,32 @@ def _get_jwt_exp(token: str) -> int | None:
     Returns:
         Expiration timestamp (Unix epoch) or None if cannot be extracted.
     """
-    try:
-        parts = token.split(".")
-        if len(parts) != 3:
-            return None
-
-        # Decode payload
-        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-
-        return payload.get("exp")
-    except Exception:
+    payload = _get_jwt_payload(token)
+    if payload is None:
         return None
+    return payload.get("exp")
+
+
+def extract_voucher_audience(access_token: str) -> str | None:
+    """Extract the audience (aud) claim from a PDND voucher.
+
+    The aud claim in the PDND voucher is the authoritative URL
+    of the e-service. It can be used to auto-correct hardcoded
+    server URLs that may differ from the actual GovWay endpoint.
+
+    Args:
+        access_token: The PDND voucher JWT string.
+
+    Returns:
+        The audience URL string, or None if it cannot be extracted.
+    """
+    payload = _get_jwt_payload(access_token)
+    if payload is None:
+        return None
+    aud = payload.get("aud")
+    if isinstance(aud, str):
+        return aud
+    return None
 
 
 def _get_jwt_ttl(token: str) -> int | None:
@@ -228,6 +264,9 @@ class PDNDAuthManager:
             # This should never happen due to validation above
             raise ValueError("No configuration available")
 
+        # Validate audience/token_endpoint environment consistency
+        self._check_environment_mismatch()
+
         # Cached tokens
         self._client_assertion: str | None = None
         self._access_token: str | None = None
@@ -314,6 +353,35 @@ class PDNDAuthManager:
             raise AudienceMismatchError(
                 modi_audience=modi_audience,
                 server_url=server_url,
+            )
+
+    def _check_environment_mismatch(self) -> None:
+        """Check if audience and token_endpoint refer to different PDND environments.
+
+        Emits a UserWarning if one refers to UAT and the other to production.
+        This is a common misconfiguration that causes authentication failures.
+        """
+        if self.token_endpoint is None:
+            return
+
+        audience = getattr(self.config, "audience", None)
+        if audience is None:
+            return
+
+        audience_is_uat = ".uat." in audience
+        endpoint_is_uat = ".uat." in self.token_endpoint
+
+        if audience_is_uat != endpoint_is_uat:
+            aud_env = "UAT" if audience_is_uat else "production"
+            endpoint_env = "UAT" if endpoint_is_uat else "production"
+            warnings.warn(
+                f"PDND environment mismatch: PDND_AUDIENCE refers to {aud_env} "
+                f"({audience}) but token_endpoint refers to {endpoint_env} "
+                f"({self.token_endpoint}). "
+                f"Authentication will likely fail. "
+                f"Check your .env configuration.",
+                UserWarning,
+                stacklevel=2,
             )
 
     def get_client_assertion(self) -> str:
@@ -622,4 +690,5 @@ class PDNDAuthManager:
 
 __all__ = [
     "PDNDAuthManager",
+    "extract_voucher_audience",
 ]

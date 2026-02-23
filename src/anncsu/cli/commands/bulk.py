@@ -37,7 +37,7 @@ error_console = Console(stderr=True)
 # Server URLs for bulk coordinate API (dedicated e-service: grandi comuni).
 # Different GovWay path from single-update, matching the PDND token audience.
 BULK_SERVERS = {
-    "production": "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate-grandi-comuni/v1",
+    "production": "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate-grandi-comuni/v1",
     "validation": "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate-grandi-comuni/v1",
 }
 

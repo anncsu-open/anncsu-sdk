@@ -459,7 +459,7 @@ class TestCoordinateUpdate:
             # Verify production server URL was used
             mock_sdk.assert_called_once()
             call_kwargs = mock_sdk.call_args[1]
-            assert "modipa.agenziaentrate.it" in call_kwargs.get("server_url", "")
+            assert "modipa.agenziaentrate.gov.it" in call_kwargs.get("server_url", "")
             assert "modipa-val" not in call_kwargs.get("server_url", "")
 
 
@@ -1510,7 +1510,7 @@ class TestCoordinateStatus:
             # Verify production server URL was used
             mock_sdk.assert_called_once()
             call_kwargs = mock_sdk.call_args[1]
-            assert "modipa.agenziaentrate.it" in call_kwargs.get("server_url", "")
+            assert "modipa.agenziaentrate.gov.it" in call_kwargs.get("server_url", "")
 
     def test_status_no_verify_ssl(
         self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
@@ -1921,8 +1921,8 @@ class TestCoordinateModIHeaders:
             mock_modi_config.assert_called_once()
             config_kwargs = mock_modi_config.call_args[1]
             assert "audience" in config_kwargs
-            # Production URL should contain modipa.agenziaentrate.it
-            assert "modipa.agenziaentrate.it" in config_kwargs["audience"]
+            # Production URL should contain modipa.agenziaentrate.gov.it
+            assert "modipa.agenziaentrate.gov.it" in config_kwargs["audience"]
 
     def test_status_command_uses_hooks_but_modi_only_for_post(
         self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
@@ -1991,3 +1991,708 @@ class TestCoordinateModIHeaders:
 
             # The ModI hook is registered but only activates for POST requests
             # Status uses GET, so headers won't be added (handled by the hook logic)
+
+
+class TestCoordinateModIEServiceKey:
+    """Tests for dedicated ModI signing key usage in coordinate CLI _get_sdk().
+
+    When PDND_MODI_KID and PDND_MODI_PRIVATE_KEY are configured, the
+    _get_sdk() function MUST use these for ModIConfig instead of the
+    voucher key fields (PDND_KID / PDND_PRIVATE_KEY).
+    """
+
+    def test_get_sdk_uses_e_service_kid_in_modi_config(
+        self,
+        cli_runner: "CliRunner",
+        tmp_path: Path,
+        mock_private_key: Path,
+        mock_e_service_private_key: Path,
+    ) -> None:
+        """Test that ModIConfig.kid uses e-service kid when configured."""
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.kid = "interop-kid"
+                settings.issuer = "test-issuer"
+                settings.private_key = mock_private_key.read_text()
+                settings.key_path = None
+                # E-service key fields
+                settings.modi_kid = "e-service-kid"
+                settings.modi_private_key = mock_e_service_private_key.read_text()
+                settings.modi_key_path = None
+                settings.has_e_service_key = True
+                settings.has_modi_audit_context = True
+                settings.get_modi_audit_context.return_value = MagicMock(
+                    user_id="test-user",
+                    user_location="test-location",
+                    loa="SPID_L2",
+                )
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    mock_manager.return_value = manager
+
+                    with patch("anncsu.cli.commands.coordinate.SDKHooks"):
+                        with patch("anncsu.cli.commands.coordinate.register_modi_hook"):
+                            with patch(
+                                "anncsu.cli.commands.coordinate.ModIConfig"
+                            ) as mock_modi_config:
+                                mock_config_instance = MagicMock()
+                                mock_modi_config.return_value = mock_config_instance
+
+                                with patch(
+                                    "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                                ) as mock_sdk:
+                                    sdk = MagicMock()
+                                    response = create_mock_response()
+                                    sdk.json_post.gestionecoordinate.return_value = (
+                                        response
+                                    )
+                                    mock_sdk.return_value = sdk
+
+                                    result = cli_runner.invoke(
+                                        app,
+                                        [
+                                            "coordinate",
+                                            "update",
+                                            "--codcom",
+                                            "H501",
+                                            "--progr-civico",
+                                            "12345",
+                                        ],
+                                    )
+
+                assert result.exit_code == 0
+
+                # Verify ModIConfig was called with e-service kid
+                mock_modi_config.assert_called_once()
+                config_kwargs = mock_modi_config.call_args[1]
+                assert config_kwargs["kid"] == "e-service-kid"
+
+    def test_get_sdk_uses_e_service_private_key_in_modi_config(
+        self,
+        cli_runner: "CliRunner",
+        tmp_path: Path,
+        mock_private_key: Path,
+        mock_e_service_private_key: Path,
+    ) -> None:
+        """Test that ModIConfig.private_key uses e-service key when configured."""
+        from anncsu.cli import app
+
+        e_service_key_content = mock_e_service_private_key.read_text()
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.kid = "interop-kid"
+                settings.issuer = "test-issuer"
+                settings.private_key = mock_private_key.read_text()
+                settings.key_path = None
+                settings.modi_kid = "e-service-kid"
+                settings.modi_private_key = e_service_key_content
+                settings.modi_key_path = None
+                settings.has_e_service_key = True
+                settings.has_modi_audit_context = True
+                settings.get_modi_audit_context.return_value = MagicMock(
+                    user_id="test-user",
+                    user_location="test-location",
+                    loa="SPID_L2",
+                )
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    mock_manager.return_value = manager
+
+                    with patch("anncsu.cli.commands.coordinate.SDKHooks"):
+                        with patch("anncsu.cli.commands.coordinate.register_modi_hook"):
+                            with patch(
+                                "anncsu.cli.commands.coordinate.ModIConfig"
+                            ) as mock_modi_config:
+                                mock_config_instance = MagicMock()
+                                mock_modi_config.return_value = mock_config_instance
+
+                                with patch(
+                                    "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                                ) as mock_sdk:
+                                    sdk = MagicMock()
+                                    response = create_mock_response()
+                                    sdk.json_post.gestionecoordinate.return_value = (
+                                        response
+                                    )
+                                    mock_sdk.return_value = sdk
+
+                                    result = cli_runner.invoke(
+                                        app,
+                                        [
+                                            "coordinate",
+                                            "update",
+                                            "--codcom",
+                                            "H501",
+                                            "--progr-civico",
+                                            "12345",
+                                        ],
+                                    )
+
+                assert result.exit_code == 0
+
+                # Verify ModIConfig was called with e-service private key
+                mock_modi_config.assert_called_once()
+                config_kwargs = mock_modi_config.call_args[1]
+                assert config_kwargs["private_key"] == e_service_key_content.encode(
+                    "utf-8"
+                )
+
+    def test_get_sdk_warns_when_modi_kid_missing(
+        self,
+        cli_runner: "CliRunner",
+        tmp_path: Path,
+        mock_private_key: Path,
+    ) -> None:
+        """Test that a warning is shown when using interop key for ModI signing."""
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.kid = "interop-kid"
+                settings.issuer = "test-issuer"
+                settings.private_key = mock_private_key.read_text()
+                settings.key_path = None
+                # No e-service key fields
+                settings.modi_kid = None
+                settings.modi_private_key = None
+                settings.modi_key_path = None
+                settings.has_e_service_key = False
+                settings.has_modi_audit_context = True
+                settings.get_modi_audit_context.return_value = MagicMock(
+                    user_id="test-user",
+                    user_location="test-location",
+                    loa="SPID_L2",
+                )
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    mock_manager.return_value = manager
+
+                    with patch("anncsu.cli.commands.coordinate.SDKHooks"):
+                        with patch("anncsu.cli.commands.coordinate.register_modi_hook"):
+                            with patch(
+                                "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                            ) as mock_sdk:
+                                sdk = MagicMock()
+                                response = create_mock_response()
+                                sdk.json_post.gestionecoordinate.return_value = response
+                                mock_sdk.return_value = sdk
+
+                                result = cli_runner.invoke(
+                                    app,
+                                    [
+                                        "coordinate",
+                                        "update",
+                                        "--codcom",
+                                        "H501",
+                                        "--progr-civico",
+                                        "12345",
+                                    ],
+                                )
+
+            # Should warn about missing dedicated ModI signing key
+            assert (
+                "PDND_MODI_KID" in result.output
+                or "modi signing" in result.output.lower()
+            )
+
+    def test_get_sdk_registers_hook_with_e_service_key(
+        self,
+        cli_runner: "CliRunner",
+        tmp_path: Path,
+        mock_private_key: Path,
+        mock_e_service_private_key: Path,
+    ) -> None:
+        """Test that register_modi_hook receives config with e-service key."""
+        from anncsu.cli import app
+
+        e_service_key_content = mock_e_service_private_key.read_text()
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.kid = "interop-kid"
+                settings.issuer = "test-issuer"
+                settings.private_key = mock_private_key.read_text()
+                settings.key_path = None
+                settings.modi_kid = "e-service-kid"
+                settings.modi_private_key = e_service_key_content
+                settings.modi_key_path = None
+                settings.has_e_service_key = True
+                settings.has_modi_audit_context = True
+                settings.get_modi_audit_context.return_value = MagicMock(
+                    user_id="test-user",
+                    user_location="test-location",
+                    loa="SPID_L2",
+                )
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    mock_manager.return_value = manager
+
+                    with patch("anncsu.cli.commands.coordinate.SDKHooks"):
+                        with patch(
+                            "anncsu.cli.commands.coordinate.register_modi_hook"
+                        ) as mock_register:
+                            with patch(
+                                "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                            ) as mock_sdk:
+                                sdk = MagicMock()
+                                response = create_mock_response()
+                                sdk.json_post.gestionecoordinate.return_value = response
+                                mock_sdk.return_value = sdk
+
+                                result = cli_runner.invoke(
+                                    app,
+                                    [
+                                        "coordinate",
+                                        "update",
+                                        "--codcom",
+                                        "H501",
+                                        "--progr-civico",
+                                        "12345",
+                                    ],
+                                )
+
+                assert result.exit_code == 0
+
+                # Verify register_modi_hook was called
+                mock_register.assert_called_once()
+                call_kwargs = mock_register.call_args[1]
+                modi_config = call_kwargs["config"]
+                # ModIConfig should have e-service kid
+                assert modi_config.kid == "e-service-kid"
+
+    def test_get_sdk_falls_back_to_interop_key_without_e_service(
+        self,
+        cli_runner: "CliRunner",
+        tmp_path: Path,
+        mock_private_key: Path,
+    ) -> None:
+        """Test backward compat: interop key used when no e-service key configured."""
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.kid = "interop-kid"
+                settings.issuer = "test-issuer"
+                settings.private_key = mock_private_key.read_text()
+                settings.key_path = None
+                # No e-service key fields
+                settings.modi_kid = None
+                settings.modi_private_key = None
+                settings.modi_key_path = None
+                settings.has_e_service_key = False
+                settings.has_modi_audit_context = True
+                settings.get_modi_audit_context.return_value = MagicMock(
+                    user_id="test-user",
+                    user_location="test-location",
+                    loa="SPID_L2",
+                )
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-access-token"
+                    mock_manager.return_value = manager
+
+                    with patch("anncsu.cli.commands.coordinate.SDKHooks"):
+                        with patch("anncsu.cli.commands.coordinate.register_modi_hook"):
+                            with patch(
+                                "anncsu.cli.commands.coordinate.ModIConfig"
+                            ) as mock_modi_config:
+                                mock_config_instance = MagicMock()
+                                mock_modi_config.return_value = mock_config_instance
+
+                                with patch(
+                                    "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                                ) as mock_sdk:
+                                    sdk = MagicMock()
+                                    response = create_mock_response()
+                                    sdk.json_post.gestionecoordinate.return_value = (
+                                        response
+                                    )
+                                    mock_sdk.return_value = sdk
+
+                                    result = cli_runner.invoke(
+                                        app,
+                                        [
+                                            "coordinate",
+                                            "update",
+                                            "--codcom",
+                                            "H501",
+                                            "--progr-civico",
+                                            "12345",
+                                        ],
+                                    )
+
+                assert result.exit_code == 0
+
+                # Verify ModIConfig was called with interop kid (backward compat)
+                mock_modi_config.assert_called_once()
+                config_kwargs = mock_modi_config.call_args[1]
+                assert config_kwargs["kid"] == "interop-kid"
+
+
+def _create_test_jwt_with_aud(aud: str) -> str:
+    """Create a minimal test JWT with a specific aud claim."""
+    import base64
+    import json
+    import time
+
+    header = {"alg": "RS256", "typ": "JWT"}
+    payload = {
+        "iss": "test-issuer",
+        "sub": "test-subject",
+        "aud": aud,
+        "exp": int(time.time()) + 600,
+        "iat": int(time.time()),
+    }
+
+    def b64(data: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+
+    return f"{b64(header)}.{b64(payload)}.fake_signature"
+
+
+class TestURLAutoCorrection:
+    """Tests for voucher-based URL auto-correction.
+
+    When the PDND voucher's aud claim differs from the hardcoded server URL,
+    the SDK should auto-correct and notify the user.
+    """
+
+    def test_get_sdk_autocorrects_url_when_voucher_aud_differs(
+        self, cli_runner: "CliRunner", tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Verify _get_sdk uses voucher aud when it differs from hardcoded URL."""
+        from anncsu.cli import app
+
+        real_aud = "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1"
+        wrong_url = "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1"
+        voucher_jwt = _create_test_jwt_with_aud(real_aud)
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.private_key = None
+                settings.key_path = None
+                settings.kid = "test-kid"
+                settings.issuer = "test-issuer"
+                settings.has_modi_audit_context = False
+                settings.has_e_service_key = False
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = voucher_jwt
+                    mock_manager.return_value = manager
+
+                    with patch("anncsu.cli.commands.coordinate.SDKHooks"):
+                        with patch("anncsu.cli.commands.coordinate.register_modi_hook"):
+                            with patch(
+                                "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                            ) as mock_sdk:
+                                sdk = MagicMock()
+                                response = create_mock_response()
+                                sdk.json_post.gestionecoordinate.return_value = response
+                                mock_sdk.return_value = sdk
+
+                                result = cli_runner.invoke(
+                                    app,
+                                    [
+                                        "coordinate",
+                                        "update",
+                                        "--codcom",
+                                        "H501",
+                                        "--progr-civico",
+                                        "12345",
+                                        "--server-url",
+                                        wrong_url,
+                                    ],
+                                )
+
+                    assert result.exit_code == 0
+
+                    # Verify that AnncsuCoordinate was called with corrected URL
+                    mock_sdk.assert_called_once()
+                    call_kwargs = mock_sdk.call_args[1]
+                    assert call_kwargs["server_url"] == real_aud
+
+    def test_get_sdk_logs_warning_on_autocorrection(
+        self, cli_runner: "CliRunner", tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Verify warning message is printed when URL is auto-corrected."""
+        from anncsu.cli import app
+
+        real_aud = "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1"
+        wrong_url = "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1"
+        voucher_jwt = _create_test_jwt_with_aud(real_aud)
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.private_key = None
+                settings.key_path = None
+                settings.kid = "test-kid"
+                settings.issuer = "test-issuer"
+                settings.has_modi_audit_context = False
+                settings.has_e_service_key = False
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = voucher_jwt
+                    mock_manager.return_value = manager
+
+                    with patch("anncsu.cli.commands.coordinate.SDKHooks"):
+                        with patch("anncsu.cli.commands.coordinate.register_modi_hook"):
+                            with patch(
+                                "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                            ) as mock_sdk:
+                                sdk = MagicMock()
+                                response = create_mock_response()
+                                sdk.json_post.gestionecoordinate.return_value = response
+                                mock_sdk.return_value = sdk
+
+                                result = cli_runner.invoke(
+                                    app,
+                                    [
+                                        "coordinate",
+                                        "update",
+                                        "--codcom",
+                                        "H501",
+                                        "--progr-civico",
+                                        "12345",
+                                        "--server-url",
+                                        wrong_url,
+                                    ],
+                                )
+
+                    assert result.exit_code == 0
+                    assert (
+                        "auto-corrected" in result.output.lower()
+                        or "auto-corrected" in (result.stderr or "").lower()
+                    )
+
+    def test_get_sdk_no_warning_when_urls_match(
+        self, cli_runner: "CliRunner", tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Verify no warning when voucher aud matches hardcoded URL."""
+        from anncsu.cli import app
+
+        matching_url = "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1"
+        voucher_jwt = _create_test_jwt_with_aud(matching_url)
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.private_key = None
+                settings.key_path = None
+                settings.kid = "test-kid"
+                settings.issuer = "test-issuer"
+                settings.has_modi_audit_context = False
+                settings.has_e_service_key = False
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = voucher_jwt
+                    mock_manager.return_value = manager
+
+                    with patch("anncsu.cli.commands.coordinate.SDKHooks"):
+                        with patch("anncsu.cli.commands.coordinate.register_modi_hook"):
+                            with patch(
+                                "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                            ) as mock_sdk:
+                                sdk = MagicMock()
+                                response = create_mock_response()
+                                sdk.json_post.gestionecoordinate.return_value = response
+                                mock_sdk.return_value = sdk
+
+                                result = cli_runner.invoke(
+                                    app,
+                                    [
+                                        "coordinate",
+                                        "update",
+                                        "--codcom",
+                                        "H501",
+                                        "--progr-civico",
+                                        "12345",
+                                        "--server-url",
+                                        matching_url,
+                                    ],
+                                )
+
+                    assert result.exit_code == 0
+                    output_all = result.output + (result.stderr or "")
+                    assert "auto-corrected" not in output_all.lower()
+
+    def test_get_sdk_updates_modi_audience_on_autocorrection(
+        self, cli_runner: "CliRunner", tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Verify modi_audience is also updated when URL is auto-corrected."""
+        from anncsu.cli import app
+
+        real_aud = "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1"
+        wrong_url = "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1"
+        voucher_jwt = _create_test_jwt_with_aud(real_aud)
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.private_key = "fake-pem-key"
+                settings.key_path = None
+                settings.kid = "test-kid"
+                settings.issuer = "test-issuer"
+                settings.has_modi_audit_context = False
+                settings.has_e_service_key = True
+                settings.modi_kid = "modi-kid"
+                settings.modi_private_key = "fake-modi-pem-key"
+                settings.modi_key_path = None
+                mock_settings.return_value = settings
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = voucher_jwt
+                    mock_manager.return_value = manager
+
+                    with patch("anncsu.cli.commands.coordinate.SDKHooks"):
+                        with patch(
+                            "anncsu.cli.commands.coordinate.ModIConfig"
+                        ) as mock_modi_config:
+                            mock_config_instance = MagicMock()
+                            mock_modi_config.return_value = mock_config_instance
+
+                            with patch(
+                                "anncsu.cli.commands.coordinate.register_modi_hook"
+                            ):
+                                with patch(
+                                    "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                                ) as mock_sdk:
+                                    sdk = MagicMock()
+                                    response = create_mock_response()
+                                    sdk.json_post.gestionecoordinate.return_value = (
+                                        response
+                                    )
+                                    mock_sdk.return_value = sdk
+
+                                    result = cli_runner.invoke(
+                                        app,
+                                        [
+                                            "coordinate",
+                                            "update",
+                                            "--codcom",
+                                            "H501",
+                                            "--progr-civico",
+                                            "12345",
+                                            "--server-url",
+                                            wrong_url,
+                                        ],
+                                    )
+
+                    assert result.exit_code == 0
+
+                    # Verify ModIConfig was called with corrected audience
+                    mock_modi_config.assert_called_once()
+                    config_kwargs = mock_modi_config.call_args[1]
+                    assert config_kwargs["audience"] == real_aud
+
+    def test_get_consult_sdk_autocorrects_url(
+        self, cli_runner: "CliRunner", tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Verify _get_consult_sdk uses voucher aud when it differs from hardcoded URL."""
+        from anncsu.cli.commands.coordinate import _get_consult_sdk
+
+        real_aud = "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione-comune/v1"
+        wrong_url = "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1"
+        voucher_jwt = _create_test_jwt_with_aud(real_aud)
+
+        with patch(
+            "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+        ) as mock_settings:
+            settings = MagicMock()
+            mock_settings.return_value = settings
+
+            with patch(
+                "anncsu.cli.commands.coordinate.PDNDAuthManager"
+            ) as mock_manager:
+                manager = MagicMock()
+                manager.get_access_token.return_value = voucher_jwt
+                mock_manager.return_value = manager
+
+                with patch(
+                    "anncsu.cli.commands.coordinate.AnncsuConsultazione"
+                ) as mock_consult_sdk:
+                    mock_consult_sdk.return_value = MagicMock()
+
+                    _get_consult_sdk(
+                        token_endpoint="https://auth.uat.interop.pagopa.it/token.oauth2",
+                        server_url=wrong_url,
+                    )
+
+                    # Verify AnncsuConsultazione was called with corrected URL
+                    mock_consult_sdk.assert_called_once()
+                    call_kwargs = mock_consult_sdk.call_args[1]
+                    assert call_kwargs["server_url"] == real_aud
