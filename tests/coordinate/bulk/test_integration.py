@@ -44,7 +44,7 @@ def _make_lookup_response(coord_x=None, coord_y=None, quota=None, metodo=None):
     mock_data.prognazacc = "1370588"
     mock_data.civico = "12"
     mock_response = MagicMock()
-    mock_response.data = mock_data
+    mock_response.data = [mock_data]  # List, matching real PA API
     return mock_response
 
 

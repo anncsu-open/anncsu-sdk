@@ -228,3 +228,145 @@ class TestImportCSV:
         with BulkDB(":memory:") as db:
             result = import_csv(db=db, csv_path=csv_file, mode="update")
             assert result.total_rows == 2
+
+
+class TestImportCSVSQLValidation:
+    """Tests for validation edge cases (ensures SQL validation parity with Pydantic)."""
+
+    def test_import_y_without_x(self, tmp_path):
+        """Y without X should be invalid."""
+        csv_file = _write_csv(
+            tmp_path / "y_no_x.csv",
+            "codcom,progr_civico,x,y,z,metodo\nA062,1370588,,41.8,,\n",
+        )
+        with BulkDB(":memory:") as db:
+            result = import_csv(db=db, csv_path=csv_file, mode="validate")
+            assert result.invalid_rows == 1
+            rows = db.get_rows_by_status(run_id=result.run_id, status=RowStatus.INVALID)
+            assert "X" in rows[0]["validation_error"]
+
+    def test_import_metodo_not_allowed(self, tmp_path):
+        """Metodo without X and Y should be invalid."""
+        csv_file = _write_csv(
+            tmp_path / "metodo_alone.csv",
+            "codcom,progr_civico,x,y,z,metodo\nA062,1370588,,,,3\n",
+        )
+        with BulkDB(":memory:") as db:
+            result = import_csv(db=db, csv_path=csv_file, mode="validate")
+            assert result.invalid_rows == 1
+            rows = db.get_rows_by_status(run_id=result.run_id, status=RowStatus.INVALID)
+            assert "metodo" in rows[0]["validation_error"].lower()
+
+    def test_import_z_without_coords(self, tmp_path):
+        """Z without X and Y should be invalid."""
+        csv_file = _write_csv(
+            tmp_path / "z_alone.csv",
+            "codcom,progr_civico,x,y,z,metodo\nA062,1370588,,,150,\n",
+        )
+        with BulkDB(":memory:") as db:
+            result = import_csv(db=db, csv_path=csv_file, mode="validate")
+            assert result.invalid_rows == 1
+            rows = db.get_rows_by_status(run_id=result.run_id, status=RowStatus.INVALID)
+            assert "Z" in rows[0]["validation_error"]
+
+    def test_import_x_out_of_range(self, tmp_path):
+        """X outside Italy bounds should be invalid."""
+        csv_file = _write_csv(
+            tmp_path / "x_range.csv",
+            "codcom,progr_civico,x,y,z,metodo\nA062,1370588,99.0,41.8,,3\n",
+        )
+        with BulkDB(":memory:") as db:
+            result = import_csv(db=db, csv_path=csv_file, mode="validate")
+            assert result.invalid_rows == 1
+
+    def test_import_y_out_of_range(self, tmp_path):
+        """Y outside Italy bounds should be invalid."""
+        csv_file = _write_csv(
+            tmp_path / "y_range.csv",
+            "codcom,progr_civico,x,y,z,metodo\nA062,1370588,13.1,99.0,,3\n",
+        )
+        with BulkDB(":memory:") as db:
+            result = import_csv(db=db, csv_path=csv_file, mode="validate")
+            assert result.invalid_rows == 1
+
+    def test_import_csv_only_required_columns(self, tmp_path):
+        """CSV with only codcom and progr_civico should be all valid."""
+        csv_file = _write_csv(
+            tmp_path / "required_only.csv",
+            "codcom,progr_civico\nA062,1370588\nA062,1370589\n",
+        )
+        with BulkDB(":memory:") as db:
+            result = import_csv(db=db, csv_path=csv_file, mode="validate")
+            assert result.total_rows == 2
+            assert result.valid_rows == 2
+            assert result.invalid_rows == 0
+
+    def test_import_whitespace_values_treated_as_null(self, tmp_path):
+        """Whitespace-only values in optional fields should be treated as NULL."""
+        csv_file = _write_csv(
+            tmp_path / "whitespace.csv",
+            "codcom,progr_civico,x,y,z,metodo\nA062,1370588, , , , \n",
+        )
+        with BulkDB(":memory:") as db:
+            result = import_csv(db=db, csv_path=csv_file, mode="validate")
+            assert result.valid_rows == 1
+
+    def test_import_x_exceeds_max_length(self, tmp_path):
+        """X with more than 12 characters should be invalid."""
+        csv_file = _write_csv(
+            tmp_path / "x_long.csv",
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,1370588,12.3476928612,41.7942647,150,3\n",
+        )
+        with BulkDB(":memory:") as db:
+            result = import_csv(db=db, csv_path=csv_file, mode="validate")
+            assert result.invalid_rows == 1
+            row = db.con.execute(
+                "SELECT validation_error FROM bulk_input WHERE status = 'invalid'"
+            ).fetchone()
+            assert "lunghezza massima" in row[0]
+            assert "'x'" in row[0]
+
+    def test_import_y_exceeds_max_length(self, tmp_path):
+        """Y with more than 12 characters should be invalid."""
+        csv_file = _write_csv(
+            tmp_path / "y_long.csv",
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,1370588,12.4922309,41.7942647923,150,3\n",
+        )
+        with BulkDB(":memory:") as db:
+            result = import_csv(db=db, csv_path=csv_file, mode="validate")
+            assert result.invalid_rows == 1
+            row = db.con.execute(
+                "SELECT validation_error FROM bulk_input WHERE status = 'invalid'"
+            ).fetchone()
+            assert "lunghezza massima" in row[0]
+            assert "'y'" in row[0]
+
+    def test_import_z_exceeds_max_length(self, tmp_path):
+        """Z with more than 7 characters should be invalid."""
+        csv_file = _write_csv(
+            tmp_path / "z_long.csv",
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,1370588,12.4922309,41.8902102,12345678,3\n",
+        )
+        with BulkDB(":memory:") as db:
+            result = import_csv(db=db, csv_path=csv_file, mode="validate")
+            assert result.invalid_rows == 1
+            row = db.con.execute(
+                "SELECT validation_error FROM bulk_input WHERE status = 'invalid'"
+            ).fetchone()
+            assert "lunghezza massima" in row[0]
+            assert "'z'" in row[0]
+
+    def test_import_x_exactly_12_chars_valid(self, tmp_path):
+        """X with exactly 12 characters should be valid."""
+        csv_file = _write_csv(
+            tmp_path / "x_exact.csv",
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,1370588,12.49223090,41.8902102,,3\n",
+        )
+        with BulkDB(":memory:") as db:
+            result = import_csv(db=db, csv_path=csv_file, mode="validate")
+            assert result.valid_rows == 1
+            assert result.invalid_rows == 0

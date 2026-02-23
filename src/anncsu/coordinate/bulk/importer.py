@@ -1,17 +1,11 @@
-"""CSV import and Pydantic validation into DuckDB for bulk coordinate updates."""
+"""CSV import and SQL validation into DuckDB for bulk coordinate updates."""
 
 from __future__ import annotations
 
-import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
-from anncsu.coordinate.bulk.db import BulkDB, RowStatus
-from anncsu.coordinate.errors.coordinate_validation import (
-    CoordinateValidationError,
-)
-from anncsu.coordinate.models.validated import ValidatedCoordinate
+from anncsu.coordinate.bulk.db import BulkDB
 
 REQUIRED_COLUMNS = {"codcom", "progr_civico"}
 KNOWN_COLUMNS = {"codcom", "progr_civico", "x", "y", "z", "metodo"}
@@ -89,7 +83,11 @@ def import_csv(
     csv_path: Path,
     mode: str,
 ) -> CSVImportResult:
-    """Import a CSV file into DuckDB and validate each row with Pydantic.
+    """Import a CSV file into DuckDB and validate all rows with SQL.
+
+    Uses DuckDB's native read_csv_auto() for fast bulk loading and SQL
+    CASE/WHEN expressions for validation, replacing the row-by-row
+    Pydantic approach.
 
     Args:
         db: BulkDB instance.
@@ -104,15 +102,13 @@ def import_csv(
     """
     csv_path = Path(csv_path)
     separator = detect_separator(csv_path)
-    columns = validate_csv_header(csv_path, separator=separator)
+    validate_csv_header(csv_path, separator=separator)
 
-    # Read all data rows
-    rows = _read_csv_rows(csv_path, columns=columns, separator=separator)
+    # Load CSV into staging table (single DuckDB operation)
+    staging_columns = db.create_staging_from_csv(str(csv_path), separator=separator)
 
-    if not rows:
-        codcom = "UNKNOWN"
-    else:
-        codcom = rows[0].get("codcom", "UNKNOWN")
+    # Extract codcom from first row
+    codcom = db.get_staging_codcom()
 
     # Create run
     run_id = db.create_run(
@@ -122,44 +118,16 @@ def import_csv(
         mode=mode,
     )
 
-    # Insert rows into DuckDB and validate
-    valid_count = 0
-    invalid_count = 0
-
-    for idx, row in enumerate(rows, start=1):
-        row_codcom = row.get("codcom", "")
-        row_progr = row.get("progr_civico", "")
-        row_x = _empty_to_none(row.get("x"))
-        row_y = _empty_to_none(row.get("y"))
-        row_z = _empty_to_none(row.get("z"))
-        row_metodo = _empty_to_none(row.get("metodo"))
-
-        # Insert into bulk_input
-        db.con.execute(
-            "INSERT INTO bulk_input "
-            "(row_id, run_id, codcom, progr_civico, x, y, z, metodo) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [idx, run_id, row_codcom, row_progr, row_x, row_y, row_z, row_metodo],
-        )
-
-        # Validate with Pydantic
-        validation_error = _validate_row(x=row_x, y=row_y, z=row_z, metodo=row_metodo)
-
-        if validation_error is None:
-            db.update_row_status(row_id=idx, status=RowStatus.VALID)
-            valid_count += 1
-        else:
-            db.update_row_status(
-                row_id=idx,
-                status=RowStatus.INVALID,
-                validation_error=validation_error,
-            )
-            invalid_count += 1
+    # Insert with SQL-based validation (single INSERT...SELECT)
+    total_rows, valid_count, invalid_count = db.insert_validated_from_staging(
+        run_id=run_id,
+        staging_columns=staging_columns,
+    )
 
     # Update run counts
     db.update_run_counts(
         run_id=run_id,
-        total_rows=len(rows),
+        total_rows=total_rows,
         valid_rows=valid_count,
         invalid_rows=invalid_count,
     )
@@ -167,61 +135,7 @@ def import_csv(
     return CSVImportResult(
         run_id=run_id,
         codcom=codcom,
-        total_rows=len(rows),
+        total_rows=total_rows,
         valid_rows=valid_count,
         invalid_rows=invalid_count,
     )
-
-
-def _read_csv_rows(
-    csv_path: Path,
-    *,
-    columns: list[str],
-    separator: str,
-) -> list[dict[str, Any]]:
-    """Read CSV rows using csv.DictReader."""
-    rows = []
-    with open(csv_path, encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f, delimiter=separator)
-        for row in reader:
-            # Normalize keys to lowercase
-            normalized = {
-                k.strip().lower(): v.strip() if v else ""
-                for k, v in row.items()
-                if k is not None
-            }
-            rows.append(normalized)
-    return rows
-
-
-def _empty_to_none(value: str | None) -> str | None:
-    """Convert empty strings to None."""
-    if value is None or value.strip() == "":
-        return None
-    return value.strip()
-
-
-def _validate_row(
-    *,
-    x: str | None,
-    y: str | None,
-    z: str | None,
-    metodo: str | None,
-) -> str | None:
-    """Validate a row's coordinate fields using ValidatedCoordinate.
-
-    Returns:
-        None if valid, error message string if invalid.
-    """
-    try:
-        ValidatedCoordinate(
-            x=x,
-            y=y,
-            z=z,
-            metodo=metodo,
-        )
-        return None
-    except CoordinateValidationError as e:
-        return str(e)
-    except Exception as e:
-        return f"Validation error: {e}"

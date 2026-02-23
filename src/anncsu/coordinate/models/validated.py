@@ -33,6 +33,7 @@ from pydantic import model_validator
 
 from anncsu.coordinate.errors.coordinate_validation import (
     CoordinateDependencyError,
+    CoordinateMaxLengthError,
     CoordinateRangeError,
     MetodoNotAllowedError,
     MetodoOutOfRangeError,
@@ -51,6 +52,11 @@ Y_MAX = 47.0
 # Valid metodo values
 METODO_MIN = 1
 METODO_MAX = 4
+
+# API maxLength constraints (from OAS spec)
+X_MAX_LENGTH = 12
+Y_MAX_LENGTH = 12
+Z_MAX_LENGTH = 7
 
 
 class ValidatedCoordinate(Coordinate):
@@ -102,6 +108,9 @@ class ValidatedCoordinate(Coordinate):
             # Validate coordinate ranges
             self._validate_x_range(x_val)
             self._validate_y_range(y_val)
+            # Validate maxLength (API constraint)
+            self._validate_max_length(x_val, "x", X_MAX_LENGTH)
+            self._validate_max_length(y_val, "y", Y_MAX_LENGTH)
         else:
             # No coordinates - metodo must not be provided
             if has_metodo:
@@ -110,6 +119,10 @@ class ValidatedCoordinate(Coordinate):
         # Rule 4: Z can only be provided with X and Y
         if has_z and not (has_x and has_y):
             raise QuotaNotAllowedError(z=z_val)
+
+        # Validate Z maxLength
+        if has_z:
+            self._validate_max_length(z_val, "z", Z_MAX_LENGTH)
 
         return self
 
@@ -153,6 +166,17 @@ class ValidatedCoordinate(Coordinate):
                 min_value=X_MIN,
                 max_value=X_MAX,
             ) from None
+
+    def _validate_max_length(
+        self, value: str, field_name: str, max_length: int
+    ) -> None:
+        """Validate that a coordinate string does not exceed API maxLength."""
+        if len(value) > max_length:
+            raise CoordinateMaxLengthError(
+                field_name=field_name,
+                value=value,
+                max_length=max_length,
+            )
 
     def _validate_y_range(self, y: str) -> None:
         """Validate Y coordinate is within Italy bounds."""

@@ -135,6 +135,28 @@ class QuotaNotAllowedError(CoordinateValidationError):
         )
 
 
+@dataclass
+class CoordinateMaxLengthError(CoordinateValidationError):
+    """Raised when a coordinate string exceeds the API maxLength constraint.
+
+    The ANNCSU API enforces maxLength on coordinate fields:
+    - x: 12 characters
+    - y: 12 characters
+    - z: 7 characters
+    """
+
+    field_name: str
+    value: str
+    max_length: int
+
+    def __str__(self) -> str:
+        return (
+            f"Il campo '{self.field_name}' supera la lunghezza massima consentita. "
+            f"Massimo {self.max_length} caratteri, forniti {len(self.value)}. "
+            f"Valore: {self.value}"
+        )
+
+
 __all__ = [
     "CoordinateValidationError",
     "MetodoRequiredError",
@@ -143,4 +165,5 @@ __all__ = [
     "CoordinateDependencyError",
     "CoordinateRangeError",
     "QuotaNotAllowedError",
+    "CoordinateMaxLengthError",
 ]

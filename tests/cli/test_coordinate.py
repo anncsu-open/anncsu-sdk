@@ -1089,16 +1089,19 @@ class TestCoordinateDryRun:
                         consult_sdk = MagicMock()
                         # Mock direct prognazacc lookup response
                         prognazacc_response = MagicMock()
-                        prognazacc_response.data = MagicMock()
-                        prognazacc_response.data.prognazacc = "5256880"
-                        prognazacc_response.data.prognaz = "907156"
-                        prognazacc_response.data.dug = "VIA"
-                        prognazacc_response.data.denomuff = "ROMA"
-                        prognazacc_response.data.civico = "1"
-                        prognazacc_response.data.coord_x = "12.4922309"
-                        prognazacc_response.data.coord_y = "41.8902102"
-                        prognazacc_response.data.quota = "0"
-                        prognazacc_response.data.metodo = "4"
+                        mock_data = MagicMock()
+                        mock_data.prognazacc = "5256880"
+                        mock_data.prognaz = "907156"
+                        mock_data.dug = "VIA"
+                        mock_data.denomuff = "ROMA"
+                        mock_data.civico = "1"
+                        mock_data.coord_x = "12.4922309"
+                        mock_data.coord_y = "41.8902102"
+                        mock_data.quota = "0"
+                        mock_data.metodo = "4"
+                        prognazacc_response.data = [
+                            mock_data
+                        ]  # List, matching real PA API
                         consult_sdk.queryparam.prognazacc_get_query_param.return_value = prognazacc_response
                         mock_consult_sdk.return_value = consult_sdk
 
@@ -1171,16 +1174,19 @@ class TestCoordinateDryRun:
                     ) as mock_consult_sdk:
                         consult_sdk = MagicMock()
                         prognazacc_response = MagicMock()
-                        prognazacc_response.data = MagicMock()
-                        prognazacc_response.data.prognazacc = "5256880"
-                        prognazacc_response.data.prognaz = "907156"
-                        prognazacc_response.data.dug = "VIA"
-                        prognazacc_response.data.denomuff = "ROMA"
-                        prognazacc_response.data.civico = "1"
-                        prognazacc_response.data.coord_x = "12.4922309"
-                        prognazacc_response.data.coord_y = "41.8902102"
-                        prognazacc_response.data.quota = "0"
-                        prognazacc_response.data.metodo = "4"
+                        mock_data = MagicMock()
+                        mock_data.prognazacc = "5256880"
+                        mock_data.prognaz = "907156"
+                        mock_data.dug = "VIA"
+                        mock_data.denomuff = "ROMA"
+                        mock_data.civico = "1"
+                        mock_data.coord_x = "12.4922309"
+                        mock_data.coord_y = "41.8902102"
+                        mock_data.quota = "0"
+                        mock_data.metodo = "4"
+                        prognazacc_response.data = [
+                            mock_data
+                        ]  # List, matching real PA API
                         consult_sdk.queryparam.prognazacc_get_query_param.return_value = prognazacc_response
                         mock_consult_sdk.return_value = consult_sdk
 

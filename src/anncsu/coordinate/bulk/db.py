@@ -322,6 +322,189 @@ class BulkDB:
         ]
         return dict(zip(columns, result, strict=False))
 
+    # --- CSV staging helpers ---
+
+    def create_staging_from_csv(
+        self,
+        csv_path: str,
+        *,
+        separator: str,
+    ) -> list[str]:
+        """Load a CSV into a temporary staging table using DuckDB read_csv_auto.
+
+        Args:
+            csv_path: Absolute path to the CSV file.
+            separator: CSV delimiter character.
+
+        Returns:
+            List of column names found in the staging table (lowercased).
+        """
+        self.con.execute("DROP TABLE IF EXISTS _csv_staging")
+        self.con.execute(
+            "CREATE TEMP TABLE _csv_staging AS "
+            "SELECT * FROM read_csv_auto(?, delim=?, all_varchar=true, "
+            "header=true, null_padding=true)",
+            [csv_path, separator],
+        )
+        desc = self.con.execute("SELECT * FROM _csv_staging LIMIT 0").description
+        return [d[0].lower() for d in desc]
+
+    def get_staging_codcom(self) -> str:
+        """Get codcom from the first row of the staging table."""
+        result = self.con.execute("SELECT codcom FROM _csv_staging LIMIT 1").fetchone()
+        if result is None:
+            return "UNKNOWN"
+        return result[0] or "UNKNOWN"
+
+    def insert_validated_from_staging(
+        self,
+        *,
+        run_id: str,
+        staging_columns: list[str],
+    ) -> tuple[int, int, int]:
+        """Insert rows from staging into bulk_input with SQL-based validation.
+
+        Translates the 7 validation rules from ValidatedCoordinate into SQL
+        CASE/WHEN expressions, preserving identical rule priority and Italian
+        error messages.
+
+        Args:
+            run_id: The run identifier.
+            staging_columns: Column names present in the staging table.
+
+        Returns:
+            Tuple of (total_rows, valid_count, invalid_count).
+        """
+        # Build column expressions - use NULL for missing optional columns
+        x_expr = "NULLIF(TRIM(x), '')" if "x" in staging_columns else "NULL"
+        y_expr = "NULLIF(TRIM(y), '')" if "y" in staging_columns else "NULL"
+        z_expr = "NULLIF(TRIM(z), '')" if "z" in staging_columns else "NULL"
+        metodo_expr = (
+            "NULLIF(TRIM(metodo), '')" if "metodo" in staging_columns else "NULL"
+        )
+
+        sql = f"""
+        INSERT INTO bulk_input
+            (row_id, run_id, codcom, progr_civico, x, y, z, metodo,
+             status, validation_error)
+        SELECT
+            row_id, run_id, codcom, progr_civico, _x, _y, _z, _metodo,
+            CASE
+                WHEN _x IS NOT NULL AND _y IS NULL THEN 'invalid'
+                WHEN _y IS NOT NULL AND _x IS NULL THEN 'invalid'
+                WHEN _x IS NOT NULL AND _y IS NOT NULL AND _metodo IS NULL
+                    THEN 'invalid'
+                WHEN _x IS NULL AND _y IS NULL AND _metodo IS NOT NULL
+                    THEN 'invalid'
+                WHEN _metodo IS NOT NULL
+                    AND (TRY_CAST(_metodo AS INTEGER) IS NULL
+                         OR TRY_CAST(_metodo AS INTEGER) NOT BETWEEN 1 AND 4)
+                    THEN 'invalid'
+                WHEN _x IS NOT NULL
+                    AND (TRY_CAST(_x AS DOUBLE) IS NULL
+                         OR TRY_CAST(_x AS DOUBLE) NOT BETWEEN 6.0 AND 18.0)
+                    THEN 'invalid'
+                WHEN _y IS NOT NULL
+                    AND (TRY_CAST(_y AS DOUBLE) IS NULL
+                         OR TRY_CAST(_y AS DOUBLE) NOT BETWEEN 36.0 AND 47.0)
+                    THEN 'invalid'
+                WHEN _z IS NOT NULL AND (_x IS NULL OR _y IS NULL)
+                    THEN 'invalid'
+                WHEN _x IS NOT NULL AND LENGTH(_x) > 12 THEN 'invalid'
+                WHEN _y IS NOT NULL AND LENGTH(_y) > 12 THEN 'invalid'
+                WHEN _z IS NOT NULL AND LENGTH(_z) > 7 THEN 'invalid'
+                ELSE 'valid'
+            END AS status,
+            CASE
+                WHEN _x IS NOT NULL AND _y IS NULL
+                    THEN 'Coordinata Y obbligatoria se viene valorizzata X. '
+                         || 'Fornire entrambe le coordinate X e Y.'
+                WHEN _y IS NOT NULL AND _x IS NULL
+                    THEN 'Coordinata X obbligatoria se viene valorizzata Y. '
+                         || 'Fornire entrambe le coordinate X e Y.'
+                WHEN _x IS NOT NULL AND _y IS NOT NULL AND _metodo IS NULL
+                    THEN 'Il campo ''metodo'' e'' obbligatorio quando X e Y '
+                         || 'sono valorizzati. Coordinate fornite: X='
+                         || _x || ', Y=' || _y
+                WHEN _x IS NULL AND _y IS NULL AND _metodo IS NOT NULL
+                    THEN 'Il campo ''metodo'' non deve essere valorizzato in '
+                         || 'assenza di X e Y. Metodo fornito: ' || _metodo
+                WHEN _metodo IS NOT NULL
+                    AND (TRY_CAST(_metodo AS INTEGER) IS NULL
+                         OR TRY_CAST(_metodo AS INTEGER) NOT BETWEEN 1 AND 4)
+                    THEN 'Il campo ''metodo'' deve essere compreso tra 1 e 4. '
+                         || 'Valore fornito: ' || _metodo
+                WHEN _x IS NOT NULL
+                    AND (TRY_CAST(_x AS DOUBLE) IS NULL
+                         OR TRY_CAST(_x AS DOUBLE) NOT BETWEEN 6.0 AND 18.0)
+                    THEN 'Coordinata X fuori range. Valori ammessi in Italia: '
+                         || '6.0 <= X <= 18.0. Valore fornito: ' || _x
+                WHEN _y IS NOT NULL
+                    AND (TRY_CAST(_y AS DOUBLE) IS NULL
+                         OR TRY_CAST(_y AS DOUBLE) NOT BETWEEN 36.0 AND 47.0)
+                    THEN 'Coordinata Y fuori range. Valori ammessi in Italia: '
+                         || '36.0 <= Y <= 47.0. Valore fornito: ' || _y
+                WHEN _z IS NOT NULL AND (_x IS NULL OR _y IS NULL)
+                    THEN 'La quota (Z) non deve essere valorizzata in assenza '
+                         || 'di X e Y. Quota fornita: ' || _z
+                WHEN _x IS NOT NULL AND LENGTH(_x) > 12
+                    THEN 'Il campo ''x'' supera la lunghezza massima consentita. '
+                         || 'Massimo 12 caratteri, forniti '
+                         || CAST(LENGTH(_x) AS VARCHAR) || '. Valore: ' || _x
+                WHEN _y IS NOT NULL AND LENGTH(_y) > 12
+                    THEN 'Il campo ''y'' supera la lunghezza massima consentita. '
+                         || 'Massimo 12 caratteri, forniti '
+                         || CAST(LENGTH(_y) AS VARCHAR) || '. Valore: ' || _y
+                WHEN _z IS NOT NULL AND LENGTH(_z) > 7
+                    THEN 'Il campo ''z'' supera la lunghezza massima consentita. '
+                         || 'Massimo 7 caratteri, forniti '
+                         || CAST(LENGTH(_z) AS VARCHAR) || '. Valore: ' || _z
+                ELSE NULL
+            END AS validation_error
+        FROM (
+            SELECT
+                ROW_NUMBER() OVER () AS row_id,
+                ? AS run_id,
+                codcom,
+                progr_civico,
+                {x_expr} AS _x,
+                {y_expr} AS _y,
+                {z_expr} AS _z,
+                {metodo_expr} AS _metodo
+            FROM _csv_staging
+        ) sub
+        """
+        self.con.execute(sql, [run_id])
+
+        # Get counts in one query
+        counts = self.con.execute(
+            "SELECT "
+            "  COUNT(*) AS total, "
+            "  COUNT(*) FILTER (WHERE status = 'valid') AS valid_count, "
+            "  COUNT(*) FILTER (WHERE status = 'invalid') AS invalid_count "
+            "FROM bulk_input WHERE run_id = ?",
+            [run_id],
+        ).fetchone()
+
+        return counts[0], counts[1], counts[2]
+
+    # --- result query helpers ---
+
+    def get_result_errors(self, *, run_id: str) -> list[tuple]:
+        """Get error details for failed operations in a run.
+
+        Returns list of (row_id, progr_civico, operation, http_status, error_detail).
+        """
+        return self.con.execute(
+            "SELECT r.row_id, bi.progr_civico, r.operation, r.http_status, "
+            "r.error_detail "
+            "FROM bulk_results r "
+            "JOIN bulk_input bi ON r.row_id = bi.row_id AND r.run_id = bi.run_id "
+            "WHERE r.run_id = ? AND r.error_detail IS NOT NULL "
+            "ORDER BY r.row_id, r.operation",
+            [run_id],
+        ).fetchall()
+
     # --- rate limiting helpers ---
 
     def count_daily_api_calls(self) -> int:

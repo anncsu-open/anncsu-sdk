@@ -667,14 +667,14 @@ anncsu coordinate bulk validate input.csv --json
 
 The input CSV must have a header row with the following columns:
 
-| Column | Required | Description |
-|--------|----------|-------------|
-| `codcom` | Yes | Codice comune (Belfiore code). Must be the same for all rows. |
-| `progr_civico` | Yes | Progressivo civico (access progressive number) |
-| `x` | No | Coordinata X (longitude). Range: 6.0-18.0 |
-| `y` | No | Coordinata Y (latitude). Range: 36.0-47.0 |
-| `z` | No | Quota (altitude in meters) |
-| `metodo` | No | Metodo di rilevazione (1-4) |
+| Column | Required | Description | Max Length |
+|--------|----------|-------------|-----------|
+| `codcom` | Yes | Codice comune (Belfiore code). Must be the same for all rows. | - |
+| `progr_civico` | Yes | Progressivo civico (access progressive number) | 15 |
+| `x` | No | Coordinata X (longitude). Range: 6.0-18.0 | **12** |
+| `y` | No | Coordinata Y (latitude). Range: 36.0-47.0 | **12** |
+| `z` | No | Quota (altitude in meters) | **7** |
+| `metodo` | No | Metodo di rilevazione (1-4) | 1 |
 
 **Supported separators**: comma (`,`) and semicolon (`;`). The separator is auto-detected from the header.
 
@@ -683,8 +683,11 @@ The input CSV must have a header row with the following columns:
 - If `x` is provided, `y` must also be provided (and vice versa)
 - `metodo` must be in range 1-4 (when provided)
 - Coordinates must be within Italy bounds (x: 6.0-18.0, y: 36.0-47.0)
+- **Coordinate string length must not exceed API limits**: x max 12 chars, y max 12 chars, z max 7 chars
 - Empty `x`, `y`, `z`, `metodo` is valid (clears coordinates for that access point)
 - All rows must have the same `codcom`
+
+> **Important**: The ANNCSU API enforces `maxLength` on coordinate fields (from the OAS specification). Coordinates with too many decimal places (e.g., `12.3476928612` = 14 chars) will be rejected as invalid during validation. Ensure coordinate values are truncated/rounded to fit within the maximum length before importing.
 
 **Example CSV (comma)**:
 ```csv
@@ -701,20 +704,364 @@ H501;1000;12.4922;41.8902;;4
 H501;2000;12.5000;41.9000;;3
 ```
 
-#### Planned Bulk Commands (Not Yet Implemented)
+#### `anncsu coordinate bulk update`
 
-The following commands are planned but not yet wired to the CLI.
-The underlying business logic exists in the SDK modules.
+Execute bulk coordinate update from a CSV file. Imports the CSV, validates
+rows, then calls the Coordinate API for each valid row. Progress is tracked
+in a local DuckDB database for resume capability.
 
-| Command | Description |
-|---------|-------------|
-| `anncsu coordinate bulk update` | Execute bulk coordinate update from CSV |
-| `anncsu coordinate bulk dry-run` | Dry-run: validate + simulate on 10 records |
-| `anncsu coordinate bulk resume` | Resume an interrupted bulk execution |
-| `anncsu coordinate bulk status` | Show status of current/past bulk execution |
-| `anncsu coordinate bulk report` | Generate report (CSV/JSON) for a completed run |
-| `anncsu coordinate bulk list` | List past bulk executions |
-| `anncsu coordinate bulk clean` | Remove old DuckDB files |
+```bash
+anncsu coordinate bulk update input.csv
+anncsu coordinate bulk update input.csv --production
+anncsu coordinate bulk update input.csv --json
+```
+
+Options:
+- `--token-endpoint`, `-e` - PDND token endpoint URL (default: UAT)
+- `--server-url`, `-s` - Custom API server URL
+- `--validation/--production` - Use validation (UAT) or production environment (default: validation)
+- `--no-verify-ssl` - Disable SSL certificate verification
+- `--json` - Output results as JSON
+
+Output:
+```
+Bulk Update
+  CSV: input.csv
+  Codice Comune: A062
+  Total rows: 100
+  Valid: 98
+  Invalid: 2
+  Run ID: abc123-def456
+  DB: /Users/user/.anncsu/bulk/A062_abc123-def456.db
+
+⠋ Processing: 50/98 (ok=48 err=2)
+
+Results:
+  Processed: 98
+  Succeeded: 96
+  Failed: 2
+```
+
+JSON output:
+```json
+{
+  "run_id": "abc123-def456",
+  "codcom": "A062",
+  "db_path": "/Users/user/.anncsu/bulk/A062_abc123-def456.db",
+  "total_rows": 100,
+  "valid_rows": 98,
+  "invalid_rows": 2,
+  "processed": 98,
+  "succeeded": 96,
+  "failed": 2,
+  "rate_limited": false
+}
+```
+
+If the daily rate limit (50,000 API calls) is reached, the command exits with code 1
+and prints a message with the `run_id` to use for resuming:
+
+```
+Rate limit reached after 49998 calls. 2 rows remaining.
+Resume with: anncsu coordinate bulk resume abc123-def456
+```
+
+#### `anncsu coordinate bulk dry-run`
+
+Dry-run: validate a CSV and simulate updates on a limited number of records.
+For each tested record, the command:
+1. Looks up current coordinates via the Consultazione (PA) API
+2. Updates with CSV values via the Coordinate API
+3. Restores original coordinates
+
+```bash
+anncsu coordinate bulk dry-run input.csv
+anncsu coordinate bulk dry-run input.csv --max-records 5
+anncsu coordinate bulk dry-run input.csv --json
+```
+
+Options:
+- `--max-records`, `-n` - Maximum records to test (default: 10)
+- `--token-endpoint`, `-e` - PDND token endpoint URL (default: UAT)
+- `--server-url`, `-s` - Custom API server URL
+- `--validation/--production` - Use validation (UAT) or production environment (default: validation)
+- `--no-verify-ssl` - Disable SSL certificate verification
+- `--json` - Output results as JSON
+
+Output:
+```
+Bulk Dry-Run
+  CSV: input.csv
+  Codice Comune: A062
+  Valid rows: 98
+  Max records to test: 10
+
+⠋ Running dry-run...
+
+Dry-Run Results:
+┌──────────────────────┬───────┐
+│ Metric               │ Value │
+├──────────────────────┼───────┤
+│ Total tested         │ 10    │
+│ Updates succeeded    │ 10    │
+│ Updates failed       │ 0     │
+│ Restores succeeded   │ 10    │
+│ Restores failed      │ 0     │
+│ Lookup failures      │ 0     │
+└──────────────────────┴───────┘
+```
+
+JSON output:
+```json
+{
+  "run_id": "abc123-def456",
+  "total_tested": 10,
+  "updates_succeeded": 10,
+  "updates_failed": 0,
+  "restores_succeeded": 10,
+  "restores_failed": 0,
+  "lookup_failures": 0
+}
+```
+
+Exits with code 1 if any restores failed (manual intervention may be needed).
+
+#### `anncsu coordinate bulk resume`
+
+Resume an interrupted bulk update execution. Finds the DuckDB file for
+the given run ID, resets any rows stuck in 'processing' state, and
+continues execution from where it left off.
+
+```bash
+anncsu coordinate bulk resume abc123-def456
+anncsu coordinate bulk resume abc123-def456 --json
+```
+
+Options:
+- `--token-endpoint`, `-e` - PDND token endpoint URL (default: UAT)
+- `--server-url`, `-s` - Custom API server URL
+- `--validation/--production` - Use validation (UAT) or production environment (default: validation)
+- `--no-verify-ssl` - Disable SSL certificate verification
+- `--json` - Output results as JSON
+
+Output:
+```
+Resuming Run
+  Run ID: abc123-def456
+  Codice Comune: A062
+  DB: /Users/user/.anncsu/bulk/A062_abc123-def456.db
+
+⠋ Processing: 2/2 (ok=2 err=0)
+
+Results:
+  Processed: 2
+  Succeeded: 2
+  Failed: 0
+```
+
+JSON output:
+```json
+{
+  "run_id": "abc123-def456",
+  "codcom": "A062",
+  "processed": 2,
+  "succeeded": 2,
+  "failed": 0,
+  "rate_limited": false
+}
+```
+
+Only `update` mode runs can be resumed. Attempting to resume a `dryrun` or
+`validate` run will produce an error.
+
+#### `anncsu coordinate bulk status`
+
+Show status of a bulk execution run.
+
+```bash
+anncsu coordinate bulk status abc123-def456
+anncsu coordinate bulk status abc123-def456 --json
+```
+
+Options:
+- `--json` - Output results as JSON
+
+Output:
+```
+Bulk Run Status
+
+┌───────────────┬─────────────────────────┐
+│ Field         │ Value                   │
+├───────────────┼─────────────────────────┤
+│ Run ID        │ abc123-d...             │
+│ Codice Comune │ A062                    │
+│ Mode          │ update                  │
+│ Total rows    │ 100                     │
+│ Valid         │ 98                      │
+│ Invalid       │ 2                       │
+│ Processed     │ 98                      │
+│ Succeeded     │ 96                      │
+│ Failed        │ 2                       │
+│ Started       │ 2026-02-20 10:00:00     │
+│ Finished      │ 2026-02-20 10:05:00     │
+│ DB            │ /Users/user/.anncsu/... │
+└───────────────┴─────────────────────────┘
+```
+
+JSON output:
+```json
+{
+  "run_id": "abc123-def456",
+  "codcom": "A062",
+  "mode": "update",
+  "total_rows": 100,
+  "valid_rows": 98,
+  "invalid_rows": 2,
+  "processed": 98,
+  "succeeded": 96,
+  "failed": 2,
+  "started_at": "2026-02-20 10:00:00",
+  "finished_at": "2026-02-20 10:05:00"
+}
+```
+
+#### `anncsu coordinate bulk report`
+
+Export results of a bulk run as CSV or JSON.
+
+```bash
+anncsu coordinate bulk report abc123-def456
+anncsu coordinate bulk report abc123-def456 --format csv
+anncsu coordinate bulk report abc123-def456 --format json --output results.json
+```
+
+Options:
+- `--format`, `-f` - Output format: `csv` or `json` (default: `csv`)
+- `--output`, `-o` - Output file path. Defaults to stdout.
+
+CSV output includes the following columns:
+`codcom`, `progr_civico`, `input_x`, `input_y`, `input_z`, `input_metodo`,
+`esito`, `messaggio`, `id_richiesta`, `operation`, `error_detail`, `processed_at`
+
+JSON output includes a summary section and the full results array:
+```json
+{
+  "summary": {
+    "run_id": "abc123-def456",
+    "codcom": "A062",
+    "mode": "update",
+    "total_rows": 100,
+    "valid_rows": 98,
+    "invalid_rows": 2,
+    "processed": 98,
+    "succeeded": 96,
+    "failed": 2,
+    "started_at": "2026-02-20 10:00:00",
+    "finished_at": "2026-02-20 10:05:00"
+  },
+  "results": [
+    {
+      "codcom": "A062",
+      "progr_civico": "1370588",
+      "input_x": "13.1022",
+      "input_y": "41.8848",
+      "input_z": "150",
+      "input_metodo": "3",
+      "esito": "0",
+      "messaggio": "OK",
+      "id_richiesta": "5144",
+      "operation": "update",
+      "error_detail": null,
+      "processed_at": "2026-02-20 10:00:01"
+    }
+  ]
+}
+```
+
+#### `anncsu coordinate bulk list`
+
+List all past bulk execution runs found in the local DuckDB storage.
+
+```bash
+anncsu coordinate bulk list
+anncsu coordinate bulk list --json
+```
+
+Options:
+- `--json` - Output results as JSON
+
+Output:
+```
+Bulk Runs (3 total)
+
+┌────────────┬────────┬────────┬───────┬────┬─────┬─────────────────────┬─────────────┐
+│ Run ID     │ Codcom │ Mode   │ Total │ OK │ Err │ Started             │ Status      │
+├────────────┼────────┼────────┼───────┼────┼─────┼─────────────────────┼─────────────┤
+│ abc123-d...│ A062   │ update │ 100   │ 96 │ 2   │ 2026-02-20 10:00:00 │ done        │
+│ def456-g...│ H501   │ dryrun │ 50    │ 10 │ 0   │ 2026-02-19 14:00:00 │ done        │
+│ ghi789-j...│ A062   │ update │ 200   │ 100│ 0   │ 2026-02-18 09:00:00 │ in progress │
+└────────────┴────────┴────────┴───────┴────┴─────┴─────────────────────┴─────────────┘
+```
+
+JSON output:
+```json
+[
+  {
+    "run_id": "abc123-def456",
+    "codcom": "A062",
+    "mode": "update",
+    "started_at": "2026-02-20 10:00:00",
+    "finished_at": "2026-02-20 10:05:00",
+    "total_rows": 100,
+    "processed": 98,
+    "succeeded": 96,
+    "failed": 2,
+    "db_file": "/Users/user/.anncsu/bulk/A062_abc123-def456.db"
+  }
+]
+```
+
+#### `anncsu coordinate bulk clean`
+
+Remove old bulk DuckDB files from local storage.
+
+```bash
+anncsu coordinate bulk clean --older-than 30
+anncsu coordinate bulk clean --older-than 30 --dry-run
+anncsu coordinate bulk clean --dry-run
+anncsu coordinate bulk clean --older-than 7 --json
+```
+
+Options:
+- `--older-than` - Remove DB files older than N days
+- `--dry-run` - Show what would be deleted without actually deleting
+- `--json` - Output results as JSON
+
+At least `--older-than` or `--dry-run` must be provided.
+When only `--dry-run` is used (without `--older-than`), all DB files are shown.
+
+Output:
+```
+  Would remove: A062_abc123-def456.db (45.2 KB)
+  Would remove: H501_def789-ghi012.db (12.8 KB)
+
+2 file(s) would be removed.
+```
+
+JSON output:
+```json
+{
+  "dry_run": true,
+  "removed": 0,
+  "would_remove": 2,
+  "files": [
+    {
+      "file": "/Users/user/.anncsu/bulk/A062_abc123-def456.db",
+      "size_bytes": 46285
+    }
+  ]
+}
+```
 
 #### DuckDB Persistence
 
@@ -736,6 +1083,8 @@ This enables resume after interruption, progress tracking, and report generation
 | `anncsu coordinate bulk resume` | Yes - POST requests with payload |
 | `anncsu coordinate bulk status` | No - local DB query |
 | `anncsu coordinate bulk report` | No - local DB query |
+| `anncsu coordinate bulk list` | No - local DB query |
+| `anncsu coordinate bulk clean` | No - local file operations |
 
 ---
 
@@ -802,6 +1151,74 @@ MODI_USER_ID=batch-user-001
 MODI_USER_LOCATION=server-batch-01
 MODI_LOA=SPID_L2
 ```
+
+---
+
+## API Environments and GovWay Paths
+
+The ANNCSU APIs are exposed through the GovWay gateway on two environments. Each API type has its own e-service path on GovWay, and the PDND token `aud` claim must match the e-service URL.
+
+### Environments
+
+| Environment | Token Endpoint | GovWay Base URL |
+|-------------|---------------|-----------------|
+| UAT (Validation) | `https://auth.uat.interop.pagopa.it/token.oauth2` | `https://modipa-val.agenziaentrate.it/govway/rest/in` |
+| Production | `https://auth.interop.pagopa.it/token.oauth2` | `https://modipa.agenziaentrate.it/govway/rest/in` |
+
+### API Types and GovWay Paths
+
+Each API type corresponds to a distinct PDND e-service with its own GovWay path and purpose ID:
+
+| API Type | GovWay Path | Purpose ID Env Var | CLI Flag |
+|----------|------------|-------------------|----------|
+| PA Consultazione (read) | `AgenziaEntrate-PDND/anncsu-consultazione/v1` | `PDND_PURPOSE_ID_PA` | N/A (used internally for lookups) |
+| Coordinate singolo (write) | `AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1` | `PDND_PURPOSE_ID_COORDINATE` | `--validation`/`--production` |
+| Coordinate Bulk grandi comuni (write) | `AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate-grandi-comuni/v1` | `PDND_PURPOSE_ID_COORDINATE_BULK` | `--validation`/`--production` |
+
+> **Important**: The bulk coordinate API uses a **different e-service** (`anncsu-aggiornamento-coordinate-grandi-comuni`) than the single coordinate update (`anncsu-aggiornamento-coordinate`). Each requires its own purpose ID activated on the PDND portal.
+
+### Token Caching and Sessions
+
+The CLI caches PDND tokens per API type in separate session files under `~/.anncsu/`:
+
+| API Type | Session File |
+|----------|-------------|
+| PA Consultazione | `session_pa.json` |
+| Coordinate (single) | `session_coordinate.json` |
+| Coordinate (bulk) | `session_coordinate_bulk.json` |
+
+Each session file contains the JWT access token obtained with the purpose ID specific to that API. Tokens are automatically refreshed when expired.
+
+To force re-authentication for a specific API type, delete its session file:
+
+```bash
+rm ~/.anncsu/session_coordinate_bulk.json
+```
+
+### Troubleshooting API Errors
+
+| HTTP Status | Error | Likely Cause | Solution |
+|-------------|-------|-------------|----------|
+| 403 | `Insufficient token claims` | Wrong purpose ID or token cached with wrong purpose | Delete the session file for the API type and re-run |
+| 404 | `Unknown API Request` | Wrong GovWay path (e-service URL mismatch) | Verify the server URL matches the e-service path |
+| 400 | Validation errors (e.g., `metodo obbligatorio`) | Invalid input data | Check coordinate values and required fields |
+
+### Verifying Token Claims
+
+To check which e-service a cached token targets, decode the JWT payload:
+
+```bash
+# Extract and decode the access_token payload from a session file
+cat ~/.anncsu/session_coordinate_bulk.json | python3 -c "
+import json, sys, base64
+token = json.load(sys.stdin)['access_token']
+payload = token.split('.')[1]
+payload += '=' * (4 - len(payload) % 4)
+print(json.dumps(json.loads(base64.urlsafe_b64decode(payload)), indent=2))
+" | grep aud
+```
+
+The `aud` claim should match the full GovWay URL for the API type being used.
 
 ---
 
@@ -1006,6 +1423,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
     PDND_AUDIENCE: ${{ secrets.PDND_AUDIENCE }}
     PDND_PURPOSE_ID_PA: ${{ secrets.PDND_PURPOSE_ID_PA }}
     PDND_PURPOSE_ID_COORDINATE: ${{ secrets.PDND_PURPOSE_ID_COORDINATE }}
+    PDND_PURPOSE_ID_COORDINATE_BULK: ${{ secrets.PDND_PURPOSE_ID_COORDINATE_BULK }}
     PDND_PURPOSE_ID_ACCESSI: ""
     PDND_PURPOSE_ID_INTERNI: ""
     PDND_PURPOSE_ID_ODONIMI: ""

@@ -207,6 +207,32 @@ class TestBulkExecutorExecution:
         assert len(rows) == 1
         db.close()
 
+    def test_execute_stores_http_status_on_sdk_error(self, tmp_path):
+        """When SDK raises an error with status_code, http_status is stored."""
+        csv = "codcom,progr_civico,x,y,z,metodo\nA062,100,13.1,41.8,,3\n"
+        db, result = _setup_db_with_csv(tmp_path, csv)
+
+        sdk_error = Exception("API error occurred")
+        sdk_error.status_code = 403
+        sdk_error.body = '{"detail":"Insufficient token claims"}'
+
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.side_effect = sdk_error
+
+        executor = BulkExecutor(db=db, run_id=result.run_id, sdk=mock_sdk)
+        exec_result = executor.execute()
+
+        assert exec_result.failed == 1
+        results = db.con.execute(
+            "SELECT http_status, error_detail FROM bulk_results "
+            "WHERE run_id = ? AND operation = 'update'",
+            [result.run_id],
+        ).fetchall()
+        assert len(results) == 1
+        assert results[0][0] == 403
+        assert "Insufficient token claims" in results[0][1]
+        db.close()
+
 
 class TestBulkExecutorRateLimit:
     """Test daily rate limit enforcement."""

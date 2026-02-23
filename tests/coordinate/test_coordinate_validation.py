@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from anncsu.coordinate.errors.coordinate_validation import (
     CoordinateDependencyError,
+    CoordinateMaxLengthError,
     CoordinateRangeError,
     CoordinateValidationError,
     MetodoNotAllowedError,
@@ -321,6 +322,90 @@ class TestCoordinateZValidation:
         assert "z" not in serialized or serialized.get("z") is None
 
 
+class TestCoordinateMaxLengthValidation:
+    """Tests for coordinate field maxLength validation (API constraint)."""
+
+    def test_x_exceeds_max_length_invalid(self) -> None:
+        """X with more than 12 characters should raise CoordinateMaxLengthError."""
+        with pytest.raises(ValidationError) as exc_info:
+            ValidatedCoordinate.model_validate(
+                {
+                    "x": "12.3476928612",  # 14 chars
+                    "y": "41.7942647",
+                    "metodo": "3",
+                }
+            )
+        cause = get_validation_error_cause(exc_info)
+        assert isinstance(cause, CoordinateMaxLengthError)
+        assert "x" in str(cause)
+        assert "12" in str(cause)  # max_length
+
+    def test_y_exceeds_max_length_invalid(self) -> None:
+        """Y with more than 12 characters should raise CoordinateMaxLengthError."""
+        with pytest.raises(ValidationError) as exc_info:
+            ValidatedCoordinate.model_validate(
+                {
+                    "x": "12.4922309",
+                    "y": "41.7942647923",  # 13 chars
+                    "metodo": "3",
+                }
+            )
+        cause = get_validation_error_cause(exc_info)
+        assert isinstance(cause, CoordinateMaxLengthError)
+        assert "y" in str(cause)
+        assert "12" in str(cause)  # max_length
+
+    def test_z_exceeds_max_length_invalid(self) -> None:
+        """Z with more than 7 characters should raise CoordinateMaxLengthError."""
+        with pytest.raises(ValidationError) as exc_info:
+            ValidatedCoordinate.model_validate(
+                {
+                    "x": "12.4922309",
+                    "y": "41.8902102",
+                    "z": "12345678",  # 8 chars
+                    "metodo": "3",
+                }
+            )
+        cause = get_validation_error_cause(exc_info)
+        assert isinstance(cause, CoordinateMaxLengthError)
+        assert "z" in str(cause)
+        assert "7" in str(cause)  # max_length
+
+    def test_x_exactly_12_chars_valid(self) -> None:
+        """X with exactly 12 characters should be valid."""
+        coord = ValidatedCoordinate.model_validate(
+            {
+                "x": "12.49223090",  # 12 chars
+                "y": "41.8902102",
+                "metodo": "3",
+            }
+        )
+        assert coord.x == "12.49223090"
+
+    def test_y_exactly_12_chars_valid(self) -> None:
+        """Y with exactly 12 characters should be valid."""
+        coord = ValidatedCoordinate.model_validate(
+            {
+                "x": "12.4922309",
+                "y": "41.89021020",  # 12 chars
+                "metodo": "3",
+            }
+        )
+        assert coord.y == "41.89021020"
+
+    def test_z_exactly_7_chars_valid(self) -> None:
+        """Z with exactly 7 characters should be valid."""
+        coord = ValidatedCoordinate.model_validate(
+            {
+                "x": "12.4922309",
+                "y": "41.8902102",
+                "z": "1234567",  # 7 chars
+                "metodo": "3",
+            }
+        )
+        assert coord.z == "1234567"
+
+
 class TestCoordinateValidationErrorHierarchy:
     """Tests for error hierarchy and catchability."""
 
@@ -333,6 +418,10 @@ class TestCoordinateValidationErrorHierarchy:
             ({"x": "12.0"}, CoordinateDependencyError),
             ({"x": "5.0", "y": "41.0", "metodo": "1"}, CoordinateRangeError),
             ({"z": "100"}, QuotaNotAllowedError),
+            (
+                {"x": "12.3476928612", "y": "41.0", "metodo": "1"},
+                CoordinateMaxLengthError,
+            ),
         ]
 
         for data, expected_error in errors_to_test:

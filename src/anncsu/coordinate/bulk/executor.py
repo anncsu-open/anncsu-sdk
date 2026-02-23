@@ -13,6 +13,13 @@ from anncsu.coordinate.models.richiestaoperazione import (
 )
 
 
+def _extract_http_error(e: Exception) -> tuple[int | None, str]:
+    """Extract HTTP status and error detail from an SDK exception."""
+    http_status = getattr(e, "status_code", None)
+    error_detail = getattr(e, "body", None) or str(e)
+    return http_status, error_detail
+
+
 class RateLimitReached(Exception):
     """Raised when daily API rate limit is reached."""
 
@@ -121,11 +128,13 @@ class BulkExecutor:
                     failed += 1
 
             except Exception as e:
+                http_status, error_detail = _extract_http_error(e)
                 self.db.insert_result(
                     row_id=row_id,
                     run_id=self.run_id,
                     operation="update",
-                    error_detail=str(e),
+                    http_status=http_status,
+                    error_detail=error_detail,
                 )
                 self.db.update_row_status(row_id=row_id, status=RowStatus.ERROR)
                 failed += 1

@@ -33,7 +33,11 @@ def _make_success_response(**kwargs):
 
 
 def _make_lookup_response(*, coord_x=None, coord_y=None, quota=None, metodo=None):
-    """Create a mock PA lookup response with optional coordinates."""
+    """Create a mock PA lookup response matching real API structure.
+
+    The real PA API returns data as a List[PrognazaccGetQueryParamData],
+    not a single object.
+    """
     mock_data = MagicMock()
     mock_data.coord_x = coord_x
     mock_data.coord_y = coord_y
@@ -43,7 +47,7 @@ def _make_lookup_response(*, coord_x=None, coord_y=None, quota=None, metodo=None
     mock_data.civico = "12"
 
     mock_response = MagicMock()
-    mock_response.data = mock_data
+    mock_response.data = [mock_data]  # List, matching real API
     return mock_response
 
 
@@ -300,6 +304,101 @@ class TestBulkDryRunExecution:
         assert orig is not None
         assert orig["original_x"] is None
         assert orig["original_y"] is None
+        db.close()
+
+    def test_dryrun_handles_empty_lookup_data(self, tmp_path):
+        """When lookup returns empty data list, it should count as lookup failure."""
+        csv = "codcom,progr_civico,x,y,z,metodo\nA062,1370588,14.0,42.0,,2\n"
+        db, result = _setup_db_with_csv(tmp_path, csv)
+
+        mock_consult_sdk = MagicMock()
+        mock_response = MagicMock()
+        mock_response.data = []  # Empty list
+        mock_consult_sdk.queryparam.prognazacc_get_query_param.return_value = (
+            mock_response
+        )
+
+        mock_coord_sdk = MagicMock()
+
+        runner = BulkDryRunner(
+            db=db,
+            run_id=result.run_id,
+            coord_sdk=mock_coord_sdk,
+            consult_sdk=mock_consult_sdk,
+        )
+        dry_result = runner.execute()
+
+        assert dry_result.lookup_failures == 1
+        assert dry_result.total_tested == 0
+        assert mock_coord_sdk.json_post.gestionecoordinate.call_count == 0
+        db.close()
+
+    def test_dryrun_stores_http_status_on_update_error(self, tmp_path):
+        """When SDK raises an error with status_code, http_status is stored."""
+        csv = "codcom,progr_civico,x,y,z,metodo\nA062,1370588,14.0,42.0,,2\n"
+        db, result = _setup_db_with_csv(tmp_path, csv)
+
+        mock_consult_sdk = MagicMock()
+        mock_consult_sdk.queryparam.prognazacc_get_query_param.return_value = (
+            _make_lookup_response(coord_x="13.0", coord_y="41.0", metodo="3")
+        )
+
+        # Simulate an SDK error with status_code and body (like AnncsuError)
+        sdk_error = Exception("API error occurred")
+        sdk_error.status_code = 403
+        sdk_error.body = '{"detail":"Insufficient token claims"}'
+
+        mock_coord_sdk = MagicMock()
+        mock_coord_sdk.json_post.gestionecoordinate.side_effect = sdk_error
+
+        runner = BulkDryRunner(
+            db=db,
+            run_id=result.run_id,
+            coord_sdk=mock_coord_sdk,
+            consult_sdk=mock_consult_sdk,
+        )
+        runner.execute()
+
+        results = db.con.execute(
+            "SELECT http_status, error_detail FROM bulk_results "
+            "WHERE run_id = ? AND operation = 'dryrun_update'",
+            [result.run_id],
+        ).fetchall()
+        assert len(results) == 1
+        assert results[0][0] == 403
+        assert "Insufficient token claims" in results[0][1]
+        db.close()
+
+    def test_dryrun_stores_http_status_on_lookup_error(self, tmp_path):
+        """When PA lookup raises an error with status_code, http_status is stored."""
+        csv = "codcom,progr_civico,x,y,z,metodo\nA062,1370588,14.0,42.0,,2\n"
+        db, result = _setup_db_with_csv(tmp_path, csv)
+
+        sdk_error = Exception("Not found")
+        sdk_error.status_code = 404
+        sdk_error.body = '{"detail":"Access point not found"}'
+
+        mock_consult_sdk = MagicMock()
+        mock_consult_sdk.queryparam.prognazacc_get_query_param.side_effect = sdk_error
+
+        mock_coord_sdk = MagicMock()
+
+        runner = BulkDryRunner(
+            db=db,
+            run_id=result.run_id,
+            coord_sdk=mock_coord_sdk,
+            consult_sdk=mock_consult_sdk,
+        )
+        runner.execute()
+
+        results = db.con.execute(
+            "SELECT http_status, error_detail FROM bulk_results "
+            "WHERE run_id = ? AND operation = 'dryrun_lookup'",
+            [result.run_id],
+        ).fetchall()
+        assert len(results) == 1
+        assert results[0][0] == 404
+        assert "Access point not found" in results[0][1]
         db.close()
 
 

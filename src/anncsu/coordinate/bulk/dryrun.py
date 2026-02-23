@@ -15,6 +15,13 @@ from anncsu.coordinate.models.richiestaoperazione import (
 DEFAULT_MAX_RECORDS = 10
 
 
+def _extract_http_error(e: Exception) -> tuple[int | None, str]:
+    """Extract HTTP status and error detail from an SDK exception."""
+    http_status = getattr(e, "status_code", None)
+    error_detail = getattr(e, "body", None) or str(e)
+    return http_status, error_detail
+
+
 @dataclass
 class DryRunResult:
     """Result of a bulk dry-run operation."""
@@ -87,14 +94,27 @@ class BulkDryRunner:
                         prognazacc=progr_civico
                     )
                 )
-                lookup_data = lookup_response.data
-            except Exception:
+                # data is a List[PrognazaccGetQueryParamData]
+                data_list = lookup_response.data
+                if not data_list:
+                    lookup_failures += 1
+                    self.db.insert_result(
+                        row_id=row_id,
+                        run_id=self.run_id,
+                        operation="dryrun_lookup",
+                        error_detail="Lookup returned empty data",
+                    )
+                    continue
+                lookup_data = data_list[0]
+            except Exception as e:
                 lookup_failures += 1
+                http_status, error_detail = _extract_http_error(e)
                 self.db.insert_result(
                     row_id=row_id,
                     run_id=self.run_id,
                     operation="dryrun_lookup",
-                    error_detail="Lookup failed",
+                    http_status=http_status,
+                    error_detail=f"Lookup failed: {error_detail}",
                 )
                 continue
 
@@ -138,11 +158,13 @@ class BulkDryRunner:
                     updates_failed += 1
             except Exception as e:
                 updates_failed += 1
+                http_status, error_detail = _extract_http_error(e)
                 self.db.insert_result(
                     row_id=row_id,
                     run_id=self.run_id,
                     operation="dryrun_update",
-                    error_detail=str(e),
+                    http_status=http_status,
+                    error_detail=error_detail,
                 )
 
         # Phase 2: Restore originals (reverse order)
@@ -178,11 +200,13 @@ class BulkDryRunner:
                     restores_failed += 1
             except Exception as e:
                 restores_failed += 1
+                http_status, error_detail = _extract_http_error(e)
                 self.db.insert_result(
                     row_id=row_id,
                     run_id=self.run_id,
                     operation="dryrun_restore",
-                    error_detail=str(e),
+                    http_status=http_status,
+                    error_detail=error_detail,
                 )
 
         return DryRunResult(

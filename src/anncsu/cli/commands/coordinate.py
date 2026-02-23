@@ -108,10 +108,11 @@ def _get_sdk(
     server_url: str | None = None,
     verify_ssl: bool = True,
     modi_audience: str | None = None,
+    api_type: APIType = APIType.COORDINATE,
 ) -> AnncsuCoordinate:
     """Create an authenticated SDK instance with ModI hook support.
 
-    Uses APIType.COORDINATE for authentication (Coordinate API).
+    Uses the specified APIType for authentication (default: COORDINATE).
     The ModI hook is automatically registered and will add required headers
     (Digest, Agid-JWT-Signature, Agid-JWT-TrackingEvidence) to all POST requests.
 
@@ -120,6 +121,7 @@ def _get_sdk(
         server_url: API server URL.
         verify_ssl: Whether to verify SSL certificates.
         modi_audience: Audience URL for ModI headers (typically the API base URL).
+        api_type: The APIType for authentication (default: COORDINATE).
 
     Returns:
         SDK instance with ModI hooks configured via dependency injection.
@@ -132,7 +134,7 @@ def _get_sdk(
 
     try:
         manager = PDNDAuthManager(
-            api_type=APIType.COORDINATE,
+            api_type=api_type,
             settings=settings,
             token_endpoint=token_endpoint,
             session_persistence=True,
@@ -550,13 +552,15 @@ def dry_run(
             error_console.print(f"[red]Error:[/red] Access point lookup failed: {e}")
             raise typer.Exit(1) from None
 
-        if not prognazacc_response.data:
+        # data is a List[PrognazaccGetQueryParamData]
+        data_list = prognazacc_response.data
+        if not data_list:
             error_console.print(
                 f"[red]Error:[/red] No access point found for prognazacc={prognazacc_arg}"
             )
             raise typer.Exit(1) from None
 
-        accesso_data = prognazacc_response.data
+        accesso_data = data_list[0]
         prognazacc = accesso_data.prognazacc or prognazacc_arg
 
         # For direct mode, we don't have codcom from the search
