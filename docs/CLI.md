@@ -1294,6 +1294,158 @@ This enables resume after interruption, progress tracking, and report generation
 
 ---
 
+### `anncsu pa` - PA Consultazione (Read-Only Queries)
+
+Read-only commands for querying ANNCSU data: search streets, lookup access points, list civici.
+These commands use the `APIType.PA` authentication and the consultazione API.
+
+#### `anncsu pa odonimo`
+
+Search streets (odonimi) in a municipality by partial name.
+
+```bash
+# Search streets in Scanno (I501)
+anncsu pa odonimo --codcom I501 --denom "VklBIFJPTUE="
+
+# Production environment
+anncsu pa odonimo --codcom I501 --denom "VklBIFJPTUE=" --production \
+  --token-endpoint https://auth.interop.pagopa.it/token.oauth2
+
+# JSON output
+anncsu pa odonimo --codcom I501 --denom "VklBIFJPTUE=" --json
+```
+
+**Options:**
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--codcom`, `-c` | Yes | Codice Belfiore del comune (e.g. I501 for Scanno) |
+| `--denom`, `-d` | Yes | Denominazione parziale dell'odonimo - base64 encoded |
+| `--validation/--production` | No | Environment (default: validation) |
+| `--token-endpoint`, `-e` | No | PDND token endpoint URL |
+| `--server-url`, `-s` | No | API server URL (overrides environment default) |
+| `--no-verify-ssl` | No | Disable SSL verification |
+| `--json` | No | Output as JSON |
+
+**Output columns:** Prog. Naz., DUG, Denominazione Ufficiale, Denominazione Locale, Lingua 1, Lingua 2
+
+#### `anncsu pa accesso`
+
+Lookup a single access point by its national progressive number. Returns complete detail including street info, civic number, coordinates, and survey method.
+
+```bash
+# Lookup access point
+anncsu pa accesso --prognazacc 28586543
+
+# With enrichment (additional API call to fetch street denomination)
+anncsu pa accesso --prognazacc 28586543 --enrich
+
+# Production with JSON output
+anncsu pa accesso --prognazacc 28586543 --production \
+  --token-endpoint https://auth.interop.pagopa.it/token.oauth2 --json
+```
+
+**Options:**
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--prognazacc`, `-p` | Yes | Progressivo nazionale dell'accesso |
+| `--enrich/--no-enrich` | No | Enrich with street denomination via prognazarea (default: no-enrich) |
+| `--validation/--production` | No | Environment (default: validation) |
+| `--token-endpoint`, `-e` | No | PDND token endpoint URL |
+| `--server-url`, `-s` | No | API server URL (overrides environment default) |
+| `--no-verify-ssl` | No | Disable SSL verification |
+| `--json` | No | Output as JSON |
+
+**Output fields:** Prog. Naz. Odonimo, DUG, Denominazione Ufficiale, Denominazione Locale, Lingua 1, Lingua 2, Prog. Naz. Accesso, Civico, Esponente, Specificita, Metrico, Coord X, Coord Y, Quota, Metodo
+
+**Note:** The `prognazacc` API does not return the street denomination (`denomuff`). Use `--enrich` to fetch it via an additional `prognazarea` call. This is optional because some odonimi in ANNCSU have empty `denomuff` at the database level.
+
+**JSON output example:**
+
+```json
+[
+  {
+    "prognaz": "1222543",
+    "dug": "LARGO",
+    "denomuff": null,
+    "denomloc": "",
+    "denomlingua1": "",
+    "denomlingua2": "",
+    "prognazacc": "28586543",
+    "civico": "1",
+    "esp": "",
+    "specif": "",
+    "metrico": "",
+    "coordX": "13,8808002",
+    "coordY": "41,9030991",
+    "quota": "0",
+    "metodo": "4"
+  }
+]
+```
+
+#### `anncsu pa accessi`
+
+List access points (civici) for a street. First searches for the street by municipality code and partial name, then lists all access points.
+
+```bash
+# List all access points for a street
+anncsu pa accessi --codcom I501 --denom "VklBIFJPTUE="
+
+# Filter by partial civic number
+anncsu pa accessi --codcom I501 --denom "VklBIFJPTUE=" --accparz "1"
+
+# Production with JSON output
+anncsu pa accessi --codcom I501 --denom "VklBIFJPTUE=" --production \
+  --token-endpoint https://auth.interop.pagopa.it/token.oauth2 --json
+```
+
+**Options:**
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--codcom`, `-c` | Yes | Codice Belfiore del comune |
+| `--denom`, `-d` | Yes | Denominazione parziale dell'odonimo - base64 encoded |
+| `--accparz`, `-a` | No | Valore parziale del civico (default: "1") |
+| `--validation/--production` | No | Environment (default: validation) |
+| `--token-endpoint`, `-e` | No | PDND token endpoint URL |
+| `--server-url`, `-s` | No | API server URL (overrides environment default) |
+| `--no-verify-ssl` | No | Disable SSL verification |
+| `--json` | No | Output as JSON |
+
+**Output columns:** Prog. Naz. Acc., Civico, Esp., Specif., Metrico, Coord X, Coord Y, Quota, Metodo
+
+**JSON output example:**
+
+```json
+{
+  "odonimo": {
+    "prognaz": "12345",
+    "dug": "VIA",
+    "denomuff": "ROMA",
+    "denomloc": "",
+    "denomlingua1": "",
+    "denomlingua2": ""
+  },
+  "accessi": [
+    {
+      "prognazacc": "28586543",
+      "civico": "1",
+      "esp": "",
+      "specif": "",
+      "metrico": "",
+      "coordX": "13.8808",
+      "coordY": "41.9031",
+      "quota": "",
+      "metodo": "4"
+    }
+  ]
+}
+```
+
+---
+
 ## Environment Variables
 
 The CLI reads configuration from environment variables (with `PDND_` prefix) or a `.env` file:

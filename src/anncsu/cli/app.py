@@ -15,6 +15,7 @@ from anncsu.cli.commands import (
     auth_app,
     config_app,
     coordinate_app,
+    pa_app,
 )
 
 # Create main app
@@ -35,6 +36,11 @@ app.add_typer(
     coordinate_app,
     name="coordinate",
     help="Coordinate management (update access points)",
+)
+app.add_typer(
+    pa_app,
+    name="pa",
+    help="PA consultazione (read-only queries)",
 )
 
 console = Console()
