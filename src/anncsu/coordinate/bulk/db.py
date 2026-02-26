@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS bulk_results (
     api_response_json VARCHAR,
     http_status      INTEGER,
     error_detail     VARCHAR,
+    elapsed_ms       DOUBLE,
     processed_at     TIMESTAMP DEFAULT current_timestamp
 );
 
@@ -255,13 +256,14 @@ class BulkDB:
         api_response_json: str | None = None,
         http_status: int | None = None,
         error_detail: str | None = None,
+        elapsed_ms: float | None = None,
     ) -> None:
         """Insert an API call result."""
         self.con.execute(
             "INSERT INTO bulk_results "
             "(row_id, run_id, operation, esito, messaggio, id_richiesta, "
-            "api_response_json, http_status, error_detail) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "api_response_json, http_status, error_detail, elapsed_ms) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 row_id,
                 run_id,
@@ -272,6 +274,7 @@ class BulkDB:
                 api_response_json,
                 http_status,
                 error_detail,
+                elapsed_ms,
             ],
         )
 

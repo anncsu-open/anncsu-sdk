@@ -28,6 +28,15 @@ VALID_CSV = (
     "A062,1370589,14.0,42.0,,2\n"
 )
 
+VALID_CSV_5_ROWS = (
+    "codcom,progr_civico,x,y,z,metodo\n"
+    "A062,1370588,13.1022000,41.8847600,150,3\n"
+    "A062,1370589,14.0,42.0,,2\n"
+    "A062,1370590,13.5,41.5,,1\n"
+    "A062,1370591,14.2,42.2,100,4\n"
+    "A062,1370592,13.8,41.9,,2\n"
+)
+
 
 def _make_api_response(esito="0", messaggio="OK", id_richiesta="5144"):
     """Create a mock API response matching AnncsuCoordinate shape."""
@@ -568,6 +577,166 @@ class TestBulkUpdate:
             data = json.loads(result.output)
             db_path = Path(data["db_path"])
             assert db_path.exists()
+
+    def test_update_max_records_option(self, tmp_path):
+        """Verify --max-records is passed to BulkExecutor."""
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV_5_ROWS)
+        bulk_dir = tmp_path / "bulk"
+
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_api_response()
+
+        from anncsu.coordinate.bulk.executor import BulkExecutorResult
+
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch("anncsu.cli.commands.bulk.BulkExecutor") as mock_executor_cls,
+        ):
+            mock_executor = MagicMock()
+            mock_executor.execute.return_value = BulkExecutorResult(
+                processed=2, succeeded=2, failed=0, run_id="test"
+            )
+            mock_executor_cls.return_value = mock_executor
+
+            result = runner.invoke(
+                app,
+                [
+                    "coordinate",
+                    "bulk",
+                    "update",
+                    str(csv_file),
+                    "--max-records",
+                    "2",
+                    "--json",
+                ],
+            )
+            assert result.exit_code == 0
+            # Verify BulkExecutor was instantiated with max_records=2
+            call_kwargs = mock_executor_cls.call_args[1]
+            assert call_kwargs["max_records"] == 2
+
+    def test_update_max_records_json_output_shows_limit(self, tmp_path):
+        """Verify JSON output includes max_records when specified."""
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV_5_ROWS)
+        bulk_dir = tmp_path / "bulk"
+
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_api_response()
+
+        from anncsu.coordinate.bulk.executor import BulkExecutorResult
+
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch("anncsu.cli.commands.bulk.BulkExecutor") as mock_executor_cls,
+        ):
+            mock_executor = MagicMock()
+            mock_executor.execute.return_value = BulkExecutorResult(
+                processed=3, succeeded=3, failed=0, run_id="test"
+            )
+            mock_executor_cls.return_value = mock_executor
+
+            result = runner.invoke(
+                app,
+                [
+                    "coordinate",
+                    "bulk",
+                    "update",
+                    str(csv_file),
+                    "--max-records",
+                    "3",
+                    "--json",
+                ],
+            )
+            assert result.exit_code == 0
+            data = json.loads(result.output)
+            assert data["max_records"] == 3
+
+    def test_update_without_max_records_processes_all(self, tmp_path):
+        """Verify that without --max-records, all rows are processed (no max_records kwarg)."""
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV)
+        bulk_dir = tmp_path / "bulk"
+
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_api_response()
+
+        from anncsu.coordinate.bulk.executor import BulkExecutorResult
+
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch("anncsu.cli.commands.bulk.BulkExecutor") as mock_executor_cls,
+        ):
+            mock_executor = MagicMock()
+            mock_executor.execute.return_value = BulkExecutorResult(
+                processed=2, succeeded=2, failed=0, run_id="test"
+            )
+            mock_executor_cls.return_value = mock_executor
+
+            result = runner.invoke(
+                app, ["coordinate", "bulk", "update", str(csv_file), "--json"]
+            )
+            assert result.exit_code == 0
+            # Verify BulkExecutor was NOT given max_records (or max_records=None)
+            call_kwargs = mock_executor_cls.call_args[1]
+            assert call_kwargs.get("max_records") is None
+
+    def test_update_max_records_limits_actual_processing(self, tmp_path):
+        """Integration test: max_records actually limits rows processed by executor."""
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV_5_ROWS)
+        bulk_dir = tmp_path / "bulk"
+
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_api_response()
+
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "coordinate",
+                    "bulk",
+                    "update",
+                    str(csv_file),
+                    "--max-records",
+                    "2",
+                    "--json",
+                ],
+            )
+            assert result.exit_code == 0
+            data = json.loads(result.output)
+            assert data["processed"] == 2
+            assert data["succeeded"] == 2
+            assert data["valid_rows"] == 5
+
+    def test_update_json_includes_timing_stats(self, tmp_path):
+        """JSON output should include timing statistics."""
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV)
+        bulk_dir = tmp_path / "bulk"
+
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_api_response()
+
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+        ):
+            result = runner.invoke(
+                app, ["coordinate", "bulk", "update", str(csv_file), "--json"]
+            )
+            assert result.exit_code == 0
+            data = json.loads(result.output)
+            assert "timing" in data
+            timing = data["timing"]
+            assert "total_elapsed_ms" in timing
+            assert "avg_elapsed_ms" in timing
+            assert "min_elapsed_ms" in timing
+            assert "max_elapsed_ms" in timing
+            assert "estimated_50k_minutes" in timing
+            assert timing["avg_elapsed_ms"] >= 0
 
     def test_update_rate_limit_handled(self, tmp_path):
         csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV)

@@ -37,6 +37,31 @@ def _mock_odonimo_response(data=None):
     return resp
 
 
+def _mock_prognazarea_response(data=None):
+    """Create a mock prognazarea response (odonimo lookup by prognaz)."""
+    resp = MagicMock()
+    if data is None:
+        item = MagicMock()
+        item.prognaz = "907000"
+        item.dug = "VIA"
+        item.denomuff = "ROMA"
+        item.denomloc = ""
+        item.denomlingua1 = ""
+        item.denomlingua2 = ""
+        item.model_dump.return_value = {
+            "prognaz": "907000",
+            "dug": "VIA",
+            "denomuff": "ROMA",
+            "denomloc": "",
+            "denomlingua1": "",
+            "denomlingua2": "",
+        }
+        resp.data = [item]
+    else:
+        resp.data = data
+    return resp
+
+
 def _mock_accesso_response(data=None):
     """Create a mock accesso response (prognazacc lookup)."""
     resp = MagicMock()
@@ -624,5 +649,172 @@ class TestAccessi:
             result = cli_runner.invoke(
                 app, ["pa", "accessi", "--codcom", "I501", "--denom", "VklBIFJPTUE="]
             )
+
+        assert result.exit_code != 0
+
+
+class TestOdonimoByPrognaz:
+    """Tests for the odonimo command with --prognaz (direct lookup)."""
+
+    def test_odonimo_prognaz_success(self, cli_runner: CliRunner) -> None:
+        """Test odonimo --prognaz displays table on success."""
+        from anncsu.cli import app
+
+        mock_sdk = MagicMock()
+        mock_sdk.queryparam.prognazarea_get_query_param.return_value = (
+            _mock_prognazarea_response()
+        )
+
+        with patch("anncsu.cli.commands.pa._get_consult_sdk", return_value=mock_sdk):
+            result = cli_runner.invoke(app, ["pa", "odonimo", "--prognaz", "907000"])
+
+        assert result.exit_code == 0
+        assert "907000" in result.output
+        assert "VIA" in result.output
+        assert "ROMA" in result.output
+        assert "1 result(s) found" in result.output
+        mock_sdk.queryparam.prognazarea_get_query_param.assert_called_once_with(
+            prognaz="907000"
+        )
+
+    def test_odonimo_prognaz_json_output(self, cli_runner: CliRunner) -> None:
+        """Test odonimo --prognaz --json outputs valid JSON."""
+        from anncsu.cli import app
+
+        mock_sdk = MagicMock()
+        mock_sdk.queryparam.prognazarea_get_query_param.return_value = (
+            _mock_prognazarea_response()
+        )
+
+        with patch("anncsu.cli.commands.pa._get_consult_sdk", return_value=mock_sdk):
+            result = cli_runner.invoke(
+                app, ["pa", "odonimo", "--prognaz", "907000", "--json"]
+            )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert len(data) == 1
+        assert data[0]["prognaz"] == "907000"
+        assert data[0]["dug"] == "VIA"
+
+    def test_odonimo_prognaz_not_found(self, cli_runner: CliRunner) -> None:
+        """Test odonimo --prognaz exits with error when not found."""
+        from anncsu.cli import app
+
+        mock_sdk = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.data = []
+        mock_sdk.queryparam.prognazarea_get_query_param.return_value = mock_resp
+
+        with patch("anncsu.cli.commands.pa._get_consult_sdk", return_value=mock_sdk):
+            result = cli_runner.invoke(app, ["pa", "odonimo", "--prognaz", "999999"])
+
+        assert result.exit_code != 0
+
+    def test_odonimo_prognaz_api_error(self, cli_runner: CliRunner) -> None:
+        """Test odonimo --prognaz handles API errors gracefully."""
+        from anncsu.cli import app
+
+        mock_sdk = MagicMock()
+        mock_sdk.queryparam.prognazarea_get_query_param.side_effect = Exception(
+            "Connection error"
+        )
+
+        with patch("anncsu.cli.commands.pa._get_consult_sdk", return_value=mock_sdk):
+            result = cli_runner.invoke(app, ["pa", "odonimo", "--prognaz", "907000"])
+
+        assert result.exit_code != 0
+
+    def test_odonimo_prognaz_does_not_call_elencoodonimiprog(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """Test that --prognaz uses prognazarea, not elencoodonimiprog."""
+        from anncsu.cli import app
+
+        mock_sdk = MagicMock()
+        mock_sdk.queryparam.prognazarea_get_query_param.return_value = (
+            _mock_prognazarea_response()
+        )
+
+        with patch("anncsu.cli.commands.pa._get_consult_sdk", return_value=mock_sdk):
+            result = cli_runner.invoke(app, ["pa", "odonimo", "--prognaz", "907000"])
+
+        assert result.exit_code == 0
+        mock_sdk.queryparam.elencoodonimiprog_get_query_param.assert_not_called()
+
+    # --- Mutual exclusivity tests ---
+
+    def test_odonimo_prognaz_with_codcom_is_error(self, cli_runner: CliRunner) -> None:
+        """Test that --prognaz and --codcom together is an error."""
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(
+            app, ["pa", "odonimo", "--prognaz", "907000", "--codcom", "H501"]
+        )
+
+        assert result.exit_code != 0
+        assert (
+            "mutually exclusive" in result.output.lower()
+            or "mutually exclusive" in (getattr(result, "stderr", "") or "")
+        )
+
+    def test_odonimo_prognaz_with_codcom_and_denom_is_error(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """Test that --prognaz with --codcom and --denom together is an error."""
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "pa",
+                "odonimo",
+                "--prognaz",
+                "907000",
+                "--codcom",
+                "H501",
+                "--denom",
+                "VklBIFJPTUE=",
+            ],
+        )
+
+        assert result.exit_code != 0
+
+    def test_odonimo_prognaz_with_denom_is_error(self, cli_runner: CliRunner) -> None:
+        """Test that --prognaz and --denom together is an error."""
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(
+            app, ["pa", "odonimo", "--prognaz", "907000", "--denom", "VklBIFJPTUE="]
+        )
+
+        assert result.exit_code != 0
+
+    def test_odonimo_no_options_is_error(self, cli_runner: CliRunner) -> None:
+        """Test that odonimo without any option is an error."""
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(app, ["pa", "odonimo"])
+
+        assert result.exit_code != 0
+
+    def test_odonimo_only_codcom_without_denom_is_error(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """Test that --codcom alone without --denom is an error."""
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(app, ["pa", "odonimo", "--codcom", "H501"])
+
+        assert result.exit_code != 0
+
+    def test_odonimo_only_denom_without_codcom_is_error(
+        self, cli_runner: CliRunner
+    ) -> None:
+        """Test that --denom alone without --codcom is an error."""
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(app, ["pa", "odonimo", "--denom", "VklBIFJPTUE="])
 
         assert result.exit_code != 0

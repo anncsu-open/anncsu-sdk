@@ -21,7 +21,11 @@ from rich.table import Table
 
 from anncsu.common.session import get_config_dir
 from anncsu.coordinate.bulk.db import BulkDB
-from anncsu.coordinate.bulk.executor import BulkExecutor, RateLimitReached
+from anncsu.coordinate.bulk.executor import (
+    BulkExecutor,
+    BulkExecutorResult,
+    RateLimitReached,
+)
 from anncsu.coordinate.bulk.importer import CSVImportError, import_csv
 from anncsu.coordinate.bulk.reporter import BulkReporter, ReportFormat
 
@@ -245,6 +249,10 @@ def bulk_update(
         bool,
         typer.Option("--json", help="Output results as JSON."),
     ] = False,
+    max_records: Annotated[
+        int | None,
+        typer.Option("--max-records", "-n", help="Maximum records to process."),
+    ] = None,
 ) -> None:
     """Execute bulk coordinate update from a CSV file.
 
@@ -254,6 +262,7 @@ def bulk_update(
 
     Example:
         anncsu coordinate bulk update input.csv
+        anncsu coordinate bulk update input.csv --max-records 1000
         anncsu coordinate bulk update input.csv --json
     """
     coord_server, _ = _resolve_servers(validation_env, server_url)
@@ -278,6 +287,8 @@ def bulk_update(
                 console.print(f"  Total rows: {import_result.total_rows}")
                 console.print(f"  Valid: {import_result.valid_rows}")
                 console.print(f"  Invalid: {import_result.invalid_rows}")
+                if max_records is not None:
+                    console.print(f"  Max records: {max_records}")
                 console.print(f"  Run ID: {import_result.run_id}")
                 console.print(f"  DB: {db_path}\n")
 
@@ -318,20 +329,17 @@ def bulk_update(
                             run_id=import_result.run_id,
                             sdk=sdk,
                             on_progress=on_progress,
+                            max_records=max_records,
                         )
                         exec_result = executor.execute()
                     except RateLimitReached as e:
                         rate_limited = True
-                        exec_result = type(
-                            "R",
-                            (),
-                            {
-                                "processed": e.processed,
-                                "succeeded": 0,
-                                "failed": 0,
-                                "run_id": e.run_id,
-                            },
-                        )()
+                        exec_result = BulkExecutorResult(
+                            processed=e.processed,
+                            succeeded=0,
+                            failed=0,
+                            run_id=e.run_id,
+                        )
                         error_console.print(
                             f"\n[yellow]Rate limit reached:[/yellow] {e}"
                         )
@@ -341,20 +349,17 @@ def bulk_update(
                         db=db,
                         run_id=import_result.run_id,
                         sdk=sdk,
+                        max_records=max_records,
                     )
                     exec_result = executor.execute()
                 except RateLimitReached as e:
                     rate_limited = True
-                    exec_result = type(
-                        "R",
-                        (),
-                        {
-                            "processed": e.processed,
-                            "succeeded": 0,
-                            "failed": 0,
-                            "run_id": e.run_id,
-                        },
-                    )()
+                    exec_result = BulkExecutorResult(
+                        processed=e.processed,
+                        succeeded=0,
+                        failed=0,
+                        run_id=e.run_id,
+                    )
 
             db.finish_run(import_result.run_id)
 
@@ -366,10 +371,20 @@ def bulk_update(
                     "total_rows": import_result.total_rows,
                     "valid_rows": import_result.valid_rows,
                     "invalid_rows": import_result.invalid_rows,
+                    "max_records": max_records,
                     "processed": exec_result.processed,
                     "succeeded": exec_result.succeeded,
                     "failed": exec_result.failed,
                     "rate_limited": rate_limited,
+                    "timing": {
+                        "total_elapsed_ms": round(exec_result.total_elapsed_ms, 2),
+                        "avg_elapsed_ms": round(exec_result.avg_elapsed_ms, 2),
+                        "min_elapsed_ms": round(exec_result.min_elapsed_ms, 2),
+                        "max_elapsed_ms": round(exec_result.max_elapsed_ms, 2),
+                        "estimated_50k_minutes": round(
+                            exec_result.estimated_50k_minutes, 1
+                        ),
+                    },
                 }
                 print(json.dumps(output, indent=2, default=str))
             else:
@@ -377,6 +392,20 @@ def bulk_update(
                 console.print(f"  Processed: {exec_result.processed}")
                 console.print(f"  Succeeded: [green]{exec_result.succeeded}[/green]")
                 console.print(f"  Failed: [red]{exec_result.failed}[/red]")
+                if exec_result.processed > 0:
+                    console.print("\n[bold]Timing:[/bold]")
+                    console.print(f"  Avg: {exec_result.avg_elapsed_ms:.0f} ms/call")
+                    console.print(
+                        f"  Min: {exec_result.min_elapsed_ms:.0f} ms  "
+                        f"Max: {exec_result.max_elapsed_ms:.0f} ms"
+                    )
+                    console.print(
+                        f"  Total: {exec_result.total_elapsed_ms / 1000:.1f} s"
+                    )
+                    console.print(
+                        f"  Est. 50k calls: "
+                        f"[cyan]{exec_result.estimated_50k_minutes:.1f} min[/cyan]"
+                    )
 
             if rate_limited:
                 raise typer.Exit(1) from None
@@ -675,16 +704,12 @@ def resume(
                         exec_result = executor.execute(resume=True)
                     except RateLimitReached as e:
                         rate_limited = True
-                        exec_result = type(
-                            "R",
-                            (),
-                            {
-                                "processed": e.processed,
-                                "succeeded": 0,
-                                "failed": 0,
-                                "run_id": e.run_id,
-                            },
-                        )()
+                        exec_result = BulkExecutorResult(
+                            processed=e.processed,
+                            succeeded=0,
+                            failed=0,
+                            run_id=e.run_id,
+                        )
                         error_console.print(
                             f"\n[yellow]Rate limit reached:[/yellow] {e}"
                         )
@@ -694,16 +719,12 @@ def resume(
                     exec_result = executor.execute(resume=True)
                 except RateLimitReached as e:
                     rate_limited = True
-                    exec_result = type(
-                        "R",
-                        (),
-                        {
-                            "processed": e.processed,
-                            "succeeded": 0,
-                            "failed": 0,
-                            "run_id": e.run_id,
-                        },
-                    )()
+                    exec_result = BulkExecutorResult(
+                        processed=e.processed,
+                        succeeded=0,
+                        failed=0,
+                        run_id=e.run_id,
+                    )
 
             db.finish_run(run_id)
 

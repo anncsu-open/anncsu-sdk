@@ -29,21 +29,29 @@ error_console = Console(stderr=True)
 @pa_app.command("odonimo")
 def odonimo(
     codcom: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--codcom",
             "-c",
             help="Codice Belfiore del comune (e.g. I501 for Scanno).",
         ),
-    ],
+    ] = None,
     denom: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--denom",
             "-d",
             help="Denominazione anche parziale dell'odonimo - base64 encoded.",
         ),
-    ],
+    ] = None,
+    prognaz: Annotated[
+        str | None,
+        typer.Option(
+            "--prognaz",
+            "-p",
+            help="Progressivo nazionale dell'odonimo (direct lookup).",
+        ),
+    ] = None,
     token_endpoint: Annotated[
         str,
         typer.Option(
@@ -79,15 +87,27 @@ def odonimo(
         typer.Option("--json", help="Output as JSON."),
     ] = False,
 ) -> None:
-    """Search streets (odonimi) in a municipality.
+    """Search streets (odonimi) in a municipality or lookup by national code.
 
-    Returns a list of streets matching the partial name, with their
-    national progressive code (prognaz), DUG, and official denomination.
+    Use --codcom + --denom to search by municipality and partial name.
+    Use --prognaz for direct lookup by national progressive code.
 
     Example:
         anncsu pa odonimo --codcom I501 --denom "VklBIFJPTUE="
-        anncsu pa odonimo --codcom I501 --denom "VklBIFJPTUE=" --production
+        anncsu pa odonimo --prognaz 907000 --production
     """
+    # Validate mutually exclusive options
+    if prognaz and (codcom or denom):
+        error_console.print(
+            "[red]Error:[/red] --prognaz is mutually exclusive with --codcom/--denom"
+        )
+        raise typer.Exit(1) from None
+    if not prognaz and not (codcom and denom):
+        error_console.print(
+            "[red]Error:[/red] Provide either --prognaz or both --codcom and --denom"
+        )
+        raise typer.Exit(1) from None
+
     if server_url is None:
         server_url = (
             CONSULT_SERVERS["validation"]
@@ -101,20 +121,41 @@ def odonimo(
         verify_ssl=not no_verify_ssl,
     )
 
-    try:
-        response = sdk.queryparam.elencoodonimiprog_get_query_param(
-            codcom=codcom,
-            denomparz=denom,
-        )
-    except Exception as e:
-        error_console.print(f"[red]Error:[/red] Odonimo search failed: {e}")
-        raise typer.Exit(1) from None
+    if prognaz:
+        # Direct lookup by national progressive code
+        try:
+            response = sdk.queryparam.prognazarea_get_query_param(
+                prognaz=prognaz,
+            )
+        except Exception as e:
+            error_console.print(f"[red]Error:[/red] Odonimo lookup failed: {e}")
+            raise typer.Exit(1) from None
 
-    if not response.data:
-        error_console.print(
-            f"[red]No results:[/red] No odonimo found for codcom={codcom}, denom={denom}"
-        )
-        raise typer.Exit(1) from None
+        if not response.data:
+            error_console.print(
+                f"[red]No results:[/red] No odonimo found for prognaz={prognaz}"
+            )
+            raise typer.Exit(1) from None
+
+        title = f"Odonimo - prognaz={prognaz}"
+    else:
+        # Search by municipality + partial name
+        try:
+            response = sdk.queryparam.elencoodonimiprog_get_query_param(
+                codcom=codcom,
+                denomparz=denom,
+            )
+        except Exception as e:
+            error_console.print(f"[red]Error:[/red] Odonimo search failed: {e}")
+            raise typer.Exit(1) from None
+
+        if not response.data:
+            error_console.print(
+                f"[red]No results:[/red] No odonimo found for codcom={codcom}, denom={denom}"
+            )
+            raise typer.Exit(1) from None
+
+        title = f"Odonimi - Comune {codcom}"
 
     if json_output:
         import json
@@ -129,7 +170,7 @@ def odonimo(
         return
 
     table = Table(
-        title=f"Odonimi - Comune {codcom}",
+        title=title,
         show_header=True,
         header_style="bold",
     )

@@ -900,10 +900,12 @@ in a local DuckDB database for resume capability.
 ```bash
 anncsu coordinate bulk update input.csv
 anncsu coordinate bulk update input.csv --production
+anncsu coordinate bulk update input.csv --max-records 1000
 anncsu coordinate bulk update input.csv --json
 ```
 
 Options:
+- `--max-records`, `-n` - Maximum number of valid rows to process (default: all). Useful for testing with a subset before running a full update.
 - `--token-endpoint`, `-e` - PDND token endpoint URL (default: UAT)
 - `--server-url`, `-s` - Custom API server URL
 - `--validation/--production` - Use validation (UAT) or production environment (default: validation)
@@ -927,6 +929,12 @@ Results:
   Processed: 98
   Succeeded: 96
   Failed: 2
+
+Timing:
+  Avg: 481 ms/call
+  Min: 345 ms  Max: 1637 ms
+  Total: 481.2 s
+  Est. 50k calls: 400.6 min
 ```
 
 JSON output:
@@ -938,12 +946,22 @@ JSON output:
   "total_rows": 100,
   "valid_rows": 98,
   "invalid_rows": 2,
+  "max_records": 1000,
   "processed": 98,
   "succeeded": 96,
   "failed": 2,
-  "rate_limited": false
+  "rate_limited": false,
+  "timing": {
+    "total_elapsed_ms": 47218.45,
+    "avg_elapsed_ms": 481.82,
+    "min_elapsed_ms": 345.12,
+    "max_elapsed_ms": 1637.89,
+    "estimated_50k_minutes": 401.5
+  }
 }
 ```
+
+> **Note**: `max_records` is `null` in JSON output when not specified (all valid rows are processed). The `timing` section shows per-call latency statistics and an estimate for processing 50,000 calls at the observed average rate.
 
 If the daily rate limit (50,000 API calls) is reached, the command exits with code 1
 and prints a message with the `run_id` to use for resuming:
@@ -1184,6 +1202,8 @@ JSON output includes a summary section and the full results array:
 }
 ```
 
+**Filtering results**: The `report` command exports all results. To filter by outcome (e.g., only successes or only errors), export to CSV and filter, or use direct DuckDB queries (see [DuckDB Query Examples](#duckdb-query-examples) below).
+
 #### `anncsu coordinate bulk list`
 
 List all past bulk execution runs found in the local DuckDB storage.
@@ -1278,6 +1298,142 @@ This enables resume after interruption, progress tracking, and report generation
 - **Chunking**: Rows are internally divided in chunks of 50,000 via a generated `chunk_id` column
 - **Rate limiting**: 50,000 API calls/day tracked in the database
 - **Tables**: `bulk_input` (rows + validation), `bulk_results` (API responses), `bulk_runs` (execution metadata), `dryrun_originals` (saved coordinates for restore)
+
+#### DuckDB Schema
+
+```
+bulk_input                          bulk_results
+├── row_id (PK)                     ├── result_id (PK, auto)
+├── run_id                          ├── row_id → bulk_input.row_id
+├── codcom                          ├── run_id → bulk_runs.run_id
+├── progr_civico                    ├── operation (update/dryrun_update/dryrun_restore)
+├── x, y, z, metodo                ├── esito ("0" = success)
+├── status (valid/invalid/done/     ├── messaggio
+│          processing/error)        ├── id_richiesta
+├── validation_error                ├── api_response_json
+├── imported_at                     ├── http_status
+└── chunk_id (generated)            ├── error_detail
+                                    ├── elapsed_ms
+bulk_runs                           └── processed_at
+├── run_id (PK)
+├── codcom                          dryrun_originals
+├── csv_path, db_path               ├── row_id (PK)
+├── mode (update/dryrun/validate)   ├── run_id
+├── started_at, finished_at         ├── progr_civico, codcom
+├── total_rows, valid_rows          ├── original_x, original_y
+├── invalid_rows                    ├── original_z, original_metodo
+├── processed, succeeded, failed    └── saved_at
+└── daily_api_calls
+```
+
+#### DuckDB Query Examples
+
+You can query DuckDB files directly using the `duckdb` CLI for advanced filtering and analysis that goes beyond the `bulk report` command.
+
+```bash
+# Open a bulk run database
+duckdb ~/.anncsu/bulk/H501_abc123-def456.db
+```
+
+**Find the run ID** (if you don't know it):
+
+```sql
+SELECT run_id, codcom, mode, total_rows, succeeded, failed, started_at
+FROM bulk_runs;
+```
+
+**Records with esito OK (successful updates)**:
+
+```sql
+SELECT
+    bi.codcom,
+    bi.progr_civico,
+    bi.x, bi.y, bi.z, bi.metodo,
+    br.esito,
+    br.messaggio,
+    br.id_richiesta,
+    br.elapsed_ms
+FROM bulk_input bi
+JOIN bulk_results br ON bi.row_id = br.row_id AND bi.run_id = br.run_id
+WHERE bi.run_id = '<run_id>'
+  AND br.esito = '0'
+ORDER BY bi.row_id;
+```
+
+**Records with errors (esito != 0 or API exceptions)**:
+
+```sql
+SELECT
+    bi.row_id,
+    bi.progr_civico,
+    br.esito,
+    br.messaggio,
+    br.http_status,
+    br.error_detail
+FROM bulk_input bi
+JOIN bulk_results br ON bi.row_id = br.row_id AND bi.run_id = br.run_id
+WHERE bi.run_id = '<run_id>'
+  AND (br.esito IS NULL OR br.esito != '0')
+ORDER BY bi.row_id;
+```
+
+**Validation errors (rows rejected before API call)**:
+
+```sql
+SELECT row_id, progr_civico, x, y, z, metodo, validation_error
+FROM bulk_input
+WHERE run_id = '<run_id>' AND status = 'invalid'
+ORDER BY row_id;
+```
+
+**Timing statistics**:
+
+```sql
+SELECT
+    COUNT(*) AS total_calls,
+    ROUND(AVG(elapsed_ms), 1) AS avg_ms,
+    ROUND(MIN(elapsed_ms), 1) AS min_ms,
+    ROUND(MAX(elapsed_ms), 1) AS max_ms,
+    ROUND(SUM(elapsed_ms) / 1000, 1) AS total_seconds,
+    ROUND(AVG(elapsed_ms) * 50000 / 60000, 1) AS estimated_50k_minutes
+FROM bulk_results
+WHERE run_id = '<run_id>';
+```
+
+**Timing distribution (percentiles)**:
+
+```sql
+SELECT
+    ROUND(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY elapsed_ms), 1) AS p50_ms,
+    ROUND(PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY elapsed_ms), 1) AS p90_ms,
+    ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY elapsed_ms), 1) AS p95_ms,
+    ROUND(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY elapsed_ms), 1) AS p99_ms
+FROM bulk_results
+WHERE run_id = '<run_id>' AND elapsed_ms IS NOT NULL;
+```
+
+**Export only successes to CSV**:
+
+```sql
+COPY (
+    SELECT bi.codcom, bi.progr_civico, bi.x, bi.y, bi.z, bi.metodo,
+           br.id_richiesta, br.elapsed_ms
+    FROM bulk_input bi
+    JOIN bulk_results br ON bi.row_id = br.row_id AND bi.run_id = br.run_id
+    WHERE bi.run_id = '<run_id>' AND br.esito = '0'
+    ORDER BY bi.row_id
+) TO '/tmp/successful_updates.csv' (HEADER, DELIMITER ',');
+```
+
+**Row status summary**:
+
+```sql
+SELECT status, COUNT(*) AS count
+FROM bulk_input
+WHERE run_id = '<run_id>'
+GROUP BY status
+ORDER BY count DESC;
+```
 
 #### Commands That Use ModI (Bulk)
 

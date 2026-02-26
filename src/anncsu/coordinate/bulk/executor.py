@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -42,6 +43,15 @@ class BulkExecutorResult:
     succeeded: int
     failed: int
     run_id: str
+    total_elapsed_ms: float = 0.0
+    avg_elapsed_ms: float = 0.0
+    min_elapsed_ms: float = 0.0
+    max_elapsed_ms: float = 0.0
+
+    @property
+    def estimated_50k_minutes(self) -> float:
+        """Estimate minutes needed to process 50,000 calls at current avg."""
+        return self.avg_elapsed_ms * 50_000 / 60_000
 
 
 ProgressCallback = Callable[[int, int, int, int], None]
@@ -58,11 +68,13 @@ class BulkExecutor:
         run_id: str,
         sdk: Any,
         on_progress: ProgressCallback | None = None,
+        max_records: int | None = None,
     ) -> None:
         self.db = db
         self.run_id = run_id
         self.sdk = sdk
         self.on_progress = on_progress
+        self.max_records = max_records
 
     def execute(self, *, resume: bool = False) -> BulkExecutorResult:
         """Execute API calls for all valid rows.
@@ -81,10 +93,14 @@ class BulkExecutor:
 
         rows = self.db.get_rows_by_status(run_id=self.run_id, status=RowStatus.VALID)
 
+        if self.max_records is not None:
+            rows = rows[: self.max_records]
+
         total = len(rows)
         processed = 0
         succeeded = 0
         failed = 0
+        elapsed_times: list[float] = []
 
         for row in rows:
             # Check rate limit before each call
@@ -99,8 +115,12 @@ class BulkExecutor:
             row_id = row["row_id"]
             self.db.update_row_status(row_id=row_id, status=RowStatus.PROCESSING)
 
+            t0 = time.monotonic()
             try:
                 response = self._call_api(row)
+                elapsed_ms = (time.monotonic() - t0) * 1000
+                elapsed_times.append(elapsed_ms)
+
                 esito = response.esito
                 messaggio = response.messaggio
                 id_richiesta = response.id_richiesta
@@ -118,6 +138,7 @@ class BulkExecutor:
                     messaggio=messaggio,
                     id_richiesta=id_richiesta,
                     api_response_json=response_json,
+                    elapsed_ms=elapsed_ms,
                 )
 
                 if esito == "0":
@@ -128,6 +149,9 @@ class BulkExecutor:
                     failed += 1
 
             except Exception as e:
+                elapsed_ms = (time.monotonic() - t0) * 1000
+                elapsed_times.append(elapsed_ms)
+
                 http_status, error_detail = _extract_http_error(e)
                 self.db.insert_result(
                     row_id=row_id,
@@ -135,6 +159,7 @@ class BulkExecutor:
                     operation="update",
                     http_status=http_status,
                     error_detail=error_detail,
+                    elapsed_ms=elapsed_ms,
                 )
                 self.db.update_row_status(row_id=row_id, status=RowStatus.ERROR)
                 failed += 1
@@ -152,11 +177,21 @@ class BulkExecutor:
             failed=failed,
         )
 
+        # Compute timing stats
+        total_elapsed = sum(elapsed_times) if elapsed_times else 0.0
+        avg_elapsed = total_elapsed / len(elapsed_times) if elapsed_times else 0.0
+        min_elapsed = min(elapsed_times) if elapsed_times else 0.0
+        max_elapsed = max(elapsed_times) if elapsed_times else 0.0
+
         return BulkExecutorResult(
             processed=processed,
             succeeded=succeeded,
             failed=failed,
             run_id=self.run_id,
+            total_elapsed_ms=total_elapsed,
+            avg_elapsed_ms=avg_elapsed,
+            min_elapsed_ms=min_elapsed,
+            max_elapsed_ms=max_elapsed,
         )
 
     def _call_api(self, row: dict) -> Any:

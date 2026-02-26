@@ -335,6 +335,216 @@ class TestBulkExecutorResult:
         assert result.run_id == "test-run"
 
 
+class TestBulkExecutorMaxRecords:
+    """Test max_records limiting."""
+
+    def test_max_records_limits_processing(self, tmp_path):
+        """Executor processes only max_records rows when specified."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+            "A062,300,13.5,41.5,,1\n"
+            "A062,400,14.2,42.2,,4\n"
+            "A062,500,13.8,41.9,,2\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_success_response()
+
+        executor = BulkExecutor(
+            db=db, run_id=result.run_id, sdk=mock_sdk, max_records=2
+        )
+        exec_result = executor.execute()
+
+        assert exec_result.processed == 2
+        assert exec_result.succeeded == 2
+        assert mock_sdk.json_post.gestionecoordinate.call_count == 2
+
+        # 3 rows should still be valid (not processed)
+        remaining = db.get_rows_by_status(run_id=result.run_id, status=RowStatus.VALID)
+        assert len(remaining) == 3
+        db.close()
+
+    def test_max_records_none_processes_all(self, tmp_path):
+        """Without max_records (None), all rows are processed."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+            "A062,300,13.5,41.5,,1\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_success_response()
+
+        executor = BulkExecutor(db=db, run_id=result.run_id, sdk=mock_sdk)
+        exec_result = executor.execute()
+
+        assert exec_result.processed == 3
+        assert exec_result.succeeded == 3
+        db.close()
+
+    def test_max_records_greater_than_rows(self, tmp_path):
+        """max_records larger than available rows processes all rows."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_success_response()
+
+        executor = BulkExecutor(
+            db=db, run_id=result.run_id, sdk=mock_sdk, max_records=100
+        )
+        exec_result = executor.execute()
+
+        assert exec_result.processed == 2
+        assert exec_result.succeeded == 2
+        db.close()
+
+    def test_max_records_with_progress_callback(self, tmp_path):
+        """Progress callback reports correct total when max_records is set."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+            "A062,300,13.5,41.5,,1\n"
+            "A062,400,14.2,42.2,,4\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_success_response()
+
+        progress_calls = []
+
+        def on_progress(processed, total, succeeded, failed):
+            progress_calls.append((processed, total, succeeded, failed))
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=mock_sdk,
+            max_records=2,
+            on_progress=on_progress,
+        )
+        executor.execute()
+
+        assert len(progress_calls) == 2
+        # total in callback should reflect the capped count
+        assert progress_calls[-1] == (2, 2, 2, 0)
+        db.close()
+
+    def test_max_records_updates_run_counts(self, tmp_path):
+        """Run counts in DB reflect only the processed subset."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+            "A062,300,13.5,41.5,,1\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_success_response()
+
+        executor = BulkExecutor(
+            db=db, run_id=result.run_id, sdk=mock_sdk, max_records=1
+        )
+        executor.execute()
+
+        summary = db.get_run_summary(result.run_id)
+        assert summary["processed"] == 1
+        assert summary["succeeded"] == 1
+        db.close()
+
+
+class TestBulkExecutorTiming:
+    """Test per-call timing tracking."""
+
+    def test_elapsed_ms_stored_in_results(self, tmp_path):
+        """Each bulk_results row should have a non-negative elapsed_ms."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_success_response()
+
+        executor = BulkExecutor(db=db, run_id=result.run_id, sdk=mock_sdk)
+        executor.execute()
+
+        rows = db.con.execute(
+            "SELECT elapsed_ms FROM bulk_results WHERE run_id = ?",
+            [result.run_id],
+        ).fetchall()
+        assert len(rows) == 2
+        for row in rows:
+            assert row[0] is not None
+            assert row[0] >= 0
+        db.close()
+
+    def test_elapsed_ms_stored_on_error(self, tmp_path):
+        """Elapsed_ms is also recorded when API call raises an exception."""
+        csv = "codcom,progr_civico,x,y,z,metodo\nA062,100,13.1,41.8,,3\n"
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.side_effect = Exception("timeout")
+
+        executor = BulkExecutor(db=db, run_id=result.run_id, sdk=mock_sdk)
+        executor.execute()
+
+        rows = db.con.execute(
+            "SELECT elapsed_ms FROM bulk_results WHERE run_id = ?",
+            [result.run_id],
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] is not None
+        assert rows[0][0] >= 0
+        db.close()
+
+    def test_timing_stats_in_result(self, tmp_path):
+        """BulkExecutorResult should include timing statistics."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+            "A062,300,13.5,41.5,,1\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_success_response()
+
+        executor = BulkExecutor(db=db, run_id=result.run_id, sdk=mock_sdk)
+        exec_result = executor.execute()
+
+        assert exec_result.total_elapsed_ms >= 0
+        assert exec_result.avg_elapsed_ms >= 0
+        assert exec_result.min_elapsed_ms >= 0
+        assert exec_result.max_elapsed_ms >= 0
+        assert exec_result.min_elapsed_ms <= exec_result.avg_elapsed_ms
+        assert exec_result.avg_elapsed_ms <= exec_result.max_elapsed_ms
+        db.close()
+
+    def test_timing_stats_estimate_50k(self, tmp_path):
+        """Verify estimated time for 50k calls is computed from avg."""
+        csv = "codcom,progr_civico,x,y,z,metodo\nA062,100,13.1,41.8,,3\n"
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_success_response()
+
+        executor = BulkExecutor(db=db, run_id=result.run_id, sdk=mock_sdk)
+        exec_result = executor.execute()
+
+        # estimated_50k_minutes should be avg_ms * 50000 / 60000
+        expected = exec_result.avg_elapsed_ms * 50_000 / 60_000
+        assert abs(exec_result.estimated_50k_minutes - expected) < 0.01
+        db.close()
+
+
 class TestBulkExecutorProgressCallback:
     """Test progress callback invocation."""
 
