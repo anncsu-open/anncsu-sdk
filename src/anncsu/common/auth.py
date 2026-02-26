@@ -610,24 +610,34 @@ class PDNDAuthManager:
 
         return self._modi_generator.generate_headers(payload)
 
-    def get_refresh_callback(self) -> Callable[[], str]:
+    def get_refresh_callback(self) -> Callable[[], str | None]:
         """Get a callback function for token refresh.
 
-        This callback can be passed to TokenValidationHook to automatically
-        refresh tokens when they expire.
+        This callback can be passed to BulkExecutor or TokenValidationHook
+        to automatically refresh tokens when they expire.
+
+        The callback checks whether the current token is actually expired
+        before refreshing. If the token is still valid, it returns None
+        to signal that the 401 error has a different cause (e.g. insufficient
+        claims, wrong audience) and retrying won't help.
 
         Returns:
-            Callable that returns a new access token string.
+            Callable that returns a new access token string if the token was
+            expired and successfully refreshed, or None if the token is not
+            expired (401 has a different cause).
 
         Example:
             >>> auth = PDNDAuthManager(settings=settings, token_endpoint=endpoint)
-            >>> register_token_validation_hook(
-            ...     hooks,
-            ...     refresh_callback=auth.get_refresh_callback(),
-            ... )
+            >>> refresher = auth.get_refresh_callback()
+            >>> new_token = refresher()
+            >>> if new_token is None:
+            ...     print("Token not expired, 401 due to other cause")
         """
 
-        def refresh() -> str:
+        def refresh() -> str | None:
+            if not self.is_access_token_expired():
+                # Token is still valid — 401 is not due to expiration
+                return None
             # Force refresh by clearing cached token
             self._access_token = None
             return self.get_access_token()

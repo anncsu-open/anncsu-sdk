@@ -81,17 +81,23 @@ def _get_coord_sdk(
 
     Uses APIType.COORDINATE_BULK for authentication, which maps to
     PDND_PURPOSE_ID_COORDINATE_BULK (dedicated rate limit: 50k calls/day).
+
+    Returns:
+        Tuple of (SDK instance, token_refresher callable) for bulk operations.
+        The token_refresher can be passed to BulkExecutor for automatic 401 retry.
     """
     from anncsu.cli.commands.coordinate import _get_sdk
     from anncsu.common.config import APIType
 
-    return _get_sdk(
+    sdk, manager = _get_sdk(
         token_endpoint=token_endpoint,
         server_url=server_url,
         verify_ssl=verify_ssl,
         modi_audience=server_url,
         api_type=APIType.COORDINATE_BULK,
     )
+
+    return sdk, manager.get_refresh_callback()
 
 
 def _get_consult_sdk_lazy(
@@ -272,14 +278,22 @@ def bulk_update(
         bulk_dir = _get_bulk_dir()
         bulk_dir.mkdir(parents=True, exist_ok=True)
 
-        # Import CSV to persistent DB
+        # Import CSV: first to :memory: for validation/codcom, then to persistent DB.
         with BulkDB(":memory:") as tmp_db:
-            import_result = import_csv(db=tmp_db, csv_path=csv_path, mode="update")
+            tmp_result = import_csv(db=tmp_db, csv_path=csv_path, mode="update")
 
-        db_path = _build_db_path(import_result.codcom, import_result.run_id)
+        # Use codcom from validation pass for initial filename
+        db_path = _build_db_path(tmp_result.codcom, tmp_result.run_id)
         with BulkDB(str(db_path)) as db:
             import_result = import_csv(db=db, csv_path=csv_path, mode="update")
 
+        # Rename DB file to match the actual run_id from the persistent import
+        if import_result.run_id != tmp_result.run_id:
+            new_db_path = _build_db_path(import_result.codcom, import_result.run_id)
+            db_path.rename(new_db_path)
+            db_path = new_db_path
+
+        with BulkDB(str(db_path)) as db:
             if not json_output:
                 console.print("\n[bold]Bulk Update[/bold]")
                 console.print(f"  CSV: {csv_path}")
@@ -292,8 +306,8 @@ def bulk_update(
                 console.print(f"  Run ID: {import_result.run_id}")
                 console.print(f"  DB: {db_path}\n")
 
-            # Create SDK
-            sdk = _get_coord_sdk(
+            # Create SDK and token refresher
+            sdk, token_refresher = _get_coord_sdk(
                 token_endpoint=token_endpoint,
                 server_url=coord_server,
                 verify_ssl=not no_verify_ssl,
@@ -330,6 +344,7 @@ def bulk_update(
                             sdk=sdk,
                             on_progress=on_progress,
                             max_records=max_records,
+                            token_refresher=token_refresher,
                         )
                         exec_result = executor.execute()
                     except RateLimitReached as e:
@@ -350,6 +365,7 @@ def bulk_update(
                         run_id=import_result.run_id,
                         sdk=sdk,
                         max_records=max_records,
+                        token_refresher=token_refresher,
                     )
                     exec_result = executor.execute()
                 except RateLimitReached as e:
@@ -477,12 +493,19 @@ def bulk_dry_run(
         bulk_dir.mkdir(parents=True, exist_ok=True)
 
         with BulkDB(":memory:") as tmp_db:
-            import_result = import_csv(db=tmp_db, csv_path=csv_path, mode="dryrun")
+            tmp_result = import_csv(db=tmp_db, csv_path=csv_path, mode="dryrun")
 
-        db_path = _build_db_path(import_result.codcom, import_result.run_id)
+        db_path = _build_db_path(tmp_result.codcom, tmp_result.run_id)
         with BulkDB(str(db_path)) as db:
             import_result = import_csv(db=db, csv_path=csv_path, mode="dryrun")
 
+        # Rename DB file to match the actual run_id from the persistent import
+        if import_result.run_id != tmp_result.run_id:
+            new_db_path = _build_db_path(import_result.codcom, import_result.run_id)
+            db_path.rename(new_db_path)
+            db_path = new_db_path
+
+        with BulkDB(str(db_path)) as db:
             if not json_output:
                 console.print("\n[bold]Bulk Dry-Run[/bold]")
                 console.print(f"  CSV: {csv_path}")
@@ -490,7 +513,7 @@ def bulk_dry_run(
                 console.print(f"  Valid rows: {import_result.valid_rows}")
                 console.print(f"  Max records to test: {max_records}\n")
 
-            coord_sdk = _get_coord_sdk(
+            coord_sdk, _ = _get_coord_sdk(
                 token_endpoint=token_endpoint,
                 server_url=coord_server,
                 verify_ssl=not no_verify_ssl,
@@ -630,6 +653,10 @@ def resume(
         bool,
         typer.Option("--json", help="Output results as JSON."),
     ] = False,
+    max_records: Annotated[
+        int | None,
+        typer.Option("--max-records", "-n", help="Maximum records to process."),
+    ] = None,
 ) -> None:
     """Resume an interrupted bulk update execution.
 
@@ -666,7 +693,7 @@ def resume(
                 console.print(f"  Codice Comune: {summary['codcom']}")
                 console.print(f"  DB: {db_file}\n")
 
-            sdk = _get_coord_sdk(
+            sdk, token_refresher = _get_coord_sdk(
                 token_endpoint=token_endpoint,
                 server_url=coord_server,
                 verify_ssl=not no_verify_ssl,
@@ -700,6 +727,8 @@ def resume(
                             run_id=run_id,
                             sdk=sdk,
                             on_progress=on_progress,
+                            max_records=max_records,
+                            token_refresher=token_refresher,
                         )
                         exec_result = executor.execute(resume=True)
                     except RateLimitReached as e:
@@ -715,7 +744,13 @@ def resume(
                         )
             else:
                 try:
-                    executor = BulkExecutor(db=db, run_id=run_id, sdk=sdk)
+                    executor = BulkExecutor(
+                        db=db,
+                        run_id=run_id,
+                        sdk=sdk,
+                        max_records=max_records,
+                        token_refresher=token_refresher,
+                    )
                     exec_result = executor.execute(resume=True)
                 except RateLimitReached as e:
                     rate_limited = True
@@ -732,10 +767,21 @@ def resume(
                 output = {
                     "run_id": run_id,
                     "codcom": summary["codcom"],
+                    "db_path": str(db_file),
+                    "max_records": max_records,
                     "processed": exec_result.processed,
                     "succeeded": exec_result.succeeded,
                     "failed": exec_result.failed,
                     "rate_limited": rate_limited,
+                    "timing": {
+                        "total_elapsed_ms": round(exec_result.total_elapsed_ms, 2),
+                        "avg_elapsed_ms": round(exec_result.avg_elapsed_ms, 2),
+                        "min_elapsed_ms": round(exec_result.min_elapsed_ms, 2),
+                        "max_elapsed_ms": round(exec_result.max_elapsed_ms, 2),
+                        "estimated_50k_minutes": round(
+                            exec_result.estimated_50k_minutes, 1
+                        ),
+                    },
                 }
                 print(json.dumps(output, indent=2, default=str))
             else:
@@ -743,6 +789,20 @@ def resume(
                 console.print(f"  Processed: {exec_result.processed}")
                 console.print(f"  Succeeded: [green]{exec_result.succeeded}[/green]")
                 console.print(f"  Failed: [red]{exec_result.failed}[/red]")
+                if exec_result.processed > 0:
+                    console.print("\n[bold]Timing:[/bold]")
+                    console.print(f"  Avg: {exec_result.avg_elapsed_ms:.0f} ms/call")
+                    console.print(
+                        f"  Min: {exec_result.min_elapsed_ms:.0f} ms  "
+                        f"Max: {exec_result.max_elapsed_ms:.0f} ms"
+                    )
+                    console.print(
+                        f"  Total: {exec_result.total_elapsed_ms / 1000:.1f} s"
+                    )
+                    console.print(
+                        f"  Est. 50k calls: "
+                        f"[cyan]{exec_result.estimated_50k_minutes:.1f} min[/cyan]"
+                    )
 
             if rate_limited:
                 raise typer.Exit(1) from None

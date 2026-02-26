@@ -108,14 +108,15 @@ def _get_consult_sdk(
         )
         server_url = voucher_aud
 
-    # Create security object for consultazione API
-    security = PASecurity(bearer=access_token)
+    # Create security callable — auto-refreshes token when expired.
+    def security_provider() -> PASecurity:
+        return PASecurity(bearer=manager.get_access_token())
 
     # Create HTTP client with optional SSL verification
     client = httpx.Client(verify=verify_ssl)
 
     return AnncsuConsultazione(
-        security=security,
+        security=security_provider,
         server_url=server_url,
         client=client,
     )
@@ -127,7 +128,7 @@ def _get_sdk(
     verify_ssl: bool = True,
     modi_audience: str | None = None,
     api_type: APIType = APIType.COORDINATE,
-) -> AnncsuCoordinate:
+) -> tuple[AnncsuCoordinate, PDNDAuthManager]:
     """Create an authenticated SDK instance with ModI hook support.
 
     Uses the specified APIType for authentication (default: COORDINATE).
@@ -142,7 +143,7 @@ def _get_sdk(
         api_type: The APIType for authentication (default: COORDINATE).
 
     Returns:
-        SDK instance with ModI hooks configured via dependency injection.
+        Tuple of (SDK instance, PDNDAuthManager) for token refresh support.
     """
     try:
         settings = ClientAssertionSettings()
@@ -184,8 +185,11 @@ def _get_sdk(
         if modi_audience:
             modi_audience = voucher_aud
 
-    # Create security object for coordinate API
-    security = Security(bearer_auth=access_token)
+    # Create security callable — the SDK calls this before each request,
+    # so it always gets a fresh token from the auth manager (cached if valid,
+    # refreshed automatically when expired).
+    def security_provider() -> Security:
+        return Security(bearer_auth=manager.get_access_token())
 
     # Create HTTP client with optional SSL verification
     client = httpx.Client(verify=verify_ssl)
@@ -250,15 +254,17 @@ def _get_sdk(
             )
             error_console.print("Continuing without ModI headers (API calls may fail).")
 
-    # Create SDK with hooks via dependency injection
+    # Create SDK with hooks via dependency injection.
+    # security_provider is a callable — Speakeasy invokes it before each
+    # request (basesdk.py:178), so token refresh is automatic.
     sdk = AnncsuCoordinate(
-        security=security,
+        security=security_provider,
         server_url=server_url,
         client=client,
         hooks=hooks,  # Dependency injection
     )
 
-    return sdk
+    return sdk, manager
 
 
 @coordinate_app.command("update")
@@ -355,7 +361,7 @@ def update(
     # Create SDK with ModI hook (modi_audience is the API base URL)
     # The hook automatically adds Digest, Agid-JWT-Signature, and
     # Agid-JWT-TrackingEvidence headers to POST requests
-    sdk = _get_sdk(
+    sdk, _ = _get_sdk(
         token_endpoint=token_endpoint,
         server_url=server_url,
         verify_ssl=not no_verify_ssl,
@@ -722,7 +728,7 @@ def dry_run(
         console.print("[bold]Step 2:[/bold] Performing test update...\n")
 
     # Create SDK with ModI hook - headers added automatically to POST requests
-    coord_sdk = _get_sdk(
+    coord_sdk, _ = _get_sdk(
         token_endpoint=token_endpoint,
         server_url=coord_server,
         verify_ssl=not no_verify_ssl,
@@ -956,7 +962,7 @@ def status(
         server_url = SERVERS["validation"] if validation_env else SERVERS["production"]
 
     # Create SDK (no ModI needed for status - GET request, hook will skip it)
-    sdk = _get_sdk(
+    sdk, _ = _get_sdk(
         token_endpoint=token_endpoint,
         server_url=server_url,
         verify_ssl=not no_verify_ssl,

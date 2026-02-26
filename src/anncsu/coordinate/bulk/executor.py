@@ -57,6 +57,10 @@ class BulkExecutorResult:
 ProgressCallback = Callable[[int, int, int, int], None]
 """Callback(processed, total, succeeded, failed)"""
 
+TokenRefresher = Callable[[], str | None]
+"""Callable that refreshes the token. Returns new token string, or None if
+token is not expired (401 has a different cause). May raise on failure."""
+
 
 class BulkExecutor:
     """Executes API calls for each valid row in bulk_input."""
@@ -69,12 +73,14 @@ class BulkExecutor:
         sdk: Any,
         on_progress: ProgressCallback | None = None,
         max_records: int | None = None,
+        token_refresher: TokenRefresher | None = None,
     ) -> None:
         self.db = db
         self.run_id = run_id
         self.sdk = sdk
         self.on_progress = on_progress
         self.max_records = max_records
+        self.token_refresher = token_refresher
 
     def execute(self, *, resume: bool = False) -> BulkExecutorResult:
         """Execute API calls for all valid rows.
@@ -150,9 +156,26 @@ class BulkExecutor:
 
             except Exception as e:
                 elapsed_ms = (time.monotonic() - t0) * 1000
-                elapsed_times.append(elapsed_ms)
 
                 http_status, error_detail = _extract_http_error(e)
+
+                # Attempt token refresh + retry on 401
+                if http_status == 401 and self.token_refresher is not None:
+                    retry_result = self._try_refresh_and_retry(row, row_id)
+                    if retry_result is not None:
+                        retry_elapsed, retry_ok, retry_resp = retry_result
+                        elapsed_times.append(elapsed_ms + retry_elapsed)
+                        if retry_ok:
+                            succeeded += 1
+                        else:
+                            failed += 1
+                        processed += 1
+                        if self.on_progress:
+                            self.on_progress(processed, total, succeeded, failed)
+                        continue
+
+                # No retry (no refresher, non-401, or refresh returned None)
+                elapsed_times.append(elapsed_ms)
                 self.db.insert_result(
                     row_id=row_id,
                     run_id=self.run_id,
@@ -193,6 +216,83 @@ class BulkExecutor:
             min_elapsed_ms=min_elapsed,
             max_elapsed_ms=max_elapsed,
         )
+
+    def _try_refresh_and_retry(
+        self, row: dict, row_id: int
+    ) -> tuple[float, bool, Any] | None:
+        """Attempt token refresh and retry the API call for a row.
+
+        Returns:
+            (elapsed_ms, success, response_or_none) if refresh succeeded and
+            retry was attempted. None if refresh returned None (token not expired)
+            or refresh raised an exception (error already recorded).
+        """
+        try:
+            new_token = self.token_refresher()
+        except Exception as refresh_err:
+            # Refresh itself failed — record as error
+            _, refresh_detail = _extract_http_error(refresh_err)
+            self.db.insert_result(
+                row_id=row_id,
+                run_id=self.run_id,
+                operation="update",
+                http_status=401,
+                error_detail=f"Token refresh failed: {refresh_detail}",
+                elapsed_ms=0,
+            )
+            self.db.update_row_status(row_id=row_id, status=RowStatus.ERROR)
+            return (0, False, None)
+
+        if new_token is None:
+            # Token not expired — 401 has a different cause, no retry
+            return None
+
+        # Retry the API call with refreshed token
+        t0 = time.monotonic()
+        try:
+            response = self._call_api(row)
+            retry_elapsed = (time.monotonic() - t0) * 1000
+
+            esito = response.esito
+            messaggio = response.messaggio
+            id_richiesta = response.id_richiesta
+
+            try:
+                response_json = response.model_dump_json()
+            except Exception:
+                response_json = None
+
+            self.db.insert_result(
+                row_id=row_id,
+                run_id=self.run_id,
+                operation="update",
+                esito=esito,
+                messaggio=messaggio,
+                id_richiesta=id_richiesta,
+                api_response_json=response_json,
+                elapsed_ms=retry_elapsed,
+            )
+
+            if esito == "0":
+                self.db.update_row_status(row_id=row_id, status=RowStatus.DONE)
+                return (retry_elapsed, True, response)
+            else:
+                self.db.update_row_status(row_id=row_id, status=RowStatus.ERROR)
+                return (retry_elapsed, False, response)
+
+        except Exception as retry_err:
+            retry_elapsed = (time.monotonic() - t0) * 1000
+            http_status, error_detail = _extract_http_error(retry_err)
+            self.db.insert_result(
+                row_id=row_id,
+                run_id=self.run_id,
+                operation="update",
+                http_status=http_status,
+                error_detail=error_detail,
+                elapsed_ms=retry_elapsed,
+            )
+            self.db.update_row_status(row_id=row_id, status=RowStatus.ERROR)
+            return (retry_elapsed, False, None)
 
     def _call_api(self, row: dict) -> Any:
         """Build request model and call gestionecoordinate."""

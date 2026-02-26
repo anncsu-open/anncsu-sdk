@@ -447,7 +447,7 @@ class TestBulkApiType:
         from anncsu.common.config import APIType
 
         with patch("anncsu.cli.commands.coordinate._get_sdk") as mock_get_sdk:
-            mock_get_sdk.return_value = MagicMock()
+            mock_get_sdk.return_value = (MagicMock(), MagicMock())
 
             from anncsu.cli.commands.bulk import _get_coord_sdk
 
@@ -466,7 +466,7 @@ class TestBulkApiType:
         from anncsu.common.config import APIType
 
         with patch("anncsu.cli.commands.coordinate._get_sdk") as mock_get_sdk:
-            mock_get_sdk.return_value = MagicMock()
+            mock_get_sdk.return_value = (MagicMock(), MagicMock())
 
             from anncsu.cli.commands.bulk import _get_coord_sdk
 
@@ -499,7 +499,8 @@ class TestBulkUpdate:
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
             patch(
-                "anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
             ) as mock_get_sdk,
         ):
             result = runner.invoke(app, ["coordinate", "bulk", "update", str(csv_file)])
@@ -516,7 +517,10 @@ class TestBulkUpdate:
 
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
-            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
         ):
             result = runner.invoke(app, ["coordinate", "bulk", "update", str(csv_file)])
             assert result.exit_code == 0
@@ -531,7 +535,10 @@ class TestBulkUpdate:
 
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
-            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
         ):
             result = runner.invoke(
                 app, ["coordinate", "bulk", "update", str(csv_file), "--json"]
@@ -553,7 +560,10 @@ class TestBulkUpdate:
 
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
-            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
         ):
             result = runner.invoke(app, ["coordinate", "bulk", "update", str(csv_file)])
             assert result.exit_code == 0
@@ -568,7 +578,10 @@ class TestBulkUpdate:
 
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
-            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
         ):
             result = runner.invoke(
                 app, ["coordinate", "bulk", "update", str(csv_file), "--json"]
@@ -590,7 +603,10 @@ class TestBulkUpdate:
 
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
-            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
             patch("anncsu.cli.commands.bulk.BulkExecutor") as mock_executor_cls,
         ):
             mock_executor = MagicMock()
@@ -628,7 +644,10 @@ class TestBulkUpdate:
 
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
-            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
             patch("anncsu.cli.commands.bulk.BulkExecutor") as mock_executor_cls,
         ):
             mock_executor = MagicMock()
@@ -665,7 +684,10 @@ class TestBulkUpdate:
 
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
-            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
             patch("anncsu.cli.commands.bulk.BulkExecutor") as mock_executor_cls,
         ):
             mock_executor = MagicMock()
@@ -692,7 +714,10 @@ class TestBulkUpdate:
 
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
-            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
         ):
             result = runner.invoke(
                 app,
@@ -722,7 +747,10 @@ class TestBulkUpdate:
 
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
-            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
         ):
             result = runner.invoke(
                 app, ["coordinate", "bulk", "update", str(csv_file), "--json"]
@@ -749,7 +777,10 @@ class TestBulkUpdate:
 
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
-            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
             patch("anncsu.cli.commands.bulk.BulkExecutor") as mock_executor_cls,
         ):
             executor_instance = MagicMock()
@@ -784,7 +815,8 @@ class TestBulkDryRun:
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
             patch(
-                "anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_coord_sdk
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_coord_sdk, MagicMock()),
             ) as mock_get_coord,
             patch(
                 "anncsu.cli.commands.bulk._get_consult_sdk_lazy",
@@ -812,7 +844,8 @@ class TestBulkDryRun:
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
             patch(
-                "anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_coord_sdk
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_coord_sdk, MagicMock()),
             ),
             patch(
                 "anncsu.cli.commands.bulk._get_consult_sdk_lazy",
@@ -838,7 +871,8 @@ class TestBulkDryRun:
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
             patch(
-                "anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_coord_sdk
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_coord_sdk, MagicMock()),
             ),
             patch(
                 "anncsu.cli.commands.bulk._get_consult_sdk_lazy",
@@ -869,7 +903,8 @@ class TestBulkDryRun:
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
             patch(
-                "anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_coord_sdk
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_coord_sdk, MagicMock()),
             ),
             patch(
                 "anncsu.cli.commands.bulk._get_consult_sdk_lazy",
@@ -914,7 +949,10 @@ class TestBulkDryRun:
 
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
-            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=MagicMock()),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(MagicMock(), MagicMock()),
+            ),
             patch(
                 "anncsu.cli.commands.bulk._get_consult_sdk_lazy",
                 return_value=MagicMock(),
@@ -964,7 +1002,8 @@ class TestBulkResume:
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
             patch(
-                "anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
             ) as mock_get_sdk,
         ):
             result = runner.invoke(app, ["coordinate", "bulk", "resume", run_id])
@@ -1010,7 +1049,10 @@ class TestBulkResume:
 
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
-            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
         ):
             result = runner.invoke(app, ["coordinate", "bulk", "resume", run_id])
             assert result.exit_code == 0
@@ -1035,6 +1077,7 @@ class TestBulkResume:
             assert "cannot resume" in result.output.lower()
 
     def test_resume_json_output(self, tmp_path):
+        """Resume JSON output must include timing stats like update does."""
         bulk_dir = tmp_path / "bulk"
         bulk_dir.mkdir()
         csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV)
@@ -1050,9 +1093,14 @@ class TestBulkResume:
         mock_sdk = MagicMock()
         mock_sdk.json_post.gestionecoordinate.return_value = _make_api_response()
 
+        mock_refresher = MagicMock(return_value="new-token")
+
         with (
             patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
-            patch("anncsu.cli.commands.bulk._get_coord_sdk", return_value=mock_sdk),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, mock_refresher),
+            ),
         ):
             result = runner.invoke(
                 app, ["coordinate", "bulk", "resume", run_id, "--json"]
@@ -1062,3 +1110,426 @@ class TestBulkResume:
             assert data["run_id"] == run_id
             assert "processed" in data
             assert "succeeded" in data
+            # Parity with update JSON output
+            assert "db_path" in data
+            assert "max_records" in data
+            assert "timing" in data
+            timing = data["timing"]
+            assert "total_elapsed_ms" in timing
+            assert "avg_elapsed_ms" in timing
+            assert "min_elapsed_ms" in timing
+            assert "max_elapsed_ms" in timing
+            assert "estimated_50k_minutes" in timing
+
+    def test_resume_max_records_option(self, tmp_path):
+        """Verify --max-records is passed to BulkExecutor on resume."""
+        bulk_dir = tmp_path / "bulk"
+        bulk_dir.mkdir()
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV_5_ROWS)
+
+        db_path = str(bulk_dir / "A062_test.db")
+        with BulkDB(db_path) as db:
+            import_result = import_csv(db=db, csv_path=csv_file, mode="update")
+            run_id = import_result.run_id
+
+        actual_path = bulk_dir / f"A062_{run_id}.db"
+        os.rename(db_path, actual_path)
+
+        mock_sdk = MagicMock()
+
+        from anncsu.coordinate.bulk.executor import BulkExecutorResult
+
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
+            patch("anncsu.cli.commands.bulk.BulkExecutor") as mock_executor_cls,
+        ):
+            mock_executor = MagicMock()
+            mock_executor.execute.return_value = BulkExecutorResult(
+                processed=2, succeeded=2, failed=0, run_id=run_id
+            )
+            mock_executor_cls.return_value = mock_executor
+
+            result = runner.invoke(
+                app,
+                [
+                    "coordinate",
+                    "bulk",
+                    "resume",
+                    run_id,
+                    "--max-records",
+                    "2",
+                    "--json",
+                ],
+            )
+            assert result.exit_code == 0
+            call_kwargs = mock_executor_cls.call_args[1]
+            assert call_kwargs["max_records"] == 2
+
+    def test_resume_without_max_records_passes_none(self, tmp_path):
+        """Verify that without --max-records, max_records=None is passed."""
+        bulk_dir = tmp_path / "bulk"
+        bulk_dir.mkdir()
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV)
+
+        db_path = str(bulk_dir / "A062_test.db")
+        with BulkDB(db_path) as db:
+            import_result = import_csv(db=db, csv_path=csv_file, mode="update")
+            run_id = import_result.run_id
+
+        actual_path = bulk_dir / f"A062_{run_id}.db"
+        os.rename(db_path, actual_path)
+
+        mock_sdk = MagicMock()
+
+        from anncsu.coordinate.bulk.executor import BulkExecutorResult
+
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
+            patch("anncsu.cli.commands.bulk.BulkExecutor") as mock_executor_cls,
+        ):
+            mock_executor = MagicMock()
+            mock_executor.execute.return_value = BulkExecutorResult(
+                processed=2, succeeded=2, failed=0, run_id=run_id
+            )
+            mock_executor_cls.return_value = mock_executor
+
+            result = runner.invoke(
+                app, ["coordinate", "bulk", "resume", run_id, "--json"]
+            )
+            assert result.exit_code == 0
+            call_kwargs = mock_executor_cls.call_args[1]
+            assert call_kwargs.get("max_records") is None
+
+
+# ---------------------------------------------------------------------------
+# Token refresh wiring tests
+# ---------------------------------------------------------------------------
+
+
+class TestBulkTokenRefreshWiring:
+    """Test that bulk commands wire token_refresher into BulkExecutor."""
+
+    def test_update_passes_token_refresher_to_executor(self, tmp_path):
+        """bulk update must pass token_refresher from _get_coord_sdk to BulkExecutor."""
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV)
+        bulk_dir = tmp_path / "bulk"
+
+        mock_sdk = MagicMock()
+        mock_refresher = MagicMock(return_value="new-token")
+
+        from anncsu.coordinate.bulk.executor import BulkExecutorResult
+
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, mock_refresher),
+            ),
+            patch("anncsu.cli.commands.bulk.BulkExecutor") as mock_executor_cls,
+        ):
+            mock_executor = MagicMock()
+            mock_executor.execute.return_value = BulkExecutorResult(
+                processed=2, succeeded=2, failed=0, run_id="test"
+            )
+            mock_executor_cls.return_value = mock_executor
+
+            result = runner.invoke(
+                app,
+                ["coordinate", "bulk", "update", str(csv_file), "--json"],
+            )
+            assert result.exit_code == 0
+            call_kwargs = mock_executor_cls.call_args[1]
+            assert call_kwargs["token_refresher"] is mock_refresher
+
+    def test_update_non_json_passes_token_refresher(self, tmp_path):
+        """bulk update (non-JSON mode with progress bar) must also pass token_refresher."""
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV)
+        bulk_dir = tmp_path / "bulk"
+
+        mock_sdk = MagicMock()
+        mock_refresher = MagicMock(return_value="new-token")
+
+        from anncsu.coordinate.bulk.executor import BulkExecutorResult
+
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, mock_refresher),
+            ),
+            patch("anncsu.cli.commands.bulk.BulkExecutor") as mock_executor_cls,
+        ):
+            mock_executor = MagicMock()
+            mock_executor.execute.return_value = BulkExecutorResult(
+                processed=2, succeeded=2, failed=0, run_id="test"
+            )
+            mock_executor_cls.return_value = mock_executor
+
+            result = runner.invoke(
+                app,
+                ["coordinate", "bulk", "update", str(csv_file)],
+            )
+            assert result.exit_code == 0
+            call_kwargs = mock_executor_cls.call_args[1]
+            assert call_kwargs["token_refresher"] is mock_refresher
+
+    def test_resume_passes_token_refresher_to_executor(self, tmp_path):
+        """bulk resume must pass token_refresher from _get_coord_sdk to BulkExecutor."""
+        bulk_dir = tmp_path / "bulk"
+        bulk_dir.mkdir()
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV)
+
+        db_path = str(bulk_dir / "A062_test.db")
+        with BulkDB(db_path) as db:
+            import_result = import_csv(db=db, csv_path=csv_file, mode="update")
+            run_id = import_result.run_id
+
+        actual_path = bulk_dir / f"A062_{run_id}.db"
+        os.rename(db_path, actual_path)
+
+        mock_sdk = MagicMock()
+        mock_refresher = MagicMock(return_value="new-token")
+
+        from anncsu.coordinate.bulk.executor import BulkExecutorResult
+
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, mock_refresher),
+            ),
+            patch("anncsu.cli.commands.bulk.BulkExecutor") as mock_executor_cls,
+        ):
+            mock_executor = MagicMock()
+            mock_executor.execute.return_value = BulkExecutorResult(
+                processed=1, succeeded=1, failed=0, run_id=run_id
+            )
+            mock_executor_cls.return_value = mock_executor
+
+            result = runner.invoke(
+                app, ["coordinate", "bulk", "resume", run_id, "--json"]
+            )
+            assert result.exit_code == 0
+            call_kwargs = mock_executor_cls.call_args[1]
+            assert call_kwargs["token_refresher"] is mock_refresher
+
+    def test_resume_non_json_passes_token_refresher(self, tmp_path):
+        """bulk resume (non-JSON mode) must also pass token_refresher."""
+        bulk_dir = tmp_path / "bulk"
+        bulk_dir.mkdir()
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV)
+
+        db_path = str(bulk_dir / "A062_test.db")
+        with BulkDB(db_path) as db:
+            import_result = import_csv(db=db, csv_path=csv_file, mode="update")
+            run_id = import_result.run_id
+
+        actual_path = bulk_dir / f"A062_{run_id}.db"
+        os.rename(db_path, actual_path)
+
+        mock_sdk = MagicMock()
+        mock_refresher = MagicMock(return_value="new-token")
+
+        from anncsu.coordinate.bulk.executor import BulkExecutorResult
+
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, mock_refresher),
+            ),
+            patch("anncsu.cli.commands.bulk.BulkExecutor") as mock_executor_cls,
+        ):
+            mock_executor = MagicMock()
+            mock_executor.execute.return_value = BulkExecutorResult(
+                processed=1, succeeded=1, failed=0, run_id=run_id
+            )
+            mock_executor_cls.return_value = mock_executor
+
+            result = runner.invoke(app, ["coordinate", "bulk", "resume", run_id])
+            assert result.exit_code == 0
+            call_kwargs = mock_executor_cls.call_args[1]
+            assert call_kwargs["token_refresher"] is mock_refresher
+
+    def test_get_coord_sdk_returns_tuple_with_refresher(self):
+        """_get_coord_sdk must return (sdk, token_refresher) tuple."""
+        with patch("anncsu.cli.commands.coordinate._get_sdk") as mock_get_sdk:
+            mock_sdk = MagicMock()
+            mock_manager = MagicMock()
+            mock_manager.get_refresh_callback.return_value = lambda: "refreshed"
+            mock_get_sdk.return_value = (mock_sdk, mock_manager)
+
+            from anncsu.cli.commands.bulk import _get_coord_sdk
+
+            result = _get_coord_sdk(
+                token_endpoint="https://example.com/token",
+                server_url="https://example.com/api",
+                verify_ssl=True,
+            )
+            assert isinstance(result, tuple)
+            assert len(result) == 2
+            sdk, refresher = result
+            assert sdk is mock_sdk
+            assert callable(refresher)
+
+
+# ---------------------------------------------------------------------------
+# Run ID consistency tests (filename vs DB content)
+# ---------------------------------------------------------------------------
+
+
+class TestBulkRunIdConsistency:
+    """Test that run_id in DB matches run_id in filename.
+
+    Bug: bulk_update imports CSV twice — first to :memory: (run_id A used in
+    filename), then to persistent DB (run_id B stored in DB). When user gets
+    run_id B from JSON output, _find_db_for_run(B) can't find the file because
+    the filename contains A.
+    """
+
+    def test_update_json_run_id_is_findable(self, tmp_path):
+        """The run_id in JSON output must be findable by _find_db_for_run."""
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV)
+        bulk_dir = tmp_path / "bulk"
+
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_api_response()
+
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
+        ):
+            result = runner.invoke(
+                app, ["coordinate", "bulk", "update", str(csv_file), "--json"]
+            )
+            assert result.exit_code == 0
+            data = json.loads(result.output)
+            run_id = data["run_id"]
+
+            # The run_id from JSON output must be findable
+            from anncsu.cli.commands.bulk import _find_db_for_run
+
+            with patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir):
+                found = _find_db_for_run(run_id)
+                assert found is not None, (
+                    f"run_id={run_id} from JSON output not found in "
+                    f"bulk dir files: {list(bulk_dir.glob('*.db'))}"
+                )
+
+    def test_update_then_resume_works_end_to_end(self, tmp_path):
+        """Run bulk update, get run_id from JSON, then resume with that run_id."""
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV)
+        bulk_dir = tmp_path / "bulk"
+
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_api_response()
+
+        # Step 1: run bulk update
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
+        ):
+            update_result = runner.invoke(
+                app, ["coordinate", "bulk", "update", str(csv_file), "--json"]
+            )
+            assert update_result.exit_code == 0
+            data = json.loads(update_result.output)
+            run_id = data["run_id"]
+
+        # Step 2: resume with that run_id
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
+        ):
+            resume_result = runner.invoke(
+                app, ["coordinate", "bulk", "resume", run_id, "--json"]
+            )
+            assert resume_result.exit_code == 0, (
+                f"Resume failed with: {resume_result.output}"
+            )
+
+    def test_update_then_status_works_end_to_end(self, tmp_path):
+        """Run bulk update, get run_id from JSON, then check status."""
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV)
+        bulk_dir = tmp_path / "bulk"
+
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.return_value = _make_api_response()
+
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_sdk, MagicMock()),
+            ),
+        ):
+            update_result = runner.invoke(
+                app, ["coordinate", "bulk", "update", str(csv_file), "--json"]
+            )
+            assert update_result.exit_code == 0
+            data = json.loads(update_result.output)
+            run_id = data["run_id"]
+
+        with patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir):
+            status_result = runner.invoke(
+                app, ["coordinate", "bulk", "status", run_id, "--json"]
+            )
+            assert status_result.exit_code == 0, (
+                f"Status failed with: {status_result.output}"
+            )
+
+    def test_dry_run_json_run_id_is_findable(self, tmp_path):
+        """The run_id from dry-run JSON output must be findable."""
+        csv_file = _write_csv(tmp_path / "test.csv", VALID_CSV)
+        bulk_dir = tmp_path / "bulk"
+
+        mock_coord_sdk = MagicMock()
+        mock_coord_sdk.json_post.gestionecoordinate.return_value = _make_api_response()
+        mock_consult_sdk = MagicMock()
+        mock_consult_sdk.queryparam.prognazacc_get_query_param.return_value = (
+            _make_lookup_response()
+        )
+
+        with (
+            patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir),
+            patch(
+                "anncsu.cli.commands.bulk._get_coord_sdk",
+                return_value=(mock_coord_sdk, MagicMock()),
+            ),
+            patch(
+                "anncsu.cli.commands.bulk._get_consult_sdk_lazy",
+                return_value=mock_consult_sdk,
+            ),
+        ):
+            result = runner.invoke(
+                app, ["coordinate", "bulk", "dry-run", str(csv_file), "--json"]
+            )
+            assert result.exit_code == 0
+            data = json.loads(result.output)
+            run_id = data["run_id"]
+
+            from anncsu.cli.commands.bulk import _find_db_for_run
+
+            with patch("anncsu.cli.commands.bulk._get_bulk_dir", return_value=bulk_dir):
+                found = _find_db_for_run(run_id)
+                assert found is not None, (
+                    f"run_id={run_id} from dry-run JSON not found in "
+                    f"bulk dir files: {list(bulk_dir.glob('*.db'))}"
+                )

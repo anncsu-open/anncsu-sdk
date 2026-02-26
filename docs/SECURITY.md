@@ -1022,25 +1022,25 @@ security = Security(bearer="Bearer your-token")  # Wrong!
 
 ### Token Refresh Issues
 
-**Problem**: Token expires during long-running operations
+**Problem**: Token expires during long-running operations (e.g. bulk updates)
 
-**Solution**: Implement automatic refresh
+**Solution**: For bulk operations, pass `token_refresher` to `BulkExecutor` (see [Token Refresh in Bulk Operations](#token-refresh-in-bulk-operations)). The executor handles 401 detection, refresh, and retry automatically.
+
+For custom long-running code, use `PDNDAuthManager`:
 ```python
-import time
+from anncsu.common.auth import PDNDAuthManager
 
-class TokenRefresher:
-    def __init__(self, refresh_callback):
-        self.refresh_callback = refresh_callback
-        self.token = None
-        self.expires_at = 0
-    
-    def get_token(self):
-        if time.time() >= self.expires_at - 60:  # Refresh 1 min early
-            self.token, self.expires_at = self.refresh_callback()
-        return self.token
+manager = PDNDAuthManager(
+    settings=settings,
+    token_endpoint=token_endpoint,
+)
 
-refresher = TokenRefresher(your_refresh_function)
-security = Security(bearer=refresher.get_token())
+# get_access_token() auto-refreshes when token is expired or near expiry
+token = manager.get_access_token()
+
+# Or use the refresh callback for integration with executors
+refresher = manager.get_refresh_callback()
+new_token = refresher()  # Returns new token string, None, or raises
 ```
 
 ## Security Checklist
@@ -1054,6 +1054,8 @@ Before deploying to production:
 - [ ] Test environment separated from production
 - [ ] Token expiration monitored
 - [ ] Backup authentication method (if available)
+- [ ] Bulk operations use `token_refresher` to survive token expiry mid-execution
+- [ ] 401 errors distinguished: expired token (retryable) vs insufficient claims (not retryable)
 
 ## Additional Security Considerations
 
@@ -1078,6 +1080,136 @@ Ensure your token has appropriate scopes for the operations you need.
 2. **Use**: Include in API requests via Security class
 3. **Refresh**: Before expiration (typically 1 hour)
 4. **Revoke**: When no longer needed or compromised
+
+## Token Refresh in Bulk Operations
+
+Bulk coordinate updates process thousands of records over hours. A PDND voucher typically expires in ~10 minutes (600 seconds), so **automatic token refresh during execution is critical**.
+
+### The Problem (Before Fix)
+
+In the original implementation, the SDK was created with a **static** `Security(bearer_auth=access_token)` object. When the token expired mid-execution, the SDK continued sending the expired token:
+
+1. Records 1–N: **OK** (token is valid)
+2. Token expires (~10 minutes, ~1,600 calls at 374ms/call)
+3. Record N+1: **401 TokenExpired** from GovWay
+4. `token_refresher` obtains a new token in `auth_manager`... but the SDK still holds the old one
+5. Retry with old token: **401** again (or **404 Unknown API Request**)
+6. Records N+2...: all fail with **404** because GovWay rejects the stale Authorization header
+
+This was observed in production with H501 (Roma): 1,321 records succeeded, then 4 consecutive 401 errors, followed by 1,213 continuous 404 errors.
+
+### Solution: Callable Security Provider
+
+The SDK is now created with a **callable** security provider instead of a static token. Speakeasy's `BaseSDK` natively supports this pattern — it invokes the callable before each HTTP request (`basesdk.py:178`):
+
+```python
+# In _get_sdk() — coordinate.py
+def security_provider() -> Security:
+    return Security(bearer_auth=manager.get_access_token())
+
+sdk = AnncsuCoordinate(
+    security=security_provider,  # callable, not a static value
+    server_url=server_url,
+    client=client,
+    hooks=hooks,
+)
+```
+
+**How it works:**
+
+1. Before each API request, Speakeasy calls `security_provider()`
+2. `security_provider()` calls `manager.get_access_token()`
+3. `get_access_token()` checks the cached token's TTL:
+   - **Token still valid** (TTL > 0): returns the cached token instantly (zero network cost)
+   - **Token expired** (TTL ≤ 0): generates a new client assertion, exchanges it at PDND token endpoint, caches and returns the new token
+4. The fresh `Security` object is used for the request's `Authorization: Bearer` header
+
+This is completely transparent to the executor — no special 401-handling logic is needed for the common case. The token rotates automatically every ~10 minutes with no failed requests.
+
+### Defense in Depth: `token_refresher` Callback
+
+The `BulkExecutor` still accepts an optional `token_refresher` callable as a **fallback** for edge cases where the callable security might not prevent a 401 (e.g., clock skew, network delays):
+
+```python
+executor = BulkExecutor(
+    db=db,
+    run_id=run_id,
+    sdk=sdk,
+    token_refresher=auth_manager.get_refresh_callback(),
+)
+result = executor.execute()
+```
+
+When the executor receives a **401** error:
+
+1. **Call `token_refresher()`** to force a token refresh
+2. The refresher checks whether the token is actually expired:
+   - **Token expired** → clears cache, refreshes, returns new token string → **retry the row**
+   - **Token NOT expired** (401 due to other cause, e.g. insufficient claims) → returns `None` → **no retry**, count as permanent error
+   - **Refresh fails** (exception) → **no retry**, count as permanent error
+3. On retry: if the retried call also fails, count as **permanent error** (no infinite loop)
+
+Since the callable security now also reads from the same `auth_manager`, the refresher's `self._access_token = None` + `get_access_token()` cycle automatically propagates to the SDK on the next request.
+
+### Architecture Diagram
+
+```
+┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│ BulkExecutor │────▶│  SDK (Speakeasy) │────▶│   GovWay API    │
+│              │     │                  │     │                 │
+│  for row in  │     │ Before each req: │     │ Validates token │
+│    rows:     │     │  security_prov() │     │ Returns 401 if  │
+│   _call_api()│     │       │          │     │ expired         │
+└──────────────┘     │       ▼          │     └─────────────────┘
+       │             │ manager          │
+       │ on 401:     │ .get_access_     │
+       │ refresher() │   token()        │
+       │      │      │       │          │
+       │      ▼      │       ▼          │
+       │ ┌────────┐  │  ┌─────────┐    │
+       └▶│ PDND   │  │  ��� cached? │    │
+         │ Auth   │──┘  │ valid?  │    │
+         │ Manager│     │  YES→ret│    │
+         │        │     │  NO→    │    │
+         │        │     │  refresh│    │
+         └────────┘     └─────────┘    │
+              │                         │
+              ▼                         │
+         ┌─────────┐                   │
+         │  PDND   │                   │
+         │ Token   │                   │
+         │Endpoint │                   │
+         └─────────┘
+```
+
+### Token Lifetime Reference
+
+| Token Type | Lifetime | Refresh Strategy |
+|---|---|---|
+| PDND Access Token | 600s (10 min) | Auto via callable security |
+| Client Assertion | 86,400s (1 day) | Auto via `PDNDAuthManager` |
+| Estimated calls per token | ~1,600 | At 374ms avg/call |
+
+### Production Validation
+
+Tested in production with H501 (Roma), 515,544 total records:
+
+| Run | Records | Succeeded | Failed | Token Refreshes | Duration |
+|---|---|---|---|---|---|
+| Before fix | 1,884 | 1,351 | 533 | 0 (all failed) | ~12 min |
+| After fix | 5,000 | 5,000 | 0 | ~3 (transparent) | ~33 min |
+
+### Without `token_refresher` (Backward Compatible)
+
+If no `token_refresher` is provided, the executor relies entirely on the callable security for token rotation. Any 401 errors are counted as permanent failures. This maintains backward compatibility with existing code.
+
+### Database Behavior on Retry
+
+When a row is retried after token refresh via the `token_refresher` fallback:
+
+- The **retry result** is stored in `bulk_results` (not the original 401)
+- The row's final status in `bulk_input` reflects the retry outcome (`done` or `error`)
+- The row is counted only **once** in `processed` (not double-counted)
 
 ## ModI Headers for Coordinate API
 
@@ -1512,6 +1644,8 @@ Since Session 49, the SDK auto-corrects hardcoded server URLs by comparing them 
 - `_get_sdk()` in `coordinate.py` — for coordinate update, status, dry-run
 - `_get_consult_sdk()` in `coordinate.py` — for consultazione PA
 - Bulk operations inherit the behavior via `_get_coord_sdk()` and `_get_consult_sdk_lazy()`
+
+**Token refresh in bulk**: When the `token_refresher` renews a token mid-execution, the new voucher's `aud` claim is guaranteed to match the original (same PDND e-service). The SDK instance and its server URL remain valid across token refreshes.
 
 **Backward compatible:** If the voucher cannot be decoded or lacks an `aud` claim, the hardcoded URL is used as fallback.
 

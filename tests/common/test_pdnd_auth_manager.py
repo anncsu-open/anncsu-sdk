@@ -597,15 +597,44 @@ class TestPDNDAuthManagerRefreshCallback:
 
             assert token == new_token
 
-    def test_refresh_callback_forces_refresh(self):
-        """Test that refresh callback forces token refresh even if not expired."""
+    def test_refresh_callback_returns_none_when_token_valid(self):
+        """Test that refresh callback returns None when token is still valid.
+
+        When the token has not expired, the 401 error is due to a different
+        cause (e.g. insufficient claims), and retrying with the same token
+        won't help.
+        """
+        from anncsu.common.auth import PDNDAuthManager
+
+        config = MagicMock()
+        config.issuer = "test-client-id"
+
+        old_token = create_valid_token(expires_in=600)
+
+        manager = PDNDAuthManager(
+            api_type=TEST_API_TYPE,
+            config=config,
+            token_endpoint="https://auth.example.com/token.oauth2",
+        )
+
+        # Set a valid token in cache
+        manager._access_token = old_token
+
+        callback = manager.get_refresh_callback()
+        result = callback()
+
+        # Should return None — token is still valid
+        assert result is None
+
+    def test_refresh_callback_refreshes_expired_token(self):
+        """Test that refresh callback refreshes when token is expired."""
         from anncsu.common.auth import PDNDAuthManager
 
         config = MagicMock()
         config.issuer = "test-client-id"
         mock_assertion = create_client_assertion()
 
-        old_token = create_valid_token(expires_in=600)
+        expired_token = create_valid_token(expires_in=-10)
         new_token = create_valid_token(expires_in=600)
 
         mock_response = MagicMock()
@@ -627,10 +656,9 @@ class TestPDNDAuthManagerRefreshCallback:
                 token_endpoint="https://auth.example.com/token.oauth2",
             )
 
-            # Set a valid token in cache
-            manager._access_token = old_token
+            # Set an expired token in cache
+            manager._access_token = expired_token
 
-            # Callback should force refresh
             callback = manager.get_refresh_callback()
             token = callback()
 

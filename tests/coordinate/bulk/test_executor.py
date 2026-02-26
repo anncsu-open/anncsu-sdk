@@ -545,6 +545,604 @@ class TestBulkExecutorTiming:
         db.close()
 
 
+class TestBulkExecutorTokenRefresh:
+    """Test token refresh on 401 errors during bulk execution."""
+
+    def _make_401_error(self):
+        """Create a mock 401 TokenExpired SDK exception."""
+        err = Exception("TokenExpired")
+        err.status_code = 401
+        err.body = '{"detail":"Expired token"}'
+        return err
+
+    def _make_404_error(self):
+        """Create a mock 404 NotFound SDK exception."""
+        err = Exception("NotFound")
+        err.status_code = 404
+        err.body = '{"detail":"Unknown API Request"}'
+        return err
+
+    def test_401_without_refresher_counts_as_error(self, tmp_path):
+        """Without token_refresher, 401 is a permanent error."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.side_effect = [
+            _make_success_response(),
+            self._make_401_error(),
+        ]
+
+        executor = BulkExecutor(db=db, run_id=result.run_id, sdk=mock_sdk)
+        exec_result = executor.execute()
+
+        assert exec_result.succeeded == 1
+        assert exec_result.failed == 1
+        db.close()
+
+    def test_401_with_refresher_retries_and_succeeds(self, tmp_path):
+        """With token_refresher, 401 triggers refresh + retry."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+            "A062,300,13.5,41.5,,1\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        # Row 1: OK, Row 2: 401 then OK on retry, Row 3: OK
+        mock_sdk.json_post.gestionecoordinate.side_effect = [
+            _make_success_response(),
+            self._make_401_error(),
+            _make_success_response(),  # retry of row 2 after refresh
+            _make_success_response(),  # row 3
+        ]
+
+        refresher = MagicMock(return_value="new-token-abc")
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=mock_sdk,
+            token_refresher=refresher,
+        )
+        exec_result = executor.execute()
+
+        assert exec_result.succeeded == 3
+        assert exec_result.failed == 0
+        refresher.assert_called_once()
+        db.close()
+
+    def test_401_refresher_called_only_once_per_token_expiry(self, tmp_path):
+        """Refresh is called once, then subsequent calls use the new token."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+            "A062,300,13.5,41.5,,1\n"
+            "A062,400,14.2,42.2,,4\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        # Row 1: OK, Row 2: 401 → refresh → retry OK, Row 3: OK, Row 4: OK
+        mock_sdk.json_post.gestionecoordinate.side_effect = [
+            _make_success_response(),
+            self._make_401_error(),
+            _make_success_response(),  # retry row 2
+            _make_success_response(),  # row 3
+            _make_success_response(),  # row 4
+        ]
+
+        refresher = MagicMock(return_value="new-token-xyz")
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=mock_sdk,
+            token_refresher=refresher,
+        )
+        exec_result = executor.execute()
+
+        assert exec_result.succeeded == 4
+        assert exec_result.failed == 0
+        assert refresher.call_count == 1
+        db.close()
+
+    def test_401_retry_fails_again_counts_as_error(self, tmp_path):
+        """If retry after refresh still fails, count as permanent error."""
+        csv = "codcom,progr_civico,x,y,z,metodo\nA062,100,13.1,41.8,,3\n"
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        # 401 → refresh → retry → 401 again → permanent error
+        mock_sdk.json_post.gestionecoordinate.side_effect = [
+            self._make_401_error(),
+            self._make_401_error(),  # retry also fails
+        ]
+
+        refresher = MagicMock(return_value="new-token-abc")
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=mock_sdk,
+            token_refresher=refresher,
+        )
+        exec_result = executor.execute()
+
+        assert exec_result.failed == 1
+        assert exec_result.succeeded == 0
+        refresher.assert_called_once()
+        db.close()
+
+    def test_401_refresher_exception_counts_as_error(self, tmp_path):
+        """If token_refresher raises, the row is counted as error."""
+        csv = "codcom,progr_civico,x,y,z,metodo\nA062,100,13.1,41.8,,3\n"
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.side_effect = self._make_401_error()
+
+        refresher = MagicMock(side_effect=Exception("PDND auth failed"))
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=mock_sdk,
+            token_refresher=refresher,
+        )
+        exec_result = executor.execute()
+
+        assert exec_result.failed == 1
+        db.close()
+
+    def test_non_401_error_not_retried(self, tmp_path):
+        """Non-401 errors (e.g. 404, 500) are not retried even with refresher."""
+        csv = "codcom,progr_civico,x,y,z,metodo\nA062,100,13.1,41.8,,3\n"
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.side_effect = self._make_404_error()
+
+        refresher = MagicMock(return_value="new-token-abc")
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=mock_sdk,
+            token_refresher=refresher,
+        )
+        exec_result = executor.execute()
+
+        assert exec_result.failed == 1
+        refresher.assert_not_called()
+        db.close()
+
+    def test_multiple_401s_refresh_each_time(self, tmp_path):
+        """If token expires again later, refresh is called again."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+            "A062,300,13.5,41.5,,1\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        # Row 1: 401 → refresh → OK, Row 2: OK, Row 3: 401 → refresh → OK
+        mock_sdk.json_post.gestionecoordinate.side_effect = [
+            self._make_401_error(),
+            _make_success_response(),  # retry row 1
+            _make_success_response(),  # row 2
+            self._make_401_error(),
+            _make_success_response(),  # retry row 3
+        ]
+
+        refresher = MagicMock(return_value="refreshed-token")
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=mock_sdk,
+            token_refresher=refresher,
+        )
+        exec_result = executor.execute()
+
+        assert exec_result.succeeded == 3
+        assert exec_result.failed == 0
+        assert refresher.call_count == 2
+        db.close()
+
+    def test_401_retry_row_not_double_counted(self, tmp_path):
+        """A retried row should be counted only once in processed."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.side_effect = [
+            self._make_401_error(),
+            _make_success_response(),  # retry row 1
+            _make_success_response(),  # row 2
+        ]
+
+        refresher = MagicMock(return_value="new-token")
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=mock_sdk,
+            token_refresher=refresher,
+        )
+        exec_result = executor.execute()
+
+        # 2 rows processed, not 3
+        assert exec_result.processed == 2
+        assert exec_result.succeeded == 2
+        db.close()
+
+    def test_401_retried_row_ends_up_done_in_db(self, tmp_path):
+        """Row that got 401 then succeeded on retry must be 'done' in DB."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        # Row 1: 401 → refresh → retry OK, Row 2: OK
+        mock_sdk.json_post.gestionecoordinate.side_effect = [
+            self._make_401_error(),
+            _make_success_response(id_richiesta="RETRY-OK"),
+            _make_success_response(id_richiesta="ROW2-OK"),
+        ]
+
+        refresher = MagicMock(return_value="new-token")
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=mock_sdk,
+            token_refresher=refresher,
+        )
+        executor.execute()
+
+        # Both rows should be 'done'
+        done_rows = db.get_rows_by_status(run_id=result.run_id, status=RowStatus.DONE)
+        assert len(done_rows) == 2
+
+        # No rows should be in 'error'
+        error_rows = db.get_rows_by_status(run_id=result.run_id, status=RowStatus.ERROR)
+        assert len(error_rows) == 0
+
+        # bulk_results should have the successful result for row 1 (retry), not the 401
+        row1_results = db.con.execute(
+            "SELECT esito, id_richiesta, http_status FROM bulk_results "
+            "WHERE row_id = 1 AND run_id = ?",
+            [result.run_id],
+        ).fetchall()
+        assert len(row1_results) == 1
+        assert row1_results[0][0] == "0"  # esito OK
+        assert row1_results[0][1] == "RETRY-OK"  # from the retry
+        assert row1_results[0][2] is None  # no http error status
+        db.close()
+
+    def test_401_retry_failure_row_ends_up_error_in_db(self, tmp_path):
+        """Row that got 401, refreshed, but retry also failed → 'error' in DB."""
+        csv = "codcom,progr_civico,x,y,z,metodo\nA062,100,13.1,41.8,,3\n"
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.side_effect = [
+            self._make_401_error(),
+            self._make_404_error(),  # retry fails with different error
+        ]
+
+        refresher = MagicMock(return_value="new-token")
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=mock_sdk,
+            token_refresher=refresher,
+        )
+        executor.execute()
+
+        # Row should be in 'error'
+        error_rows = db.get_rows_by_status(run_id=result.run_id, status=RowStatus.ERROR)
+        assert len(error_rows) == 1
+
+        # Result should record the retry failure (404), not the original 401
+        results = db.con.execute(
+            "SELECT http_status, error_detail FROM bulk_results "
+            "WHERE row_id = 1 AND run_id = ?",
+            [result.run_id],
+        ).fetchall()
+        assert len(results) == 1
+        assert results[0][0] == 404
+        db.close()
+
+    def test_401_refresher_returns_none_no_retry(self, tmp_path):
+        """If refresher returns None (token not expired), no retry is attempted."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        # Row 1: OK, Row 2: 401 but token is not expired
+        mock_sdk.json_post.gestionecoordinate.side_effect = [
+            _make_success_response(),
+            self._make_401_error(),
+        ]
+
+        # Refresher returns None → token is not expired, 401 is due to other cause
+        refresher = MagicMock(return_value=None)
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=mock_sdk,
+            token_refresher=refresher,
+        )
+        exec_result = executor.execute()
+
+        assert exec_result.succeeded == 1
+        assert exec_result.failed == 1
+        # SDK should NOT have been called a third time (no retry)
+        assert mock_sdk.json_post.gestionecoordinate.call_count == 2
+        refresher.assert_called_once()
+        db.close()
+
+    def test_401_refresher_returns_none_error_stored_in_db(self, tmp_path):
+        """When refresher returns None, the original 401 error is stored."""
+        csv = "codcom,progr_civico,x,y,z,metodo\nA062,100,13.1,41.8,,3\n"
+        db, result = _setup_db_with_csv(tmp_path, csv)
+        mock_sdk = MagicMock()
+        mock_sdk.json_post.gestionecoordinate.side_effect = self._make_401_error()
+
+        refresher = MagicMock(return_value=None)
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=mock_sdk,
+            token_refresher=refresher,
+        )
+        executor.execute()
+
+        error_rows = db.get_rows_by_status(run_id=result.run_id, status=RowStatus.ERROR)
+        assert len(error_rows) == 1
+
+        results = db.con.execute(
+            "SELECT http_status, error_detail FROM bulk_results "
+            "WHERE row_id = 1 AND run_id = ?",
+            [result.run_id],
+        ).fetchall()
+        assert len(results) == 1
+        assert results[0][0] == 401
+        assert "Expired token" in results[0][1]
+        db.close()
+
+
+class TestBulkExecutorTokenInjection:
+    """Test that token refresh actually injects the new token into the SDK.
+
+    These tests reproduce the production bug where:
+    1. Token expires mid-execution → GovWay returns 401 TokenExpired
+    2. Refresher obtains a new token but it's never set on the SDK
+    3. Retry (and all subsequent calls) fail because the SDK
+       still sends the expired token
+
+    The key insight: the SDK object has a security.bearer attribute that
+    holds the token. After refresh, executor MUST update sdk.sdk_configuration
+    .security.bearer (or equivalent) so the SDK sends the new token.
+    """
+
+    def _make_401_error(self):
+        err = Exception("TokenExpired")
+        err.status_code = 401
+        err.body = '{"detail":"Expired token"}'
+        return err
+
+    def _make_404_error(self):
+        err = Exception("NotFound")
+        err.status_code = 404
+        err.body = '{"detail":"Unknown API Request"}'
+        return err
+
+    def _make_sdk_with_token_check(self):
+        """Create a mock SDK that fails with 401 when token is expired
+        and with 404 on retry if the token wasn't actually updated.
+
+        This simulates real GovWay behavior:
+        - Expired token → 401 TokenExpired
+        - Refreshed token in auth_manager but NOT in SDK → 404 Unknown API
+          (because GovWay sees a malformed/missing Authorization header)
+        """
+        sdk = MagicMock()
+        sdk._current_token = "initial-token"
+
+        def api_call(**kwargs):
+            token = sdk._current_token
+            if token == "expired":
+                raise self._make_401_error()
+            if token == "initial-token":
+                # Token was never updated after refresh → still old/invalid
+                raise self._make_404_error()
+            # Token was properly updated → success
+            return _make_success_response()
+
+        sdk.json_post.gestionecoordinate.side_effect = api_call
+        return sdk
+
+    def test_refreshed_token_is_injected_into_sdk(self, tmp_path):
+        """After 401 + refresh, the retry and subsequent calls must succeed.
+
+        Simulates real production flow: the SDK uses a security callable
+        that reads from auth_manager. The refresher clears the cached
+        token in auth_manager, so the next get_access_token() call returns
+        a fresh one. The SDK's callable security picks it up automatically.
+
+        Test models this: refresher() updates auth_state, and api_call
+        reads auth_state to decide success/failure — just like the real SDK
+        reads from auth_manager via the callable.
+        """
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+            "A062,300,14.1,42.1,,2\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+
+        # Simulates auth_manager's internal state — the SDK callable reads
+        # this on every request, refresher() updates it on 401.
+        auth_state = {"token": "old-token"}
+        call_number = {"n": 0}
+        sdk = MagicMock()
+
+        def api_call(**kwargs):
+            call_number["n"] += 1
+            token = auth_state["token"]
+            if call_number["n"] <= 2:
+                return _make_success_response()
+            if token == "old-token":
+                if call_number["n"] == 3:
+                    raise self._make_401_error()
+                raise self._make_404_error()
+            return _make_success_response()
+
+        sdk.json_post.gestionecoordinate.side_effect = api_call
+
+        def refresher():
+            auth_state["token"] = "new-token-123"
+            return "new-token-123"
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=sdk,
+            token_refresher=refresher,
+        )
+        exec_result = executor.execute()
+
+        assert exec_result.succeeded == 3, (
+            f"Expected 3 succeeded but got {exec_result.succeeded} succeeded, "
+            f"{exec_result.failed} failed. "
+            "Token refresh didn't propagate to SDK."
+        )
+        assert exec_result.failed == 0
+        db.close()
+
+    def test_all_rows_after_refresh_use_new_token(self, tmp_path):
+        """After refresh, ALL subsequent rows must use the new token,
+        not just the retried row."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+            "A062,300,14.1,42.1,,2\n"
+            "A062,400,14.2,42.2,,2\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+
+        auth_state = {"token": "old-token"}
+        call_number = {"n": 0}
+        sdk = MagicMock()
+
+        def api_call(**kwargs):
+            call_number["n"] += 1
+            token = auth_state["token"]
+            if call_number["n"] == 1:
+                return _make_success_response()
+            if token == "old-token":
+                if call_number["n"] == 2:
+                    raise self._make_401_error()
+                raise self._make_404_error()
+            return _make_success_response()
+
+        sdk.json_post.gestionecoordinate.side_effect = api_call
+
+        def refresher():
+            auth_state["token"] = "new-token-456"
+            return "new-token-456"
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=sdk,
+            token_refresher=refresher,
+        )
+        exec_result = executor.execute()
+
+        assert exec_result.succeeded == 4, (
+            f"Expected 4 succeeded but got {exec_result.succeeded} succeeded, "
+            f"{exec_result.failed} failed. "
+            "Rows after refresh still sent old token."
+        )
+        assert exec_result.failed == 0
+        db.close()
+
+    def test_second_token_expiry_also_refreshes(self, tmp_path):
+        """If the token expires again later, a second refresh also propagates."""
+        csv = (
+            "codcom,progr_civico,x,y,z,metodo\n"
+            "A062,100,13.1,41.8,,3\n"
+            "A062,200,14.0,42.0,,2\n"
+            "A062,300,14.1,42.1,,2\n"
+            "A062,400,14.2,42.2,,2\n"
+        )
+        db, result = _setup_db_with_csv(tmp_path, csv)
+
+        auth_state = {"token": "old-token"}
+        refresh_count = {"n": 0}
+        call_number = {"n": 0}
+        sdk = MagicMock()
+
+        def api_call(**kwargs):
+            call_number["n"] += 1
+            token = auth_state["token"]
+            if call_number["n"] == 1:
+                return _make_success_response()
+            if call_number["n"] == 2:
+                raise self._make_401_error()  # first expiry
+            if call_number["n"] == 3:
+                if token == "token-v1":
+                    return _make_success_response()
+                raise self._make_404_error()
+            if call_number["n"] == 4:
+                return _make_success_response()
+            if call_number["n"] == 5:
+                raise self._make_401_error()  # second expiry
+            if token == "token-v2":
+                return _make_success_response()
+            raise self._make_404_error()
+
+        sdk.json_post.gestionecoordinate.side_effect = api_call
+
+        def refresher():
+            refresh_count["n"] += 1
+            auth_state["token"] = f"token-v{refresh_count['n']}"
+            return auth_state["token"]
+
+        executor = BulkExecutor(
+            db=db,
+            run_id=result.run_id,
+            sdk=sdk,
+            token_refresher=refresher,
+        )
+        exec_result = executor.execute()
+
+        assert exec_result.succeeded == 4, (
+            f"Expected 4 succeeded but got {exec_result.succeeded} succeeded, "
+            f"{exec_result.failed} failed."
+        )
+        assert exec_result.failed == 0
+        db.close()
+
+
 class TestBulkExecutorProgressCallback:
     """Test progress callback invocation."""
 
