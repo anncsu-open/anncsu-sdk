@@ -4,6 +4,8 @@ SDK per l'API ANNCSU Aggiornamento Coordinate degli Accessi.
 
 Questa API richiede header ModI aggiuntivi (pattern INTEGRITY_REST_02 e AUDIT_REST_02).
 
+> **Nota sulla terminologia**: L'identificatore di un accesso (civico) è chiamato `prognazacc` (progressivo nazionale accesso) nell'API PA Consultazione e `progr_civico` nell'API Coordinate. **Rappresentano lo stesso valore** - l'identificatore progressivo nazionale univoco di un punto di accesso.
+
 ## Installazione
 
 ```bash
@@ -614,6 +616,251 @@ Original coordinates to restore manually:
   metodo: 4
 ```
 
+## Operazioni Bulk
+
+L'SDK fornisce componenti per operazioni coordinate di massa: importazione CSV, validazione, esecuzione API, dry-run e reportistica. Tutti i dati vengono persistiti in DuckDB locale per consentire resume, tracking e analisi post-esecuzione.
+
+### Architettura
+
+```
+CSV → BulkImporter → BulkDB → BulkExecutor → API
+                        ↓            ↓
+                   DuckDB file   BulkReporter → CSV/JSON
+```
+
+I moduli principali sono in `anncsu.coordinate.bulk`:
+
+| Modulo | Classe/Funzione | Descrizione |
+|--------|----------------|-------------|
+| `db.py` | `BulkDB` | Wrapper DuckDB: schema, query, stato righe |
+| `db.py` | `RowStatus` | Enum stati: `PENDING`, `VALID`, `INVALID`, `PROCESSING`, `DONE`, `ERROR` |
+| `importer.py` | `import_csv()` | Importa CSV → DuckDB con validazione SQL |
+| `executor.py` | `BulkExecutor` | Esegue chiamate API per righe valide |
+| `executor.py` | `BulkExecutorResult` | Risultato con statistiche e timing |
+| `dryrun.py` | `BulkDryRunner` | Dry-run: lookup → update → restore |
+| `reporter.py` | `BulkReporter` | Genera report CSV/JSON dai risultati |
+
+### Esempio: Importazione e Validazione
+
+```python
+from anncsu.coordinate.bulk.db import BulkDB
+from anncsu.coordinate.bulk.importer import import_csv
+
+# Apri database persistente
+with BulkDB("/path/to/output.db") as db:
+    result = import_csv(db=db, csv_path="/path/to/input.csv", mode="update")
+
+    print(f"Run ID: {result.run_id}")
+    print(f"Codice Comune: {result.codcom}")
+    print(f"Totale: {result.total_rows}")
+    print(f"Valide: {result.valid_rows}")
+    print(f"Invalide: {result.invalid_rows}")
+```
+
+`import_csv()` ritorna un `CSVImportResult` con:
+- `run_id` — identificatore univoco del run (UUID)
+- `codcom` — codice Belfiore estratto dal CSV
+- `total_rows`, `valid_rows`, `invalid_rows` — contatori
+
+### Esempio: Esecuzione Bulk Update
+
+```python
+from anncsu.coordinate.bulk.db import BulkDB
+from anncsu.coordinate.bulk.importer import import_csv
+from anncsu.coordinate.bulk.executor import BulkExecutor, RateLimitReached
+
+with BulkDB("/path/to/output.db") as db:
+    result = import_csv(db=db, csv_path="input.csv", mode="update")
+
+    # Crea SDK autenticato (vedi sezione Autenticazione Completa)
+    sdk = create_authenticated_sdk()
+
+    executor = BulkExecutor(
+        db=db,
+        run_id=result.run_id,
+        sdk=sdk,
+        max_records=1000,  # Limita a 1000 righe (None = tutte)
+        on_progress=lambda p, t, s, f: print(f"{p}/{t} ok={s} err={f}"),
+    )
+
+    try:
+        exec_result = executor.execute()
+
+        print(f"Processati: {exec_result.processed}")
+        print(f"Successi: {exec_result.succeeded}")
+        print(f"Falliti: {exec_result.failed}")
+        print(f"Media: {exec_result.avg_elapsed_ms:.0f} ms/call")
+        print(f"Stima 50k: {exec_result.estimated_50k_minutes:.1f} min")
+
+    except RateLimitReached as e:
+        print(f"Rate limit dopo {e.processed} chiamate, {e.remaining} rimanenti")
+        print(f"Riprendi con run_id: {e.run_id}")
+
+    db.finish_run(result.run_id)
+```
+
+`BulkExecutorResult` contiene:
+
+| Campo | Tipo | Descrizione |
+|-------|------|-------------|
+| `processed` | `int` | Righe processate |
+| `succeeded` | `int` | Esito OK |
+| `failed` | `int` | Esito errore |
+| `run_id` | `str` | ID del run |
+| `total_elapsed_ms` | `float` | Tempo totale in ms |
+| `avg_elapsed_ms` | `float` | Media ms per chiamata |
+| `min_elapsed_ms` | `float` | Chiamata più veloce |
+| `max_elapsed_ms` | `float` | Chiamata più lenta |
+| `estimated_50k_minutes` | `float` | Stima minuti per 50k chiamate |
+
+### Esempio: Resume Esecuzione Interrotta
+
+```python
+with BulkDB("/path/to/existing.db") as db:
+    executor = BulkExecutor(db=db, run_id="abc123-...", sdk=sdk)
+    exec_result = executor.execute(resume=True)  # Resetta righe "processing" → "valid"
+```
+
+### Esempio: Report e Analisi Errori
+
+```python
+from anncsu.coordinate.bulk.reporter import BulkReporter, ReportFormat
+
+with BulkDB("/path/to/output.db") as db:
+    reporter = BulkReporter(db=db, run_id="abc123-...")
+
+    # Sommario
+    summary = reporter.get_summary()
+    print(f"{summary.succeeded}/{summary.total_rows} successi")
+
+    # Errori API (esito != '0')
+    for error in reporter.get_errors():
+        print(f"  {error['progr_civico']}: {error['error_detail']}")
+
+    # Errori di validazione (righe invalide)
+    for err in reporter.get_validation_errors():
+        print(f"  Riga {err['row_id']}: {err['validation_error']}")
+
+    # Export CSV
+    with open("results.csv", "w") as f:
+        reporter.export_results(f, fmt=ReportFormat.CSV)
+
+    # Export JSON
+    with open("results.json", "w") as f:
+        reporter.export_results(f, fmt=ReportFormat.JSON)
+```
+
+### DuckDB: Query Dirette
+
+Per analisi avanzate, si può interrogare direttamente il file DuckDB. I file sono in `~/.anncsu/bulk/{codcom}_{run_id}.db`.
+
+```bash
+duckdb ~/.anncsu/bulk/H501_abc123-def456.db
+```
+
+**Record con esito OK**:
+
+```sql
+SELECT
+    bi.codcom, bi.progr_civico,
+    bi.x, bi.y, bi.z, bi.metodo,
+    br.id_richiesta, br.elapsed_ms
+FROM bulk_input bi
+JOIN bulk_results br ON bi.row_id = br.row_id AND bi.run_id = br.run_id
+WHERE bi.run_id = '<run_id>' AND br.esito = '0'
+ORDER BY bi.row_id;
+```
+
+**Record con errori**:
+
+```sql
+SELECT
+    bi.row_id, bi.progr_civico,
+    br.esito, br.messaggio,
+    br.http_status, br.error_detail
+FROM bulk_input bi
+JOIN bulk_results br ON bi.row_id = br.row_id AND bi.run_id = br.run_id
+WHERE bi.run_id = '<run_id>'
+  AND (br.esito IS NULL OR br.esito != '0')
+ORDER BY bi.row_id;
+```
+
+**Errori di validazione**:
+
+```sql
+SELECT row_id, progr_civico, x, y, z, metodo, validation_error
+FROM bulk_input
+WHERE run_id = '<run_id>' AND status = 'invalid'
+ORDER BY row_id;
+```
+
+**Statistiche timing**:
+
+```sql
+SELECT
+    COUNT(*) AS total_calls,
+    ROUND(AVG(elapsed_ms), 1) AS avg_ms,
+    ROUND(MIN(elapsed_ms), 1) AS min_ms,
+    ROUND(MAX(elapsed_ms), 1) AS max_ms,
+    ROUND(SUM(elapsed_ms) / 1000, 1) AS total_seconds,
+    ROUND(AVG(elapsed_ms) * 50000 / 60000, 1) AS estimated_50k_minutes
+FROM bulk_results
+WHERE run_id = '<run_id>';
+```
+
+**Distribuzione percentili latenza**:
+
+```sql
+SELECT
+    ROUND(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY elapsed_ms), 1) AS p50_ms,
+    ROUND(PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY elapsed_ms), 1) AS p90_ms,
+    ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY elapsed_ms), 1) AS p95_ms,
+    ROUND(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY elapsed_ms), 1) AS p99_ms
+FROM bulk_results
+WHERE run_id = '<run_id>' AND elapsed_ms IS NOT NULL;
+```
+
+**Esporta solo successi in CSV**:
+
+```sql
+COPY (
+    SELECT bi.codcom, bi.progr_civico, bi.x, bi.y, bi.z, bi.metodo,
+           br.id_richiesta, br.elapsed_ms
+    FROM bulk_input bi
+    JOIN bulk_results br ON bi.row_id = br.row_id AND bi.run_id = br.run_id
+    WHERE bi.run_id = '<run_id>' AND br.esito = '0'
+    ORDER BY bi.row_id
+) TO '/tmp/successful_updates.csv' (HEADER, DELIMITER ',');
+```
+
+**Riepilogo stati righe**:
+
+```sql
+SELECT status, COUNT(*) AS count
+FROM bulk_input
+WHERE run_id = '<run_id>'
+GROUP BY status
+ORDER BY count DESC;
+```
+
+### Schema DuckDB
+
+Le 4 tabelle usate internamente:
+
+| Tabella | Descrizione | Chiave primaria |
+|---------|-------------|-----------------|
+| `bulk_input` | Righe CSV importate con stato e errori validazione | `row_id` |
+| `bulk_results` | Risposte API per ogni riga processata (con `elapsed_ms`) | `result_id` (auto) |
+| `bulk_runs` | Metadati di esecuzione (run_id, codcom, mode, contatori) | `run_id` |
+| `dryrun_originals` | Coordinate originali salvate per restore nel dry-run | `row_id` |
+
+Colonne notevoli:
+- `bulk_input.status`: stato FSM della riga (`pending` → `valid`/`invalid` → `processing` → `done`/`error`)
+- `bulk_input.chunk_id`: generato automaticamente come `(row_id - 1) // 50000` per chunking interno
+- `bulk_results.elapsed_ms`: latenza della singola chiamata API in millisecondi
+- `bulk_results.esito`: `"0"` = successo, altro = errore (codice ANNCSU)
+- `bulk_runs.daily_api_calls`: contatore per il rate limit di 50.000/giorno
+
 ## Testing
 
 ### Mock degli Hooks
@@ -657,6 +904,6 @@ modi_config = ModIConfig(
 ## Riferimenti
 
 - [OpenAPI Specification](../oas/dev/)
-- [CLI Documentation](./CLI.md)
+- [CLI Documentation](./CLI.md) — comandi CLI con esempi, inclusa la sezione [DuckDB Query Examples](./CLI.md#duckdb-query-examples)
 - [Security Documentation](./SECURITY.md)
 - [ModI Guidelines](https://docs.pagopa.it/interoperabilita-1/manuale-operativo/modelli-di-interoperabilita)

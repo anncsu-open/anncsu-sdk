@@ -146,6 +146,20 @@ class OriginalCoordinates(BaseModel):
     metodo: str | None = Field(default=None, description="Metodo di rilevazione")
 
 
+class CurlOutput(BaseModel):
+    """Structured output for auth curl command."""
+
+    curl_command: str = Field(description="Complete cURL command")
+    headers: dict[str, str] = Field(description="All headers as key-value pairs")
+    server_url: str = Field(description="Target server URL")
+    method: str = Field(description="HTTP method (GET or POST)")
+    body: str | None = Field(default=None, description="Request body (for POST)")
+    api_type: str = Field(description="API type used")
+    environment: str = Field(description="Environment (validation or production)")
+    token_ttl: int | None = Field(default=None, description="Token TTL in seconds")
+    warnings: list[str] = Field(default_factory=list, description="Any warnings")
+
+
 class DryRunResult(BaseModel):
     """Result of a coordinate dry-run operation."""
 

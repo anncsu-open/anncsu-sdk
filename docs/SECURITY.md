@@ -1022,25 +1022,25 @@ security = Security(bearer="Bearer your-token")  # Wrong!
 
 ### Token Refresh Issues
 
-**Problem**: Token expires during long-running operations
+**Problem**: Token expires during long-running operations (e.g. bulk updates)
 
-**Solution**: Implement automatic refresh
+**Solution**: For bulk operations, pass `token_refresher` to `BulkExecutor` (see [Token Refresh in Bulk Operations](#token-refresh-in-bulk-operations)). The executor handles 401 detection, refresh, and retry automatically.
+
+For custom long-running code, use `PDNDAuthManager`:
 ```python
-import time
+from anncsu.common.auth import PDNDAuthManager
 
-class TokenRefresher:
-    def __init__(self, refresh_callback):
-        self.refresh_callback = refresh_callback
-        self.token = None
-        self.expires_at = 0
-    
-    def get_token(self):
-        if time.time() >= self.expires_at - 60:  # Refresh 1 min early
-            self.token, self.expires_at = self.refresh_callback()
-        return self.token
+manager = PDNDAuthManager(
+    settings=settings,
+    token_endpoint=token_endpoint,
+)
 
-refresher = TokenRefresher(your_refresh_function)
-security = Security(bearer=refresher.get_token())
+# get_access_token() auto-refreshes when token is expired or near expiry
+token = manager.get_access_token()
+
+# Or use the refresh callback for integration with executors
+refresher = manager.get_refresh_callback()
+new_token = refresher()  # Returns new token string, None, or raises
 ```
 
 ## Security Checklist
@@ -1054,6 +1054,8 @@ Before deploying to production:
 - [ ] Test environment separated from production
 - [ ] Token expiration monitored
 - [ ] Backup authentication method (if available)
+- [ ] Bulk operations use `token_refresher` to survive token expiry mid-execution
+- [ ] 401 errors distinguished: expired token (retryable) vs insufficient claims (not retryable)
 
 ## Additional Security Considerations
 
@@ -1079,6 +1081,136 @@ Ensure your token has appropriate scopes for the operations you need.
 3. **Refresh**: Before expiration (typically 1 hour)
 4. **Revoke**: When no longer needed or compromised
 
+## Token Refresh in Bulk Operations
+
+Bulk coordinate updates process thousands of records over hours. A PDND voucher typically expires in ~10 minutes (600 seconds), so **automatic token refresh during execution is critical**.
+
+### The Problem (Before Fix)
+
+In the original implementation, the SDK was created with a **static** `Security(bearer_auth=access_token)` object. When the token expired mid-execution, the SDK continued sending the expired token:
+
+1. Records 1–N: **OK** (token is valid)
+2. Token expires (~10 minutes, ~1,600 calls at 374ms/call)
+3. Record N+1: **401 TokenExpired** from GovWay
+4. `token_refresher` obtains a new token in `auth_manager`... but the SDK still holds the old one
+5. Retry with old token: **401** again (or **404 Unknown API Request**)
+6. Records N+2...: all fail with **404** because GovWay rejects the stale Authorization header
+
+This was observed in production with H501 (Roma): 1,321 records succeeded, then 4 consecutive 401 errors, followed by 1,213 continuous 404 errors.
+
+### Solution: Callable Security Provider
+
+The SDK is now created with a **callable** security provider instead of a static token. Speakeasy's `BaseSDK` natively supports this pattern — it invokes the callable before each HTTP request (`basesdk.py:178`):
+
+```python
+# In _get_sdk() — coordinate.py
+def security_provider() -> Security:
+    return Security(bearer_auth=manager.get_access_token())
+
+sdk = AnncsuCoordinate(
+    security=security_provider,  # callable, not a static value
+    server_url=server_url,
+    client=client,
+    hooks=hooks,
+)
+```
+
+**How it works:**
+
+1. Before each API request, Speakeasy calls `security_provider()`
+2. `security_provider()` calls `manager.get_access_token()`
+3. `get_access_token()` checks the cached token's TTL:
+   - **Token still valid** (TTL > 0): returns the cached token instantly (zero network cost)
+   - **Token expired** (TTL ≤ 0): generates a new client assertion, exchanges it at PDND token endpoint, caches and returns the new token
+4. The fresh `Security` object is used for the request's `Authorization: Bearer` header
+
+This is completely transparent to the executor — no special 401-handling logic is needed for the common case. The token rotates automatically every ~10 minutes with no failed requests.
+
+### Defense in Depth: `token_refresher` Callback
+
+The `BulkExecutor` still accepts an optional `token_refresher` callable as a **fallback** for edge cases where the callable security might not prevent a 401 (e.g., clock skew, network delays):
+
+```python
+executor = BulkExecutor(
+    db=db,
+    run_id=run_id,
+    sdk=sdk,
+    token_refresher=auth_manager.get_refresh_callback(),
+)
+result = executor.execute()
+```
+
+When the executor receives a **401** error:
+
+1. **Call `token_refresher()`** to force a token refresh
+2. The refresher checks whether the token is actually expired:
+   - **Token expired** → clears cache, refreshes, returns new token string → **retry the row**
+   - **Token NOT expired** (401 due to other cause, e.g. insufficient claims) → returns `None` → **no retry**, count as permanent error
+   - **Refresh fails** (exception) → **no retry**, count as permanent error
+3. On retry: if the retried call also fails, count as **permanent error** (no infinite loop)
+
+Since the callable security now also reads from the same `auth_manager`, the refresher's `self._access_token = None` + `get_access_token()` cycle automatically propagates to the SDK on the next request.
+
+### Architecture Diagram
+
+```
+┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│ BulkExecutor │────▶│  SDK (Speakeasy) │────▶│   GovWay API    │
+│              │     │                  │     │                 │
+│  for row in  │     │ Before each req: │     │ Validates token │
+│    rows:     │     │  security_prov() │     │ Returns 401 if  │
+│   _call_api()│     │       │          │     │ expired         │
+└──────────────┘     │       ▼          │     └─────────────────┘
+       │             │ manager          │
+       │ on 401:     │ .get_access_     │
+       │ refresher() │   token()        │
+       │      │      │       │          │
+       │      ▼      │       ▼          │
+       │ ┌────────┐  │  ┌─────────┐    │
+       └▶│ PDND   │  │  ��� cached? │    │
+         │ Auth   │──┘  │ valid?  │    │
+         │ Manager│     │  YES→ret│    │
+         │        │     │  NO→    │    │
+         │        │     │  refresh│    │
+         └────────┘     └─────────┘    │
+              │                         │
+              ▼                         │
+         ┌─────────┐                   │
+         │  PDND   │                   │
+         │ Token   │                   │
+         │Endpoint │                   │
+         └─────────┘
+```
+
+### Token Lifetime Reference
+
+| Token Type | Lifetime | Refresh Strategy |
+|---|---|---|
+| PDND Access Token | 600s (10 min) | Auto via callable security |
+| Client Assertion | 86,400s (1 day) | Auto via `PDNDAuthManager` |
+| Estimated calls per token | ~1,600 | At 374ms avg/call |
+
+### Production Validation
+
+Tested in production with H501 (Roma), 515,544 total records:
+
+| Run | Records | Succeeded | Failed | Token Refreshes | Duration |
+|---|---|---|---|---|---|
+| Before fix | 1,884 | 1,351 | 533 | 0 (all failed) | ~12 min |
+| After fix | 5,000 | 5,000 | 0 | ~3 (transparent) | ~33 min |
+
+### Without `token_refresher` (Backward Compatible)
+
+If no `token_refresher` is provided, the executor relies entirely on the callable security for token rotation. Any 401 errors are counted as permanent failures. This maintains backward compatibility with existing code.
+
+### Database Behavior on Retry
+
+When a row is retried after token refresh via the `token_refresher` fallback:
+
+- The **retry result** is stored in `bulk_results` (not the original 401)
+- The row's final status in `bulk_input` reflects the retry outcome (`done` or `error`)
+- The row is counted only **once** in `processed` (not double-counted)
+
 ## ModI Headers for Coordinate API
 
 Certain ANNCSU APIs (like Coordinate) require additional ModI (Modello di Interoperabilità) security headers beyond the bearer token:
@@ -1100,8 +1232,8 @@ from anncsu.common.modi import ModIConfig, AuditContext
 
 # Configure ModI
 config = ModIConfig(
-    private_key=key_bytes,          # Same RSA key used for PDND
-    kid="your-pdnd-kid",            # Same KID registered on PDND
+    private_key=key_bytes,          # RSA key for ModI signing (from Client e-service portachiavi)
+    kid="your-modi-signing-kid",    # KID of the ModI signing key (from Client e-service portachiavi)
     issuer="your-client-id",        # Same as PDND_ISSUER
     audience="https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-coordinate/v1",
 )
@@ -1136,10 +1268,7 @@ register_modi_hook(hooks, config=config, audit_context=audit)
 
 #### Key Design Decisions
 
-1. **Same KID for all tokens**: The same `KID` and private key are used for:
-   - PDND Client Assertion (to get access token)
-   - Agid-JWT-Signature
-   - Agid-JWT-TrackingEvidence
+1. **Key usage depends on PDND portal configuration**: See [PDND Key Architecture](#pdnd-key-architecture-voucher-key-vs-modi-signing-key) below for details on how keys are configured in the PDND portal and how they map to SDK configuration.
 
 2. **Digest from actual bytes**: The digest is computed from `request.content` (serialized bytes), not from a Python dictionary. This ensures the digest matches exactly what the server receives.
 
@@ -1158,13 +1287,15 @@ from dataclasses import dataclass
 @dataclass
 class ModIConfig:
     """Configuration for ModI header generation."""
-    private_key: bytes      # RSA private key (PEM format)
-    kid: str                # Key ID (same as PDND_KID)
+    private_key: bytes      # RSA private key (PEM format) - ModI signing key from Client e-service portachiavi
+    kid: str                # Key ID of the ModI signing key (PDND_MODI_KID)
     issuer: str             # Client ID (same as PDND_ISSUER)
     audience: str           # API base URL (NOT token endpoint)
     alg: str = "RS256"      # JWT algorithm
     validity_seconds: int = 300  # JWT validity (5 minutes)
 ```
+
+> **Important**: The `kid` and `private_key` in ModIConfig should be a **dedicated ModI signing key** from the Client e-service portachiavi, distinct from the voucher key used for `client_assertion`. See [PDND Key Architecture](#pdnd-key-architecture-voucher-key-vs-modi-signing-key) for details.
 
 #### AuditContext
 
@@ -1187,10 +1318,10 @@ Use the helper function to create ModIConfig from your existing `ClientAssertion
 from anncsu.common.config import ClientAssertionSettings
 from anncsu.common.modi import create_modi_config_from_settings
 
-# Load settings from .env
+# Load settings from .env (must include PDND_MODI_KID and PDND_MODI_PRIVATE_KEY)
 settings = ClientAssertionSettings()
 
-# Create ModI config (uses same key as PDND)
+# Create ModI config (uses the dedicated ModI signing key when configured)
 modi_config = create_modi_config_from_settings(
     settings,
     api_audience="https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-coordinate/v1"
@@ -1199,9 +1330,17 @@ modi_config = create_modi_config_from_settings(
 
 ### Environment Variables for ModI
 
-Add these to your `.env` file for audit context:
+Add these to your `.env` file:
 
 ```bash
+# ModI Signing Key (REQUIRED for Coordinate API write operations)
+# Both keys live in the same Client e-service portachiavi on PDND
+# Using a separate key from PDND_KID / PDND_PRIVATE_KEY is recommended (GovWay enforces this)
+PDND_MODI_KID=your-modi-signing-key-id
+PDND_MODI_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
+...e-service private key...
+-----END PRIVATE KEY-----"
+
 # ModI Audit Context (optional, for AUDIT_REST_02)
 PDND_MODI_USER_ID=batch-user-001
 PDND_MODI_USER_LOCATION=server-batch-01
@@ -1269,6 +1408,246 @@ if isinstance(result, ModIHookError):
 - [INTEGRITY_REST_02 Pattern](https://docs.italia.it/italia/piano-triennale-ict/lg-modellointeroperabilita-docs/)
 - [AUDIT_REST_02 Pattern](https://docs.italia.it/italia/piano-triennale-ict/lg-modellointeroperabilita-docs/)
 - [Forum Italia - ANNCSU Discussion](https://forum.italia.it/t/risposta-anncsu-aggiornamento-coordinate/45507)
+
+## PDND Key Architecture: Voucher Key vs ModI Signing Key
+
+### Understanding the PDND Key Model
+
+On the PDND portal, each **Client e-service** (fruitore) has a **portachiavi** (key ring) where multiple RSA public keys can be uploaded. Each key gets its own `kid` (Key ID). The corresponding private keys remain with the fruitore.
+
+The same Client e-service can use **different keys** for different purposes:
+
+| Purpose | Key | Used For |
+|---------|-----|----------|
+| **Voucher key** | `PDND_KID` + `PDND_PRIVATE_KEY` | Signing the `client_assertion` JWT to obtain the access token (voucher) from PDND |
+| **ModI signing key** | `PDND_MODI_KID` + `PDND_MODI_PRIVATE_KEY` | Signing `Agid-JWT-Signature` and `Agid-JWT-TrackingEvidence` headers (message security) |
+
+**Both keys belong to the same Client e-service.** There is no "Client API Interop" involved in our flow. (The "Client API Interop" is a separate client type used only to access PDND's own management APIs programmatically — the API equivalent of the PDND web console.)
+
+The official PDND documentation ([Voucher Bearer con informazioni aggiuntive](https://developer.pagopa.it/pdnd-interoperabilita/guides/manuale-operativo-pdnd-interoperabilita/tutorial/tutorial-per-il-fruitore/come-richiedere-un-voucher-bearer-per-le-api-di-un-erogatore-con-informazioni-aggiuntive)) states:
+
+> *"la chiave privata che firma e il kid della pubblica corrispondente depositata su PDND Interoperabilità **non devono necessariamente essere gli stessi** con i quali si firma la client assertion"*
+
+Translation: The private key that signs [the ModI JWS] and the kid of the corresponding public key deposited on PDND **don't necessarily have to be the same** as those used to sign the client assertion.
+
+In practice, the GovWay gateway ([API PDND](https://govway.org/documentazione/console/profiloModIPA/messaggio/passiPreliminari/apiPDND.html)) enforces this separation strictly for production environments, requiring different keys for the voucher and for ModI message security patterns.
+
+### Why Two Keys Are Needed
+
+When an erogatore's gateway (e.g., GovWay/SOGEI) receives a request with ModI headers, it:
+
+1. Reads the `kid` from the `Agid-JWT-Signature` JWT header
+2. Downloads the corresponding public key from PDND via `GET /keys/{kid}`
+3. Verifies the JWT signature with that public key
+
+If the `kid` in the ModI JWT points to a key that was intended only for voucher authentication, the signature verification may fail with `InteroperabilityInvalidRequest` (400).
+
+### Client Types in the PDND Portal (Clarification)
+
+On the PDND portal (`selfcare.interop.pagopa.it`), under **Fruizione**, there are two client types. Only the first is relevant for our SDK:
+
+| Client Type | Portal Location | Purpose | Relevance to SDK |
+|-------------|-----------------|---------|-------------------|
+| **Client e-service** | Fruizione → I tuoi client e-service | Consume e-services (obtain vouchers, sign ModI headers) | **This is what we use** — both keys live here |
+| **Client API Interop** | Fruizione → I tuoi client API Interop | Access PDND's own management APIs programmatically | **Not used** by this SDK |
+
+Source: [Client, portachiavi e materiale crittografico - Manuale Operativo PDND](https://developer.pagopa.it/pdnd-interoperabilita/guides/pdnd-manuale-operativo/manuale-operativo/client-e-materiale-crittografico)
+
+### How Keys Map to SDK Operations
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│          PDND Client e-service — Key Ring (portachiavi)             │
+│                                                                     │
+│   Key A (PDND_KID)              Key B (PDND_MODI_KID)              │
+│   ├─ Purpose: voucher           ├─ Purpose: ModI signing           │
+│   ├─ Signs: client_assertion    ├─ Signs: Agid-JWT-Signature       │
+│   └─ Sent to: auth.*.pagopa.it  │         Agid-JWT-TrackingEvidence│
+│                                  └─ Sent to: erogatore API         │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  Step 1: Get Voucher (Access Token)                                 │
+│  ┌──────────────────────────────────────────────────────┐           │
+│  │  client_assertion (JWT)                              │           │
+│  │  Signed with: PDND_KID + PDND_PRIVATE_KEY            │           │
+│  │  Keys from:   Client e-service portachiavi (Key A)   │           │
+│  │  Sent to:     auth.interop.pagopa.it/token.oauth2    │           │
+│  └──────────────────────────────────────────────────────┘           │
+│                          │                                          │
+│                          ▼                                          │
+│                   Access Token (voucher)                             │
+│                          │                                          │
+│  Step 2: Call API with ModI Headers                                 │
+│  ┌──────────────────────────────────────────────────────┐           │
+│  │  HTTP POST with headers:                             │           │
+│  │  - Authorization: Bearer <voucher>                   │           │
+│  │  - Digest: SHA-256=...                               │           │
+│  │  - Agid-JWT-Signature (JWT)                          │           │
+│  │    Signed with: PDND_MODI_KID + PDND_MODI_PRIVATE_KEY│           │
+│  │    Keys from:   Client e-service portachiavi (Key B) │           │
+│  │  - Agid-JWT-TrackingEvidence (JWT)                   │           │
+│  │    Signed with: PDND_MODI_KID + PDND_MODI_PRIVATE_KEY│           │
+│  │    Keys from:   Client e-service portachiavi (Key B) │           │
+│  │  Sent to:     modipa.agenziaentrate.gov.it/...       │           │
+│  └──────────────────────────────────────────────────────┘           │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### SDK Environment Variables
+
+The `.env` file should contain **two separate keypairs** from the same Client e-service portachiavi:
+
+```bash
+# ══════════════════════════════════════════════════════════════════
+# KEY A: Voucher Key (client_assertion signing)
+# Source: PDND Portal → Fruizione → I tuoi client e-service → Chiavi pubbliche
+# Used for: client_assertion JWT to obtain voucher (access token)
+# ══════════════════════════════════════════════════════════════════
+PDND_KID=your-voucher-key-id
+PDND_ISSUER=your-client-id
+PDND_SUBJECT=your-client-id
+PDND_AUDIENCE=auth.interop.pagopa.it/client-assertion
+PDND_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
+...voucher private key (for client_assertion)...
+-----END PRIVATE KEY-----"
+
+# ══════════════════════════════════════════════════════════════════
+# KEY B: ModI Signing Key (message security headers)
+# Source: PDND Portal → Fruizione → I tuoi client e-service → Chiavi pubbliche
+# Used for: Agid-JWT-Signature and Agid-JWT-TrackingEvidence headers
+# Can be the same key as Key A (PDND allows it) but GovWay requires different keys
+# ══════════════════════════════════════════════════════════════════
+PDND_MODI_KID=your-modi-signing-key-id
+PDND_MODI_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
+...modi signing private key (for ModI headers)...
+-----END PRIVATE KEY-----"
+
+# ═��════════════════════════════════════════════════════════════════
+# Purpose IDs (from PDND Portal → Fruizione → Le tue finalità)
+# ══════════════════════════════════════════════════════════════════
+PDND_PURPOSE_ID_PA=...
+PDND_PURPOSE_ID_COORDINATE=...
+PDND_PURPOSE_ID_COORDINATE_BULK=...
+
+# ══════════════════════════════════════════════════════════════════
+# ModI Audit Context (optional, for AUDIT_REST_02)
+# ══════════════════════════════════════════════════════════════════
+PDND_MODI_USER_ID=batch-user-001
+PDND_MODI_USER_LOCATION=server-batch-01
+PDND_MODI_LOA=SPID_L2
+```
+
+### PDND Portal Configuration Checklist
+
+To correctly configure a PDND consumer (fruitore), follow these steps on the portal:
+
+1. **Generate two RSA keypairs** (using OpenSSL or similar):
+   ```bash
+   # Keypair A: for voucher (client_assertion)
+   openssl genpkey -algorithm RSA -out voucher-private.pem -pkeyopt rsa_keygen_bits:2048
+   openssl rsa -in voucher-private.pem -pubout -out voucher-public.pem
+
+   # Keypair B: for ModI signing (message security)
+   openssl genpkey -algorithm RSA -out modi-signing-private.pem -pkeyopt rsa_keygen_bits:2048
+   openssl rsa -in modi-signing-private.pem -pubout -out modi-signing-public.pem
+   ```
+
+2. **Upload both public keys to the same Client e-service**:
+   - Go to: Fruizione → I tuoi client e-service → [your client] → Chiavi pubbliche → Aggiungi
+   - Upload `voucher-public.pem` → note the assigned `kid` → this becomes `PDND_KID`
+   - Upload `modi-signing-public.pem` → note the assigned `kid` → this becomes `PDND_MODI_KID`
+   - Keep both private keys secure → `PDND_PRIVATE_KEY` and `PDND_MODI_PRIVATE_KEY`
+
+3. **Associate Client e-service to Purpose**:
+   - Go to: Fruizione → Le tue finalità → [your purpose]
+   - Associate the client e-service to the purpose
+
+> **Note**: PDND allows using the same key for both purposes. However, the GovWay gateway enforces key separation in production, so using two distinct keys is strongly recommended.
+
+### Common Errors from Key Misconfiguration
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `InteroperabilityInvalidRequest` (400) | ModI JWT signed with voucher key instead of dedicated ModI signing key, or kid not recognized | Use `PDND_MODI_KID`/`PDND_MODI_PRIVATE_KEY` for ModI headers |
+| `015-0008 - Unable to generate a token` | client_assertion signed with wrong key or audience mismatch | Verify `PDND_KID`/`PDND_PRIVATE_KEY` match a key in the Client e-service portachiavi |
+| `403 Insufficient token claims` | Voucher does not have the correct purpose for the e-service | Verify the purpose ID and that the client e-service is associated to the purpose |
+
+### References
+
+- [Voucher Bearer con informazioni aggiuntive - Manuale Operativo PDND](https://developer.pagopa.it/pdnd-interoperabilita/guides/manuale-operativo-pdnd-interoperabilita/tutorial/tutorial-per-il-fruitore/come-richiedere-un-voucher-bearer-per-le-api-di-un-erogatore-con-informazioni-aggiuntive) — keys for ModI signing vs client_assertion don't need to be the same
+- [API PDND - GovWay Documentation](https://govway.org/documentazione/console/profiloModIPA/messaggio/passiPreliminari/apiPDND.html) — GovWay enforces key separation for message security patterns
+- [Client, portachiavi e materiale crittografico - Manuale Operativo PDND](https://developer.pagopa.it/pdnd-interoperabilita/guides/pdnd-manuale-operativo/manuale-operativo/client-e-materiale-crittografico) — client types and key management
+- [Utilizzare i voucher - Manuale Operativo PDND](https://developer.pagopa.it/pdnd-interoperabilita/guides/pdnd-manuale-operativo/manuale-operativo/utilizzare-i-voucher) — voucher request flow
+
+## GovWay URL Discrepancies: OAS vs Production
+
+> **The real URL of an e-service is ALWAYS determined by the `aud` claim in the PDND voucher, NEVER from the OAS specs.** OAS files may contain outdated, incorrect, or generic URLs.
+
+### Domain Differences by Environment
+
+| Environment | Domain | SSL Certificate CN |
+|-------------|--------|--------------------|
+| **Validation (UAT)** | `modipa-val.agenziaentrate.it` | `modipa-val.agenziaentrate.it` |
+| **Production** | `modipa.agenziaentrate.gov.it` | `modipa.agenziaentrate.gov.it` |
+
+**Warning**: Production uses `.gov.it`, NOT `.it`. Using `.it` causes SSL errors and `InteroperabilityInvalidRequest` (400) because the JWT `aud` claim doesn't match what GovWay expects.
+
+### E-Service Path Differences by Environment
+
+| E-Service | UAT Path | Production Path | Different? |
+|-----------|----------|-----------------|------------|
+| Consultazione PA | `anncsu-consultazione/v1` | `anncsu-consultazione-comune/v1` | **YES** |
+| Agg. Coordinate | `anncsu-aggiornamento-coordinate/v1` | `anncsu-aggiornamento-coordinate/v1` | No |
+| Agg. Coord. Bulk | `anncsu-aggiornamento-coordinate-grandi-comuni/v1` | `anncsu-aggiornamento-coordinate-grandi-comuni/v1` | No |
+
+### OAS Spec vs Real URL Discrepancies
+
+| Source | Domain | Subject | Path |
+|--------|--------|---------|------|
+| OAS Consultazione | `.gov.it` | `AgenziaEntrate-PDND` | `anncsu-consultazione/v1` |
+| PDND Voucher (prod) | `.gov.it` | `AgenziaEntrate-PDND` | **`anncsu-consultazione-comune/v1`** |
+| OAS Coordinate | `.it` | `AgenziaEntrate` | `anncsuaccessi/v1` |
+| PDND Voucher (prod) | `.gov.it` | `AgenziaEntrate-PDND` | `anncsu-aggiornamento-coordinate/v1` |
+| OAS Coord. Massivo | `.it` | `AgenziaEntrate` | `anncsuaccessi/v1` |
+| PDND Voucher (prod) | `.gov.it` | `AgenziaEntrate-PDND` | `anncsu-aggiornamento-coordinate-grandi-comuni/v1` |
+
+### How to Discover the Correct URL
+
+Decode the PDND voucher for the target e-service and read the `aud` claim:
+
+```bash
+TOKEN=$(anncsu auth token --api pa --token-endpoint https://auth.interop.pagopa.it/token.oauth2 2>/dev/null)
+anncsu assertion decode "$TOKEN" --json | python3 -c "import sys,json; print(json.load(sys.stdin)['payload']['aud'])"
+```
+
+### Automatic URL Correction (Auto-Discovery)
+
+Since Session 49, the SDK auto-corrects hardcoded server URLs by comparing them against the `aud` claim in the PDND voucher. This eliminates the need to manually update `SERVERS` dicts when GovWay paths or domains change.
+
+**How it works:**
+
+1. The CLI obtains a PDND voucher (access token) via `PDNDAuthManager.get_access_token()`
+2. `extract_voucher_audience()` extracts the `aud` claim from the voucher JWT
+3. If `aud` differs from the hardcoded `server_url`, the SDK:
+   - Replaces `server_url` with the voucher `aud`
+   - Updates `modi_audience` (for ModI JWT signing) accordingly
+   - Prints a warning to stderr:
+     ```
+     URL auto-corrected: Hardcoded URL differs from PDND voucher audience.
+       Configured: https://modipa.agenziaentrate.it/govway/rest/in/...
+       Voucher aud: https://modipa.agenziaentrate.gov.it/govway/rest/in/...
+       Using voucher audience as server URL.
+     ```
+
+**Affected functions:**
+- `_get_sdk()` in `coordinate.py` — for coordinate update, status, dry-run
+- `_get_consult_sdk()` in `coordinate.py` — for consultazione PA
+- Bulk operations inherit the behavior via `_get_coord_sdk()` and `_get_consult_sdk_lazy()`
+
+**Token refresh in bulk**: When the `token_refresher` renews a token mid-execution, the new voucher's `aud` claim is guaranteed to match the original (same PDND e-service). The SDK instance and its server URL remain valid across token refreshes.
+
+**Backward compatible:** If the voucher cannot be decoded or lacks an `aud` claim, the hardcoded URL is used as fallback.
 
 ## Further Reading
 

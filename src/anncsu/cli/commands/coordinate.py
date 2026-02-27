@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Annotated
 
 import httpx
@@ -18,6 +19,7 @@ from anncsu.cli.models import (
     OriginalCoordinates,
 )
 from anncsu.common import PDNDAuthManager
+from anncsu.common.auth import extract_voucher_audience
 from anncsu.common.config import APIType, ClientAssertionSettings
 from anncsu.common.errors import AudienceMismatchError
 from anncsu.common.hooks import SDKHooks, register_modi_hook
@@ -27,12 +29,19 @@ from anncsu.common.session import get_config_dir
 from anncsu.coordinate import AnncsuCoordinate
 from anncsu.coordinate.models import Accesso, Coordinate, Richiesta, Security
 from anncsu.coordinate.models.validated import ValidatedRispostaOperazione
+from anncsu.cli.commands.bulk import bulk_app
 from anncsu.pa import AnncsuConsultazione
 
 coordinate_app = typer.Typer(
     name="coordinate",
     help="Coordinate management commands for ANNCSU.",
     no_args_is_help=True,
+)
+
+coordinate_app.add_typer(
+    bulk_app,
+    name="bulk",
+    help="Bulk coordinate operations with CSV input.",
 )
 
 console = Console()
@@ -44,13 +53,13 @@ DEFAULT_TOKEN_ENDPOINT = "https://auth.uat.interop.pagopa.it/token.oauth2"
 # Default server URLs for coordinate API
 # Note: Uses AgenziaEntrate-PDND path and anncsu-aggiornamento-coordinate endpoint
 SERVERS = {
-    "production": "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1",
+    "production": "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1",
     "validation": "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1",
 }
 
 # Default server URLs for consultazione API
 CONSULT_SERVERS = {
-    "production": "https://modipa.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",
+    "production": "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione-comune/v1",
     "validation": "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1",
 }
 
@@ -71,26 +80,43 @@ def _get_consult_sdk(
         raise typer.Exit(1) from None
 
     try:
-        manager = PDNDAuthManager(
-            api_type=APIType.PA,
-            settings=settings,
-            token_endpoint=token_endpoint,
-            session_persistence=True,
-            config_dir=get_config_dir(),
-        )
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            manager = PDNDAuthManager(
+                api_type=APIType.PA,
+                settings=settings,
+                token_endpoint=token_endpoint,
+                session_persistence=True,
+                config_dir=get_config_dir(),
+            )
+        for w in caught_warnings:
+            error_console.print(f"[yellow]Warning:[/yellow] {w.message}")
         access_token = manager.get_access_token()
     except Exception as e:
         error_console.print(f"[red]Error:[/red] Authentication failed: {e}")
         raise typer.Exit(1) from None
 
-    # Create security object for consultazione API
-    security = PASecurity(bearer=access_token)
+    # Auto-correct server URL from voucher audience if different
+    voucher_aud = extract_voucher_audience(access_token)
+    if voucher_aud and server_url and voucher_aud.rstrip("/") != server_url.rstrip("/"):
+        error_console.print(
+            f"[yellow]URL auto-corrected:[/yellow] "
+            f"Hardcoded URL differs from PDND voucher audience.\n"
+            f"  Configured: {server_url}\n"
+            f"  Voucher aud: {voucher_aud}\n"
+            f"  Using voucher audience as server URL."
+        )
+        server_url = voucher_aud
+
+    # Create security callable — auto-refreshes token when expired.
+    def security_provider() -> PASecurity:
+        return PASecurity(bearer=manager.get_access_token())
 
     # Create HTTP client with optional SSL verification
     client = httpx.Client(verify=verify_ssl)
 
     return AnncsuConsultazione(
-        security=security,
+        security=security_provider,
         server_url=server_url,
         client=client,
     )
@@ -101,10 +127,11 @@ def _get_sdk(
     server_url: str | None = None,
     verify_ssl: bool = True,
     modi_audience: str | None = None,
-) -> AnncsuCoordinate:
+    api_type: APIType = APIType.COORDINATE,
+) -> tuple[AnncsuCoordinate, PDNDAuthManager]:
     """Create an authenticated SDK instance with ModI hook support.
 
-    Uses APIType.COORDINATE for authentication (Coordinate API).
+    Uses the specified APIType for authentication (default: COORDINATE).
     The ModI hook is automatically registered and will add required headers
     (Digest, Agid-JWT-Signature, Agid-JWT-TrackingEvidence) to all POST requests.
 
@@ -113,9 +140,10 @@ def _get_sdk(
         server_url: API server URL.
         verify_ssl: Whether to verify SSL certificates.
         modi_audience: Audience URL for ModI headers (typically the API base URL).
+        api_type: The APIType for authentication (default: COORDINATE).
 
     Returns:
-        SDK instance with ModI hooks configured via dependency injection.
+        Tuple of (SDK instance, PDNDAuthManager) for token refresh support.
     """
     try:
         settings = ClientAssertionSettings()
@@ -124,13 +152,17 @@ def _get_sdk(
         raise typer.Exit(1) from None
 
     try:
-        manager = PDNDAuthManager(
-            api_type=APIType.COORDINATE,
-            settings=settings,
-            token_endpoint=token_endpoint,
-            session_persistence=True,
-            config_dir=get_config_dir(),
-        )
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            manager = PDNDAuthManager(
+                api_type=api_type,
+                settings=settings,
+                token_endpoint=token_endpoint,
+                session_persistence=True,
+                config_dir=get_config_dir(),
+            )
+        for w in caught_warnings:
+            error_console.print(f"[yellow]Warning:[/yellow] {w.message}")
         access_token = manager.get_access_token()
     except AudienceMismatchError as e:
         error_console.print(f"[red]Configuration Error:[/red]\n{e}")
@@ -139,8 +171,25 @@ def _get_sdk(
         error_console.print(f"[red]Error:[/red] Authentication failed: {e}")
         raise typer.Exit(1) from None
 
-    # Create security object for coordinate API
-    security = Security(bearer_auth=access_token)
+    # Auto-correct server URL from voucher audience if different
+    voucher_aud = extract_voucher_audience(access_token)
+    if voucher_aud and server_url and voucher_aud.rstrip("/") != server_url.rstrip("/"):
+        error_console.print(
+            f"[yellow]URL auto-corrected:[/yellow] "
+            f"Hardcoded URL differs from PDND voucher audience.\n"
+            f"  Configured: {server_url}\n"
+            f"  Voucher aud: {voucher_aud}\n"
+            f"  Using voucher audience as server URL."
+        )
+        server_url = voucher_aud
+        if modi_audience:
+            modi_audience = voucher_aud
+
+    # Create security callable — the SDK calls this before each request,
+    # so it always gets a fresh token from the auth manager (cached if valid,
+    # refreshed automatically when expired).
+    def security_provider() -> Security:
+        return Security(bearer_auth=manager.get_access_token())
 
     # Create HTTP client with optional SSL verification
     client = httpx.Client(verify=verify_ssl)
@@ -151,19 +200,39 @@ def _get_sdk(
     # Configure ModI if audience is provided
     if modi_audience:
         try:
-            # Load private key from settings
-            private_key: bytes | None = None
-            if settings.private_key:
-                private_key = settings.private_key.encode("utf-8")
-            elif settings.key_path:
-                with open(settings.key_path, "rb") as f:
-                    private_key = f.read()
+            # Determine which key to use for ModI JWT signing
+            # Prefer dedicated ModI signing key (modi_kid + modi_private_key) when available
+            if settings.has_e_service_key:
+                # Use dedicated ModI signing key (separate from voucher key)
+                modi_kid = settings.modi_kid
+                modi_private_key: bytes | None = None
+                if settings.modi_private_key:
+                    modi_private_key = settings.modi_private_key.encode("utf-8")
+                elif settings.modi_key_path:
+                    with open(settings.modi_key_path, "rb") as f:
+                        modi_private_key = f.read()
+            else:
+                # Fallback to voucher key (backward compatibility)
+                if not getattr(settings, "modi_kid", None):
+                    error_console.print(
+                        "[yellow]Warning:[/yellow] PDND_MODI_KID not configured. "
+                        "Using voucher key for ModI signing. "
+                        "Set PDND_MODI_KID and PDND_MODI_PRIVATE_KEY for a "
+                        "dedicated ModI signing key (required by GovWay in production)."
+                    )
+                modi_kid = settings.kid
+                modi_private_key = None
+                if settings.private_key:
+                    modi_private_key = settings.private_key.encode("utf-8")
+                elif settings.key_path:
+                    with open(settings.key_path, "rb") as f:
+                        modi_private_key = f.read()
 
-            if private_key:
+            if modi_private_key:
                 # Create ModI config
                 modi_config = ModIConfig(
-                    private_key=private_key,
-                    kid=settings.kid,
+                    private_key=modi_private_key,
+                    kid=modi_kid,
                     issuer=settings.issuer,
                     audience=modi_audience,
                 )
@@ -185,15 +254,17 @@ def _get_sdk(
             )
             error_console.print("Continuing without ModI headers (API calls may fail).")
 
-    # Create SDK with hooks via dependency injection
+    # Create SDK with hooks via dependency injection.
+    # security_provider is a callable — Speakeasy invokes it before each
+    # request (basesdk.py:178), so token refresh is automatic.
     sdk = AnncsuCoordinate(
-        security=security,
+        security=security_provider,
         server_url=server_url,
         client=client,
         hooks=hooks,  # Dependency injection
     )
 
-    return sdk
+    return sdk, manager
 
 
 @coordinate_app.command("update")
@@ -290,7 +361,7 @@ def update(
     # Create SDK with ModI hook (modi_audience is the API base URL)
     # The hook automatically adds Digest, Agid-JWT-Signature, and
     # Agid-JWT-TrackingEvidence headers to POST requests
-    sdk = _get_sdk(
+    sdk, _ = _get_sdk(
         token_endpoint=token_endpoint,
         server_url=server_url,
         verify_ssl=not no_verify_ssl,
@@ -543,13 +614,15 @@ def dry_run(
             error_console.print(f"[red]Error:[/red] Access point lookup failed: {e}")
             raise typer.Exit(1) from None
 
-        if not prognazacc_response.data:
+        # data is a List[PrognazaccGetQueryParamData]
+        data_list = prognazacc_response.data
+        if not data_list:
             error_console.print(
                 f"[red]Error:[/red] No access point found for prognazacc={prognazacc_arg}"
             )
             raise typer.Exit(1) from None
 
-        accesso_data = prognazacc_response.data
+        accesso_data = data_list[0]
         prognazacc = accesso_data.prognazacc or prognazacc_arg
 
         # For direct mode, we don't have codcom from the search
@@ -655,7 +728,7 @@ def dry_run(
         console.print("[bold]Step 2:[/bold] Performing test update...\n")
 
     # Create SDK with ModI hook - headers added automatically to POST requests
-    coord_sdk = _get_sdk(
+    coord_sdk, _ = _get_sdk(
         token_endpoint=token_endpoint,
         server_url=coord_server,
         verify_ssl=not no_verify_ssl,
@@ -889,7 +962,7 @@ def status(
         server_url = SERVERS["validation"] if validation_env else SERVERS["production"]
 
     # Create SDK (no ModI needed for status - GET request, hook will skip it)
-    sdk = _get_sdk(
+    sdk, _ = _get_sdk(
         token_endpoint=token_endpoint,
         server_url=server_url,
         verify_ssl=not no_verify_ssl,

@@ -82,6 +82,7 @@ def env_settings(monkeypatch, temp_key_file):
     # Multi-API purpose IDs
     monkeypatch.setenv("PDND_PURPOSE_ID_PA", "env-purpose-id-pa")
     monkeypatch.setenv("PDND_PURPOSE_ID_COORDINATE", "env-purpose-id-coordinate")
+    monkeypatch.setenv("PDND_PURPOSE_ID_COORDINATE_BULK", "")
     monkeypatch.setenv("PDND_PURPOSE_ID_ACCESSI", "")
     monkeypatch.setenv("PDND_PURPOSE_ID_INTERNI", "")
     monkeypatch.setenv("PDND_PURPOSE_ID_ODONIMI", "")
@@ -386,6 +387,7 @@ class TestCLIWithoutEnvVariables:
             "PDND_AUDIENCE",
             "PDND_PURPOSE_ID_PA",
             "PDND_PURPOSE_ID_COORDINATE",
+            "PDND_PURPOSE_ID_COORDINATE_BULK",
             "PDND_PURPOSE_ID_ACCESSI",
             "PDND_PURPOSE_ID_INTERNI",
             "PDND_PURPOSE_ID_ODONIMI",
@@ -461,6 +463,7 @@ class TestCLIEnvPartialOverride:
         # All purpose IDs must be present (can be empty)
         monkeypatch.setenv("PDND_PURPOSE_ID_PA", "")
         monkeypatch.setenv("PDND_PURPOSE_ID_COORDINATE", "")
+        monkeypatch.setenv("PDND_PURPOSE_ID_COORDINATE_BULK", "")
         monkeypatch.setenv("PDND_PURPOSE_ID_ACCESSI", "")
         monkeypatch.setenv("PDND_PURPOSE_ID_INTERNI", "")
         monkeypatch.setenv("PDND_PURPOSE_ID_ODONIMI", "")

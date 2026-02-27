@@ -388,6 +388,7 @@ class TestCreateModiConfigFromSettings:
                 "PDND_KEY_PATH": str(mock_private_key),
                 "PDND_PURPOSE_ID_PA": "pa-purpose",
                 "PDND_PURPOSE_ID_COORDINATE": "coord-purpose",
+                "PDND_PURPOSE_ID_COORDINATE_BULK": "coord-bulk-purpose",
                 "PDND_PURPOSE_ID_ACCESSI": "",
                 "PDND_PURPOSE_ID_INTERNI": "",
                 "PDND_PURPOSE_ID_ODONIMI": "",
@@ -426,6 +427,7 @@ class TestCreateModiConfigFromSettings:
                 "PDND_PRIVATE_KEY": key_content,
                 "PDND_PURPOSE_ID_PA": "pa-purpose",
                 "PDND_PURPOSE_ID_COORDINATE": "coord-purpose",
+                "PDND_PURPOSE_ID_COORDINATE_BULK": "coord-bulk-purpose",
                 "PDND_PURPOSE_ID_ACCESSI": "",
                 "PDND_PURPOSE_ID_INTERNI": "",
                 "PDND_PURPOSE_ID_ODONIMI": "",
@@ -456,6 +458,7 @@ class TestCreateModiConfigFromSettings:
                 "PDND_AUDIENCE": "https://auth.example.com",
                 "PDND_PURPOSE_ID_PA": "pa-purpose",
                 "PDND_PURPOSE_ID_COORDINATE": "coord-purpose",
+                "PDND_PURPOSE_ID_COORDINATE_BULK": "coord-bulk-purpose",
                 "PDND_PURPOSE_ID_ACCESSI": "",
                 "PDND_PURPOSE_ID_INTERNI": "",
                 "PDND_PURPOSE_ID_ODONIMI": "",
@@ -1327,3 +1330,304 @@ class TestSpeakeasySerializationBehaviorDocumentation:
         assert speakeasy_style != sorted_style
         assert speakeasy_style == '{"z":2,"a":1}'  # Insertion order preserved
         assert sorted_style == '{"a":1,"z":2}'  # Keys sorted
+
+
+class TestCreateModiConfigFromSettingsEServiceKey:
+    """Tests for create_modi_config_from_settings with dedicated ModI signing key.
+
+    The Client e-service portachiavi on PDND can hold multiple keys:
+    - Voucher key: kid + private_key (for client_assertion → voucher)
+    - ModI signing key: modi_kid + modi_private_key (for Agid-JWT-Signature/TrackingEvidence)
+
+    When ModI signing key fields are set, the factory function MUST use them
+    for ModIConfig. When not set, it MUST fall back to the voucher key
+    for backward compatibility.
+    """
+
+    def test_uses_e_service_kid_when_available(
+        self, mock_private_key: Path, mock_e_service_private_key: Path
+    ) -> None:
+        """Test that config.kid uses modi_kid when available, not kid."""
+        from anncsu.common.config import ClientAssertionSettings
+        from anncsu.common.modi import create_modi_config_from_settings
+
+        e_service_key_content = mock_e_service_private_key.read_text()
+
+        with patch.dict(
+            "os.environ",
+            {
+                "PDND_KID": "interop-kid",
+                "PDND_ISSUER": "test-client-id",
+                "PDND_SUBJECT": "test-subject",
+                "PDND_AUDIENCE": "https://auth.example.com",
+                "PDND_KEY_PATH": str(mock_private_key),
+                "PDND_PURPOSE_ID_PA": "pa-purpose",
+                "PDND_PURPOSE_ID_COORDINATE": "coord-purpose",
+                "PDND_PURPOSE_ID_COORDINATE_BULK": "",
+                "PDND_PURPOSE_ID_ACCESSI": "",
+                "PDND_PURPOSE_ID_INTERNI": "",
+                "PDND_PURPOSE_ID_ODONIMI": "",
+                "PDND_MODI_KID": "e-service-kid",
+                "PDND_MODI_PRIVATE_KEY": e_service_key_content,
+            },
+            clear=False,
+        ):
+            settings = ClientAssertionSettings(_env_file=None)
+            config = create_modi_config_from_settings(
+                settings, api_audience="https://api.example.com"
+            )
+
+        # ModI config MUST use e-service kid, NOT interop kid
+        assert config.kid == "e-service-kid"
+        assert config.kid != "interop-kid"
+
+    def test_uses_e_service_private_key_when_available(
+        self, mock_private_key: Path, mock_e_service_private_key: Path
+    ) -> None:
+        """Test that config.private_key uses modi_private_key when available."""
+        from anncsu.common.config import ClientAssertionSettings
+        from anncsu.common.modi import create_modi_config_from_settings
+
+        e_service_key_content = mock_e_service_private_key.read_text()
+        interop_key_content = mock_private_key.read_text()
+
+        with patch.dict(
+            "os.environ",
+            {
+                "PDND_KID": "interop-kid",
+                "PDND_ISSUER": "test-client-id",
+                "PDND_SUBJECT": "test-subject",
+                "PDND_AUDIENCE": "https://auth.example.com",
+                "PDND_PRIVATE_KEY": interop_key_content,
+                "PDND_PURPOSE_ID_PA": "pa-purpose",
+                "PDND_PURPOSE_ID_COORDINATE": "coord-purpose",
+                "PDND_PURPOSE_ID_COORDINATE_BULK": "",
+                "PDND_PURPOSE_ID_ACCESSI": "",
+                "PDND_PURPOSE_ID_INTERNI": "",
+                "PDND_PURPOSE_ID_ODONIMI": "",
+                "PDND_MODI_KID": "e-service-kid",
+                "PDND_MODI_PRIVATE_KEY": e_service_key_content,
+            },
+            clear=False,
+        ):
+            settings = ClientAssertionSettings(_env_file=None)
+            config = create_modi_config_from_settings(
+                settings, api_audience="https://api.example.com"
+            )
+
+        # ModI config MUST use e-service private key
+        assert config.private_key == e_service_key_content.encode("utf-8")
+        assert config.private_key != interop_key_content.encode("utf-8")
+
+    def test_uses_e_service_key_path_when_available(
+        self, mock_private_key: Path, mock_e_service_private_key: Path
+    ) -> None:
+        """Test that config loads private key from modi_key_path when available."""
+        from anncsu.common.config import ClientAssertionSettings
+        from anncsu.common.modi import create_modi_config_from_settings
+
+        expected_key_bytes = mock_e_service_private_key.read_bytes()
+
+        with patch.dict(
+            "os.environ",
+            {
+                "PDND_KID": "interop-kid",
+                "PDND_ISSUER": "test-client-id",
+                "PDND_SUBJECT": "test-subject",
+                "PDND_AUDIENCE": "https://auth.example.com",
+                "PDND_KEY_PATH": str(mock_private_key),
+                "PDND_PURPOSE_ID_PA": "pa-purpose",
+                "PDND_PURPOSE_ID_COORDINATE": "coord-purpose",
+                "PDND_PURPOSE_ID_COORDINATE_BULK": "",
+                "PDND_PURPOSE_ID_ACCESSI": "",
+                "PDND_PURPOSE_ID_INTERNI": "",
+                "PDND_PURPOSE_ID_ODONIMI": "",
+                "PDND_MODI_KID": "e-service-kid",
+                "PDND_MODI_KEY_PATH": str(mock_e_service_private_key),
+            },
+            clear=False,
+        ):
+            settings = ClientAssertionSettings(_env_file=None)
+            config = create_modi_config_from_settings(
+                settings, api_audience="https://api.example.com"
+            )
+
+        # ModI config MUST use e-service key loaded from path
+        assert config.private_key == expected_key_bytes
+
+    def test_e_service_key_takes_priority_over_interop_key(
+        self, mock_private_key: Path, mock_e_service_private_key: Path
+    ) -> None:
+        """Test that e-service key is used even when interop key is also present."""
+        from anncsu.common.config import ClientAssertionSettings
+        from anncsu.common.modi import create_modi_config_from_settings
+
+        e_service_key_content = mock_e_service_private_key.read_text()
+        interop_key_bytes = mock_private_key.read_bytes()
+
+        with patch.dict(
+            "os.environ",
+            {
+                "PDND_KID": "interop-kid",
+                "PDND_ISSUER": "test-client-id",
+                "PDND_SUBJECT": "test-subject",
+                "PDND_AUDIENCE": "https://auth.example.com",
+                "PDND_KEY_PATH": str(mock_private_key),
+                "PDND_PURPOSE_ID_PA": "pa-purpose",
+                "PDND_PURPOSE_ID_COORDINATE": "coord-purpose",
+                "PDND_PURPOSE_ID_COORDINATE_BULK": "",
+                "PDND_PURPOSE_ID_ACCESSI": "",
+                "PDND_PURPOSE_ID_INTERNI": "",
+                "PDND_PURPOSE_ID_ODONIMI": "",
+                "PDND_MODI_KID": "e-service-kid",
+                "PDND_MODI_PRIVATE_KEY": e_service_key_content,
+            },
+            clear=False,
+        ):
+            settings = ClientAssertionSettings(_env_file=None)
+            config = create_modi_config_from_settings(
+                settings, api_audience="https://api.example.com"
+            )
+
+        # E-service key MUST take priority
+        assert config.kid == "e-service-kid"
+        assert config.private_key != interop_key_bytes
+
+    def test_e_service_private_key_takes_priority_over_key_path(
+        self, mock_private_key: Path, mock_e_service_private_key: Path
+    ) -> None:
+        """Test that modi_private_key takes priority over modi_key_path."""
+        from anncsu.common.config import ClientAssertionSettings
+        from anncsu.common.modi import create_modi_config_from_settings
+
+        e_service_key_content = mock_e_service_private_key.read_text()
+
+        with patch.dict(
+            "os.environ",
+            {
+                "PDND_KID": "interop-kid",
+                "PDND_ISSUER": "test-client-id",
+                "PDND_SUBJECT": "test-subject",
+                "PDND_AUDIENCE": "https://auth.example.com",
+                "PDND_KEY_PATH": str(mock_private_key),
+                "PDND_PURPOSE_ID_PA": "pa-purpose",
+                "PDND_PURPOSE_ID_COORDINATE": "coord-purpose",
+                "PDND_PURPOSE_ID_COORDINATE_BULK": "",
+                "PDND_PURPOSE_ID_ACCESSI": "",
+                "PDND_PURPOSE_ID_INTERNI": "",
+                "PDND_PURPOSE_ID_ODONIMI": "",
+                "PDND_MODI_KID": "e-service-kid",
+                "PDND_MODI_PRIVATE_KEY": e_service_key_content,
+                "PDND_MODI_KEY_PATH": str(mock_private_key),  # Also set path
+            },
+            clear=False,
+        ):
+            settings = ClientAssertionSettings(_env_file=None)
+            config = create_modi_config_from_settings(
+                settings, api_audience="https://api.example.com"
+            )
+
+        # modi_private_key string MUST take priority over modi_key_path
+        assert config.private_key == e_service_key_content.encode("utf-8")
+
+    def test_raises_when_modi_kid_set_but_no_modi_key(
+        self, mock_private_key: Path
+    ) -> None:
+        """Test that ValueError is raised when modi_kid is set but no e-service key."""
+        from anncsu.common.config import ClientAssertionSettings
+        from anncsu.common.modi import create_modi_config_from_settings
+
+        with patch.dict(
+            "os.environ",
+            {
+                "PDND_KID": "interop-kid",
+                "PDND_ISSUER": "test-client-id",
+                "PDND_SUBJECT": "test-subject",
+                "PDND_AUDIENCE": "https://auth.example.com",
+                "PDND_KEY_PATH": str(mock_private_key),
+                "PDND_PURPOSE_ID_PA": "pa-purpose",
+                "PDND_PURPOSE_ID_COORDINATE": "coord-purpose",
+                "PDND_PURPOSE_ID_COORDINATE_BULK": "",
+                "PDND_PURPOSE_ID_ACCESSI": "",
+                "PDND_PURPOSE_ID_INTERNI": "",
+                "PDND_PURPOSE_ID_ODONIMI": "",
+                "PDND_MODI_KID": "e-service-kid",
+                # No PDND_MODI_PRIVATE_KEY or PDND_MODI_KEY_PATH
+            },
+            clear=False,
+        ):
+            settings = ClientAssertionSettings(_env_file=None)
+
+            with pytest.raises(
+                ValueError, match="[Ee]-[Ss]ervice.*key|modi.*key|PDND_MODI"
+            ):
+                create_modi_config_from_settings(
+                    settings, api_audience="https://api.example.com"
+                )
+
+    def test_falls_back_to_interop_key_when_no_e_service_key(
+        self, mock_private_key: Path
+    ) -> None:
+        """Test backward compat: uses interop key when no e-service fields set."""
+        from anncsu.common.config import ClientAssertionSettings
+        from anncsu.common.modi import create_modi_config_from_settings
+
+        expected_key_bytes = mock_private_key.read_bytes()
+
+        with patch.dict(
+            "os.environ",
+            {
+                "PDND_KID": "interop-kid",
+                "PDND_ISSUER": "test-client-id",
+                "PDND_SUBJECT": "test-subject",
+                "PDND_AUDIENCE": "https://auth.example.com",
+                "PDND_KEY_PATH": str(mock_private_key),
+                "PDND_PURPOSE_ID_PA": "pa-purpose",
+                "PDND_PURPOSE_ID_COORDINATE": "coord-purpose",
+                "PDND_PURPOSE_ID_COORDINATE_BULK": "",
+                "PDND_PURPOSE_ID_ACCESSI": "",
+                "PDND_PURPOSE_ID_INTERNI": "",
+                "PDND_PURPOSE_ID_ODONIMI": "",
+                # No PDND_MODI_* fields
+            },
+            clear=False,
+        ):
+            settings = ClientAssertionSettings(_env_file=None)
+            config = create_modi_config_from_settings(
+                settings, api_audience="https://api.example.com"
+            )
+
+        # Should fall back to interop key
+        assert config.kid == "interop-kid"
+        assert config.private_key == expected_key_bytes
+
+    def test_falls_back_to_interop_kid_when_no_modi_kid(
+        self, mock_private_key: Path
+    ) -> None:
+        """Test backward compat: config.kid is interop kid when modi_kid not set."""
+        from anncsu.common.config import ClientAssertionSettings
+        from anncsu.common.modi import create_modi_config_from_settings
+
+        with patch.dict(
+            "os.environ",
+            {
+                "PDND_KID": "interop-kid",
+                "PDND_ISSUER": "test-client-id",
+                "PDND_SUBJECT": "test-subject",
+                "PDND_AUDIENCE": "https://auth.example.com",
+                "PDND_KEY_PATH": str(mock_private_key),
+                "PDND_PURPOSE_ID_PA": "pa-purpose",
+                "PDND_PURPOSE_ID_COORDINATE": "coord-purpose",
+                "PDND_PURPOSE_ID_COORDINATE_BULK": "",
+                "PDND_PURPOSE_ID_ACCESSI": "",
+                "PDND_PURPOSE_ID_INTERNI": "",
+                "PDND_PURPOSE_ID_ODONIMI": "",
+            },
+            clear=False,
+        ):
+            settings = ClientAssertionSettings(_env_file=None)
+            config = create_modi_config_from_settings(
+                settings, api_audience="https://api.example.com"
+            )
+
+        assert config.kid == "interop-kid"

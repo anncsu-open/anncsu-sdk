@@ -601,11 +601,15 @@ class TestPackageExports:
 
 
 def _set_multi_api_purpose_ids(
-    monkeypatch, pa="test-pa-purpose", coordinate="test-coord-purpose"
+    monkeypatch,
+    pa="test-pa-purpose",
+    coordinate="test-coord-purpose",
+    coordinate_bulk="test-coord-bulk-purpose",
 ):
     """Helper to set all required PDND_PURPOSE_ID_* environment variables."""
     monkeypatch.setenv("PDND_PURPOSE_ID_PA", pa)
     monkeypatch.setenv("PDND_PURPOSE_ID_COORDINATE", coordinate)
+    monkeypatch.setenv("PDND_PURPOSE_ID_COORDINATE_BULK", coordinate_bulk)
     monkeypatch.setenv("PDND_PURPOSE_ID_ACCESSI", "")
     monkeypatch.setenv("PDND_PURPOSE_ID_INTERNI", "")
     monkeypatch.setenv("PDND_PURPOSE_ID_ODONIMI", "")
@@ -657,6 +661,7 @@ class TestClientAssertionSettings:
                 "PDND_AUDIENCE",
                 "PDND_PURPOSE_ID_PA",
                 "PDND_PURPOSE_ID_COORDINATE",
+                "PDND_PURPOSE_ID_COORDINATE_BULK",
                 "PDND_PURPOSE_ID_ACCESSI",
                 "PDND_PURPOSE_ID_INTERNI",
                 "PDND_PURPOSE_ID_ODONIMI",
@@ -713,6 +718,7 @@ class TestClientAssertionSettings:
                 "PDND_AUDIENCE",
                 "PDND_PURPOSE_ID_PA",
                 "PDND_PURPOSE_ID_COORDINATE",
+                "PDND_PURPOSE_ID_COORDINATE_BULK",
                 "PDND_PURPOSE_ID_ACCESSI",
                 "PDND_PURPOSE_ID_INTERNI",
                 "PDND_PURPOSE_ID_ODONIMI",
@@ -781,6 +787,7 @@ class TestClientAssertionSettings:
                 "PDND_AUDIENCE",
                 "PDND_PURPOSE_ID_PA",
                 "PDND_PURPOSE_ID_COORDINATE",
+                "PDND_PURPOSE_ID_COORDINATE_BULK",
                 "PDND_PURPOSE_ID_ACCESSI",
                 "PDND_PURPOSE_ID_INTERNI",
                 "PDND_PURPOSE_ID_ODONIMI",
@@ -867,6 +874,7 @@ PDND_SUBJECT=dotenv-subject
 PDND_AUDIENCE=auth.example.com/client-assertion
 PDND_PURPOSE_ID_PA=dotenv-pa-purpose
 PDND_PURPOSE_ID_COORDINATE=dotenv-coord-purpose
+PDND_PURPOSE_ID_COORDINATE_BULK=dotenv-coord-bulk-purpose
 PDND_PURPOSE_ID_ACCESSI=
 PDND_PURPOSE_ID_INTERNI=
 PDND_PURPOSE_ID_ODONIMI=
@@ -888,6 +896,7 @@ PDND_PRIVATE_KEY={TEST_PRIVATE_KEY.decode("utf-8")}
                 "PDND_AUDIENCE",
                 "PDND_PURPOSE_ID_PA",
                 "PDND_PURPOSE_ID_COORDINATE",
+                "PDND_PURPOSE_ID_COORDINATE_BULK",
                 "PDND_PURPOSE_ID_ACCESSI",
                 "PDND_PURPOSE_ID_INTERNI",
                 "PDND_PURPOSE_ID_ODONIMI",
@@ -920,6 +929,7 @@ PDND_PRIVATE_KEY={TEST_PRIVATE_KEY.decode("utf-8")}
                 "PDND_AUDIENCE",
                 "PDND_PURPOSE_ID_PA",
                 "PDND_PURPOSE_ID_COORDINATE",
+                "PDND_PURPOSE_ID_COORDINATE_BULK",
                 "PDND_PURPOSE_ID_ACCESSI",
                 "PDND_PURPOSE_ID_INTERNI",
                 "PDND_PURPOSE_ID_ODONIMI",

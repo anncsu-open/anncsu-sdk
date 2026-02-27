@@ -23,15 +23,16 @@ class TestAPITypeEnum:
 
         assert APIType.PA.value == "pa"
         assert APIType.COORDINATE.value == "coordinate"
+        assert APIType.COORDINATE_BULK.value == "coordinate_bulk"
         assert APIType.ACCESSI.value == "accessi"
         assert APIType.INTERNI.value == "interni"
         assert APIType.ODONIMI.value == "odonimi"
 
     def test_api_type_count(self) -> None:
-        """Test that we have exactly 5 API types."""
+        """Test that we have exactly 6 API types."""
         from anncsu.common.config import APIType
 
-        assert len(APIType) == 5
+        assert len(APIType) == 6
 
     def test_env_var_name_property(self) -> None:
         """Test that env_var_name returns correct variable names."""
@@ -39,6 +40,7 @@ class TestAPITypeEnum:
 
         assert APIType.PA.env_var_name == "PDND_PURPOSE_ID_PA"
         assert APIType.COORDINATE.env_var_name == "PDND_PURPOSE_ID_COORDINATE"
+        assert APIType.COORDINATE_BULK.env_var_name == "PDND_PURPOSE_ID_COORDINATE_BULK"
         assert APIType.ACCESSI.env_var_name == "PDND_PURPOSE_ID_ACCESSI"
         assert APIType.INTERNI.env_var_name == "PDND_PURPOSE_ID_INTERNI"
         assert APIType.ODONIMI.env_var_name == "PDND_PURPOSE_ID_ODONIMI"
@@ -49,6 +51,7 @@ class TestAPITypeEnum:
 
         assert APIType.PA.cli_command == "pa"
         assert APIType.COORDINATE.cli_command == "coordinate"
+        assert APIType.COORDINATE_BULK.cli_command == "coordinate bulk"
         assert APIType.ACCESSI.cli_command == "accessi"
         assert APIType.INTERNI.cli_command == "interni"
         assert APIType.ODONIMI.cli_command == "odonimi"
@@ -59,6 +62,7 @@ class TestAPITypeEnum:
 
         assert "Consultazione" in APIType.PA.description
         assert "Coordinate" in APIType.COORDINATE.description
+        assert "Massivo" in APIType.COORDINATE_BULK.description
         assert "Accessi" in APIType.ACCESSI.description
         assert "Interni" in APIType.INTERNI.description
         assert "Odonimi" in APIType.ODONIMI.description
@@ -69,6 +73,7 @@ class TestAPITypeEnum:
 
         assert APIType.from_cli_command("pa") == APIType.PA
         assert APIType.from_cli_command("coordinate") == APIType.COORDINATE
+        assert APIType.from_cli_command("coordinate bulk") == APIType.COORDINATE_BULK
         assert APIType.from_cli_command("accessi") == APIType.ACCESSI
         assert APIType.from_cli_command("interni") == APIType.INTERNI
         assert APIType.from_cli_command("odonimi") == APIType.ODONIMI
@@ -154,6 +159,7 @@ class TestClientAssertionSettingsMultiAPI:
         return {
             "PDND_PURPOSE_ID_PA": "pa-purpose-id-123",
             "PDND_PURPOSE_ID_COORDINATE": "coordinate-purpose-id-456",
+            "PDND_PURPOSE_ID_COORDINATE_BULK": "",  # Empty but present
             "PDND_PURPOSE_ID_ACCESSI": "",  # Empty but present
             "PDND_PURPOSE_ID_INTERNI": "",  # Empty but present
             "PDND_PURPOSE_ID_ODONIMI": "",  # Empty but present
@@ -205,6 +211,7 @@ class TestClientAssertionSettingsMultiAPI:
             error_msg = str(exc_info.value)
             assert "PDND_PURPOSE_ID_PA" in error_msg
             assert "PDND_PURPOSE_ID_COORDINATE" in error_msg
+            assert "PDND_PURPOSE_ID_COORDINATE_BULK" in error_msg
             assert "PDND_PURPOSE_ID_ACCESSI" in error_msg
             assert "PDND_PURPOSE_ID_INTERNI" in error_msg
             assert "PDND_PURPOSE_ID_ODONIMI" in error_msg
@@ -332,6 +339,7 @@ class TestClientAssertionSettingsBackwardCompatibility:
             {
                 "PDND_PURPOSE_ID_PA": "pa-id",
                 "PDND_PURPOSE_ID_COORDINATE": "coord-id",
+                "PDND_PURPOSE_ID_COORDINATE_BULK": "",
                 "PDND_PURPOSE_ID_ACCESSI": "",
                 "PDND_PURPOSE_ID_INTERNI": "",
                 "PDND_PURPOSE_ID_ODONIMI": "",
@@ -359,6 +367,7 @@ class TestClientAssertionSettingsBackwardCompatibility:
             # No PDND_PRIVATE_KEY or PDND_KEY_PATH
             "PDND_PURPOSE_ID_PA": "pa-id",
             "PDND_PURPOSE_ID_COORDINATE": "coord-id",
+            "PDND_PURPOSE_ID_COORDINATE_BULK": "",
             "PDND_PURPOSE_ID_ACCESSI": "",
             "PDND_PURPOSE_ID_INTERNI": "",
             "PDND_PURPOSE_ID_ODONIMI": "",
@@ -384,6 +393,7 @@ class TestClientAssertionSettingsModIFields:
             "PDND_KEY_PATH": str(mock_private_key),
             "PDND_PURPOSE_ID_PA": "pa-id",
             "PDND_PURPOSE_ID_COORDINATE": "coord-id",
+            "PDND_PURPOSE_ID_COORDINATE_BULK": "",
             "PDND_PURPOSE_ID_ACCESSI": "",
             "PDND_PURPOSE_ID_INTERNI": "",
             "PDND_PURPOSE_ID_ODONIMI": "",
@@ -518,3 +528,144 @@ class TestClientAssertionSettingsModIFields:
             audit_context = settings.get_modi_audit_context()
 
         assert audit_context is None
+
+
+class TestClientAssertionSettingsEServiceKeyFields:
+    """Tests for ModI signing key fields in ClientAssertionSettings.
+
+    The Client e-service portachiavi on PDND can hold multiple keys:
+    - Voucher key: kid + private_key (for client_assertion → voucher)
+    - ModI signing key: modi_kid + modi_private_key (for Agid-JWT-Signature/TrackingEvidence)
+
+    These tests verify the new fields: modi_kid, modi_private_key, modi_key_path
+    and the has_e_service_key property.
+    """
+
+    @pytest.fixture
+    def base_env_vars(self, mock_private_key: "Path") -> dict[str, str]:
+        """Base environment variables with voucher key configured."""
+        return {
+            "PDND_KID": "interop-kid",
+            "PDND_ISSUER": "test-issuer",
+            "PDND_SUBJECT": "test-subject",
+            "PDND_AUDIENCE": "https://auth.test.example.com/client-assertion",
+            "PDND_KEY_PATH": str(mock_private_key),
+            "PDND_PURPOSE_ID_PA": "pa-id",
+            "PDND_PURPOSE_ID_COORDINATE": "coord-id",
+            "PDND_PURPOSE_ID_COORDINATE_BULK": "",
+            "PDND_PURPOSE_ID_ACCESSI": "",
+            "PDND_PURPOSE_ID_INTERNI": "",
+            "PDND_PURPOSE_ID_ODONIMI": "",
+        }
+
+    def test_modi_kid_field_exists_and_defaults_to_none(
+        self, base_env_vars: dict[str, str]
+    ) -> None:
+        """Test that modi_kid field exists and defaults to None."""
+        from anncsu.common.config import ClientAssertionSettings
+
+        with patch.dict(os.environ, base_env_vars, clear=True):
+            settings = ClientAssertionSettings(_env_file=None)
+
+        assert settings.modi_kid is None
+
+    def test_modi_private_key_field_exists_and_defaults_to_none(
+        self, base_env_vars: dict[str, str]
+    ) -> None:
+        """Test that modi_private_key field exists and defaults to None."""
+        from anncsu.common.config import ClientAssertionSettings
+
+        with patch.dict(os.environ, base_env_vars, clear=True):
+            settings = ClientAssertionSettings(_env_file=None)
+
+        assert settings.modi_private_key is None
+
+    def test_modi_key_path_field_exists_and_defaults_to_none(
+        self, base_env_vars: dict[str, str]
+    ) -> None:
+        """Test that modi_key_path field exists and defaults to None."""
+        from anncsu.common.config import ClientAssertionSettings
+
+        with patch.dict(os.environ, base_env_vars, clear=True):
+            settings = ClientAssertionSettings(_env_file=None)
+
+        assert settings.modi_key_path is None
+
+    def test_modi_kid_loaded_from_env_var(self, base_env_vars: dict[str, str]) -> None:
+        """Test that PDND_MODI_KID env var is loaded into modi_kid field."""
+        from anncsu.common.config import ClientAssertionSettings
+
+        env_vars = {**base_env_vars, "PDND_MODI_KID": "e-service-kid-xyz"}
+
+        with patch.dict(os.environ, env_vars, clear=True):
+            settings = ClientAssertionSettings(_env_file=None)
+
+        assert settings.modi_kid == "e-service-kid-xyz"
+
+    def test_modi_private_key_loaded_from_env_var(
+        self, base_env_vars: dict[str, str], mock_e_service_private_key: "Path"
+    ) -> None:
+        """Test that PDND_MODI_PRIVATE_KEY env var is loaded into modi_private_key."""
+        from anncsu.common.config import ClientAssertionSettings
+
+        e_service_key_content = mock_e_service_private_key.read_text()
+        env_vars = {
+            **base_env_vars,
+            "PDND_MODI_PRIVATE_KEY": e_service_key_content,
+        }
+
+        with patch.dict(os.environ, env_vars, clear=True):
+            settings = ClientAssertionSettings(_env_file=None)
+
+        assert settings.modi_private_key == e_service_key_content
+
+    def test_modi_key_path_loaded_from_env_var(
+        self, base_env_vars: dict[str, str], mock_e_service_private_key: "Path"
+    ) -> None:
+        """Test that PDND_MODI_KEY_PATH env var is loaded into modi_key_path."""
+        from anncsu.common.config import ClientAssertionSettings
+
+        env_vars = {
+            **base_env_vars,
+            "PDND_MODI_KEY_PATH": str(mock_e_service_private_key),
+        }
+
+        with patch.dict(os.environ, env_vars, clear=True):
+            settings = ClientAssertionSettings(_env_file=None)
+
+        assert settings.modi_key_path == str(mock_e_service_private_key)
+
+    def test_has_e_service_key_true_when_modi_kid_and_key_set(
+        self, base_env_vars: dict[str, str], mock_e_service_private_key: "Path"
+    ) -> None:
+        """Test has_e_service_key returns True when modi_kid + modi_private_key set."""
+        from anncsu.common.config import ClientAssertionSettings
+
+        e_service_key_content = mock_e_service_private_key.read_text()
+        env_vars = {
+            **base_env_vars,
+            "PDND_MODI_KID": "e-service-kid",
+            "PDND_MODI_PRIVATE_KEY": e_service_key_content,
+        }
+
+        with patch.dict(os.environ, env_vars, clear=True):
+            settings = ClientAssertionSettings(_env_file=None)
+
+        assert settings.has_e_service_key is True
+
+    def test_has_e_service_key_false_when_only_modi_kid_set(
+        self, base_env_vars: dict[str, str]
+    ) -> None:
+        """Test has_e_service_key returns False when modi_kid is set but no key."""
+        from anncsu.common.config import ClientAssertionSettings
+
+        env_vars = {
+            **base_env_vars,
+            "PDND_MODI_KID": "e-service-kid",
+            # No PDND_MODI_PRIVATE_KEY or PDND_MODI_KEY_PATH
+        }
+
+        with patch.dict(os.environ, env_vars, clear=True):
+            settings = ClientAssertionSettings(_env_file=None)
+
+        assert settings.has_e_service_key is False

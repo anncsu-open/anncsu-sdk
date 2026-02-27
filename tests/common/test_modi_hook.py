@@ -742,3 +742,132 @@ class TestModIPreRequestHookDigestCalculation:
         result2 = hook.before_request(ctx, request2)
 
         assert result1.headers["Digest"] != result2.headers["Digest"]
+
+
+class TestModIPreRequestHookEServiceKid:
+    """Regression tests: hook correctly uses whatever kid/key is in ModIConfig.
+
+    The hook itself doesn't know about voucher vs ModI signing keys. It simply
+    uses the kid and private_key from its ModIConfig. These tests verify
+    that the hook works correctly with any kid value - confirming that once
+    the config layer provides the right key, the hook will use it.
+    """
+
+    def test_hook_uses_kid_from_config_in_jwt_header(self):
+        """Test that JWT header kid matches the config's kid value."""
+        from anncsu.common.hooks.modi_hook import ModIPreRequestHook
+        from anncsu.common.modi import ModIConfig
+
+        # Use a distinctive kid to prove it ends up in the JWT header
+        config = ModIConfig(
+            private_key=TEST_PRIVATE_KEY,
+            kid="my-custom-e-service-kid-789",
+            issuer=TEST_ISSUER,
+            audience=TEST_AUDIENCE,
+        )
+
+        hook = ModIPreRequestHook(config=config, audit_context=None)
+
+        body = b'{"codcom":"H501"}'
+        request = httpx.Request(
+            "POST",
+            "https://api.example.com/coordinate",
+            content=body,
+            headers={"Content-Type": "application/json"},
+        )
+
+        ctx = MagicMock()
+        result = hook.before_request(ctx, request)
+
+        # Decode JWT header to verify kid
+        sig_jwt = result.headers["Agid-JWT-Signature"]
+        parts = sig_jwt.split(".")
+        header_b64 = parts[0] + "=" * (4 - len(parts[0]) % 4)
+        header = json.loads(base64.urlsafe_b64decode(header_b64))
+
+        assert header["kid"] == "my-custom-e-service-kid-789"
+
+    def test_hook_signs_with_private_key_from_config(self):
+        """Test that JWT is signed with the config's private key."""
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+        from anncsu.common.hooks.modi_hook import ModIPreRequestHook
+        from anncsu.common.modi import ModIConfig
+
+        config = ModIConfig(
+            private_key=TEST_PRIVATE_KEY,
+            kid=TEST_KID,
+            issuer=TEST_ISSUER,
+            audience=TEST_AUDIENCE,
+        )
+
+        hook = ModIPreRequestHook(config=config, audit_context=None)
+
+        body = b'{"codcom":"H501"}'
+        request = httpx.Request(
+            "POST",
+            "https://api.example.com/coordinate",
+            content=body,
+            headers={"Content-Type": "application/json"},
+        )
+
+        ctx = MagicMock()
+        result = hook.before_request(ctx, request)
+
+        # Verify JWT can be decoded with the corresponding public key
+        private_key_obj = load_pem_private_key(TEST_PRIVATE_KEY, password=None)
+        public_key = private_key_obj.public_key()
+        public_key_pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+
+        from authlib.jose import jwt as jose_jwt
+
+        sig_jwt = result.headers["Agid-JWT-Signature"]
+        decoded = jose_jwt.decode(sig_jwt, public_key_pem)
+        assert decoded["iss"] == TEST_ISSUER
+
+    def test_hook_works_with_different_kid_values(self):
+        """Test that hook works correctly with various kid values."""
+        from anncsu.common.hooks.modi_hook import ModIPreRequestHook
+        from anncsu.common.modi import ModIConfig
+
+        kid_values = [
+            "interop-kid-abc",
+            "e-service-kid-xyz",
+            "K5nXXEGyPeylnlgSlBk9s4G-1CNLaiNqBr_TWIgikcI",
+            "3fFrxthtnwe6rkBtJ7TkI_UFS7gEhENW7Gf198lMIR8",
+        ]
+
+        for kid in kid_values:
+            config = ModIConfig(
+                private_key=TEST_PRIVATE_KEY,
+                kid=kid,
+                issuer=TEST_ISSUER,
+                audience=TEST_AUDIENCE,
+            )
+
+            hook = ModIPreRequestHook(config=config, audit_context=None)
+
+            body = b'{"test":"data"}'
+            request = httpx.Request(
+                "POST",
+                "https://api.example.com/coordinate",
+                content=body,
+                headers={"Content-Type": "application/json"},
+            )
+
+            ctx = MagicMock()
+            result = hook.before_request(ctx, request)
+
+            assert isinstance(result, httpx.Request)
+
+            # Verify kid in JWT header
+            sig_jwt = result.headers["Agid-JWT-Signature"]
+            parts = sig_jwt.split(".")
+            header_b64 = parts[0] + "=" * (4 - len(parts[0]) % 4)
+            header = json.loads(base64.urlsafe_b64decode(header_b64))
+
+            assert header["kid"] == kid

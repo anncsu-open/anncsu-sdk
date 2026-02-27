@@ -52,6 +52,7 @@ class APIType(str, Enum):
 
     PA = "pa"  # Consultazione PA
     COORDINATE = "coordinate"  # Gestione coordinate accessi
+    COORDINATE_BULK = "coordinate_bulk"  # Gestione coordinate massivo (grandi comuni)
     ACCESSI = "accessi"  # Aggiornamento accessi
     INTERNI = "interni"  # Aggiornamento interni
     ODONIMI = "odonimi"  # Aggiornamento odonimi
@@ -63,7 +64,12 @@ class APIType(str, Enum):
 
     @property
     def cli_command(self) -> str:
-        """Return the CLI subcommand name for this API type."""
+        """Return the CLI subcommand name for this API type.
+
+        Note: COORDINATE_BULK uses 'coordinate bulk' as subcommand (handled by Typer).
+        """
+        if self == APIType.COORDINATE_BULK:
+            return "coordinate bulk"
         return self.value
 
     @property
@@ -72,6 +78,7 @@ class APIType(str, Enum):
         descriptions = {
             APIType.PA: "ANNCSU Consultazione per le PA",
             APIType.COORDINATE: "ANNCSU Aggiornamento Coordinate",
+            APIType.COORDINATE_BULK: "ANNCSU Aggiornamento Coordinate Massivo",
             APIType.ACCESSI: "ANNCSU Aggiornamento Accessi",
             APIType.INTERNI: "ANNCSU Aggiornamento Interni",
             APIType.ODONIMI: "ANNCSU Aggiornamento Odonimi",
@@ -113,6 +120,7 @@ class ClientAssertionSettings(BaseSettings):
         PDND_AUDIENCE: Audience (aud) claim - the PDND token endpoint URL.
         PDND_PURPOSE_ID_PA: Purpose ID for PA Consultazione API.
         PDND_PURPOSE_ID_COORDINATE: Purpose ID for Coordinate API.
+        PDND_PURPOSE_ID_COORDINATE_BULK: Purpose ID for Coordinate Bulk API (grandi comuni, 50k calls/day).
         PDND_PURPOSE_ID_ACCESSI: Purpose ID for Accessi API.
         PDND_PURPOSE_ID_INTERNI: Purpose ID for Interni API.
         PDND_PURPOSE_ID_ODONIMI: Purpose ID for Odonimi API.
@@ -129,6 +137,7 @@ class ClientAssertionSettings(BaseSettings):
         PDND_AUDIENCE=https://auth.interop.pagopa.it/token.oauth2
         PDND_PURPOSE_ID_PA=pa-purpose-id
         PDND_PURPOSE_ID_COORDINATE=coordinate-purpose-id
+        PDND_PURPOSE_ID_COORDINATE_BULK=bulk-purpose-id
         PDND_PURPOSE_ID_ACCESSI=
         PDND_PURPOSE_ID_INTERNI=
         PDND_PURPOSE_ID_ODONIMI=
@@ -174,6 +183,13 @@ class ClientAssertionSettings(BaseSettings):
     purpose_id_coordinate: Annotated[
         str | None,
         Field(default=None, description="Purpose ID for Coordinate API"),
+    ] = None
+    purpose_id_coordinate_bulk: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Purpose ID for Coordinate Bulk API (grandi comuni, 50k calls/day)",
+        ),
     ] = None
     purpose_id_accessi: Annotated[
         str | None,
@@ -225,6 +241,32 @@ class ClientAssertionSettings(BaseSettings):
             description="ModI audit: Level of Assurance (e.g., SPID_L2, CIE_L3)",
         ),
     ] = None
+
+    # ModI Signing Key fields (optional, for APIs requiring separate key for ModI JWTs)
+    # Both keys (voucher + ModI signing) live in the same Client e-service portachiavi on PDND.
+    # GovWay enforces that the ModI signing key be different from the voucher key in production.
+    modi_kid: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="ModI signing Key ID (kid for Agid-JWT-Signature/TrackingEvidence)",
+        ),
+    ] = None
+    modi_private_key: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="ModI signing RSA private key content in PEM format",
+        ),
+    ] = None
+    modi_key_path: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Path to ModI signing RSA private key file",
+        ),
+    ] = None
+
     alg: Annotated[
         str,
         Field(description="Algorithm for signing the JWT"),
@@ -309,6 +351,24 @@ class ClientAssertionSettings(BaseSettings):
             self.modi_user_id is not None
             and self.modi_user_location is not None
             and self.modi_loa is not None
+        )
+
+    @property
+    def has_e_service_key(self) -> bool:
+        """Check if a dedicated ModI signing key is configured.
+
+        Both keys (voucher + ModI signing) live in the same Client e-service
+        portachiavi on PDND. This property checks whether a separate key has been
+        configured specifically for signing ModI JWTs (Agid-JWT-Signature, etc.).
+
+        Returns True only when BOTH modi_kid AND a key source (modi_private_key
+        or modi_key_path) are configured. Having modi_kid alone is not sufficient.
+
+        Returns:
+            True if modi_kid and (modi_private_key or modi_key_path) are set.
+        """
+        return self.modi_kid is not None and (
+            self.modi_private_key is not None or self.modi_key_path is not None
         )
 
     def get_modi_audit_context(self) -> "AuditContext | None":
