@@ -12,7 +12,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from anncsu.cli.models import AuthStatus, LoginResult, TokenStatus
+from anncsu.cli.models import AuthStatus, CurlOutput, LoginResult, TokenStatus
 from anncsu.common import PDNDAuthManager
 from anncsu.common.config import APIType, ClientAssertionSettings
 from anncsu.common.session import get_config_dir
@@ -428,6 +428,440 @@ def token(
     except Exception as e:
         error_console.print(f"[red]Error:[/red] Failed to get token: {e}", err=True)
         raise typer.Exit(1) from None
+
+
+# Sample payloads for --api coordinate when --body is not provided
+_SAMPLE_COORDINATE_PAYLOAD = {
+    "richiesta": {
+        "accesso": {
+            "codcom": "H501",
+            "progr_civico": "12345",
+            "coordinate": {
+                "x": "12.4922309",
+                "y": "41.8902102",
+                "metodo": "4",
+            },
+        }
+    }
+}
+
+# PA consultazione endpoint definitions: path + required query param names
+# Params listed in "base64_params" are auto-encoded from plain text by the CLI
+_PA_ENDPOINTS: dict[str, dict] = {
+    "esisteodonimo": {
+        "path": "esisteodonimo",
+        "params": ["codcom", "denom"],
+        "base64_params": {"denom"},
+        "description": "Verifica esistenza odonimo",
+    },
+    "esisteaccesso": {
+        "path": "esisteaccesso",
+        "params": ["codcom", "denom", "accesso"],
+        "base64_params": {"denom"},
+        "description": "Verifica esistenza accesso",
+    },
+    "elencoodonimi": {
+        "path": "elencoodonimi",
+        "params": ["codcom", "denomparz"],
+        "base64_params": {"denomparz"},
+        "description": "Elenco odonimi",
+    },
+    "elencoaccessi": {
+        "path": "elencoaccessi",
+        "params": ["codcom", "denom", "accparz"],
+        "base64_params": {"denom"},
+        "description": "Elenco accessi",
+    },
+    "elencoodonimiprog": {
+        "path": "elencoodonimiprog",
+        "params": ["codcom", "denomparz"],
+        "base64_params": {"denomparz"},
+        "description": "Elenco odonimi con progressivo nazionale",
+    },
+    "elencoaccessiprog": {
+        "path": "elencoaccessiprog",
+        "params": ["prognaz", "accparz"],
+        "base64_params": set(),
+        "description": "Elenco accessi con progressivo nazionale",
+    },
+    "prognazarea": {
+        "path": "prognazarea",
+        "params": ["prognaz"],
+        "base64_params": set(),
+        "description": "Dati odonimo per progressivo nazionale",
+    },
+    "prognazacc": {
+        "path": "prognazacc",
+        "params": ["prognazacc"],
+        "base64_params": set(),
+        "description": "Dati accesso per progressivo nazionale accesso",
+    },
+}
+
+_PA_ENDPOINT_NAMES = list(_PA_ENDPOINTS.keys())
+_PA_ENDPOINT_HELP = (
+    "PA endpoint to query. "
+    f"Valid values: {', '.join(_PA_ENDPOINT_NAMES)}. "
+    "Default: esisteodonimo"
+)
+
+
+def _build_pa_query_string(
+    endpoint_def: dict,
+    user_params: dict[str, str | None],
+) -> tuple[str, list[str]]:
+    """Build query string for a PA endpoint from user-provided params.
+
+    For params in base64_params, the user's plain text value is base64-encoded.
+    Returns (query_string, warnings_list).
+    """
+    import base64
+    from urllib.parse import quote
+
+    query_parts: list[str] = []
+    query_warnings: list[str] = []
+    required_params: list[str] = endpoint_def["params"]
+    b64_params: set[str] = endpoint_def["base64_params"]
+    missing: list[str] = []
+
+    for param_name in required_params:
+        value = user_params.get(param_name)
+        if value is None:
+            missing.append(param_name)
+            continue
+        if param_name in b64_params:
+            encoded = base64.b64encode(value.encode("utf-8")).decode("utf-8")
+            query_parts.append(f"{param_name}={quote(encoded, safe='')}")
+            query_warnings.append(f'{param_name}: "{value}" -> base64: {encoded}')
+        else:
+            query_parts.append(f"{param_name}={quote(value, safe='')}")
+
+    if missing:
+        query_warnings.insert(
+            0,
+            f"Missing params: {', '.join(missing)}. "
+            f"Pass them with {' '.join('--' + m for m in missing)}",
+        )
+
+    # Warn about params provided but not used by this endpoint
+    ignored = [
+        p for p, v in user_params.items() if v is not None and p not in required_params
+    ]
+    if ignored:
+        query_warnings.append(
+            f"Ignored params (not used by this endpoint): {', '.join('--' + p for p in ignored)}"
+        )
+
+    return "&".join(query_parts), query_warnings
+
+
+@auth_app.command("curl")
+def curl_command(
+    api: Annotated[
+        str,
+        typer.Option(
+            "--api",
+            "-a",
+            help=_api_help,
+            callback=_api_type_callback,
+        ),
+    ],
+    token_endpoint: Annotated[
+        str,
+        typer.Option(
+            "--token-endpoint",
+            "-e",
+            help="PDND token endpoint URL.",
+        ),
+    ] = DEFAULT_TOKEN_ENDPOINT,
+    validation_env: Annotated[
+        bool,
+        typer.Option(
+            "--validation/--production",
+            help="Use validation (UAT) or production environment.",
+        ),
+    ] = True,
+    body: Annotated[
+        str | None,
+        typer.Option(
+            "--body",
+            "-b",
+            help="JSON body for POST requests (coordinate API). If omitted, uses a sample payload.",
+        ),
+    ] = None,
+    endpoint: Annotated[
+        str | None,
+        typer.Option(
+            "--endpoint",
+            "-p",
+            help=_PA_ENDPOINT_HELP,
+        ),
+    ] = None,
+    codcom: Annotated[
+        str | None,
+        typer.Option("--codcom", help="Codice Belfiore del comune (es. H501)."),
+    ] = None,
+    denom: Annotated[
+        str | None,
+        typer.Option(
+            "--denom", help="Denominazione esatta dell'odonimo (testo, auto base64)."
+        ),
+    ] = None,
+    denomparz: Annotated[
+        str | None,
+        typer.Option(
+            "--denomparz",
+            help="Denominazione parziale dell'odonimo (testo, auto base64).",
+        ),
+    ] = None,
+    accesso: Annotated[
+        str | None,
+        typer.Option(
+            "--accesso", help="Valore civico (+esponente/specificita) o metrico."
+        ),
+    ] = None,
+    accparz: Annotated[
+        str | None,
+        typer.Option("--accparz", help="Valore parziale del civico o metrico."),
+    ] = None,
+    prognaz: Annotated[
+        str | None,
+        typer.Option("--prognaz", help="Progressivo nazionale dell'odonimo."),
+    ] = None,
+    prognazacc_param: Annotated[
+        str | None,
+        typer.Option("--prognazacc", help="Progressivo nazionale dell'accesso."),
+    ] = None,
+    headers_only: Annotated[
+        bool,
+        typer.Option(
+            "--headers-only",
+            help="Output only -H flags without the full cURL command.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as structured JSON."),
+    ] = False,
+) -> None:
+    """Generate a complete cURL command with authentication headers.
+
+    For PA (GET) APIs, generates a cURL with Bearer token.
+    Use --endpoint to select which PA endpoint (default: esisteodonimo).
+    Pass query parameters directly (--codcom, --denom, etc.) to build
+    a ready-to-use cURL. Text values for denom/denomparz are auto base64-encoded.
+
+    For Coordinate (POST) APIs, generates a cURL with Bearer token plus
+    all ModI headers (Digest, Agid-JWT-Signature, Agid-JWT-TrackingEvidence).
+
+    Examples:
+        anncsu auth curl --api pa --codcom H501 --denom "VIA ROMA"
+        anncsu auth curl --api pa --endpoint prognazacc --prognazacc 0001234500001
+        anncsu auth curl --api pa --endpoint elencoodonimi --codcom H501 --denomparz VIA
+        anncsu auth curl --api coordinate
+        anncsu auth curl --api coordinate --body '{"richiesta":{...}}'
+        anncsu auth curl --api pa --production --codcom I702 --denom "VIA NAPOLI"
+    """
+    import json
+
+    from anncsu.cli.commands.coordinate import CONSULT_SERVERS, SERVERS
+
+    api_type = _get_api_type()
+    env_name = "validation" if validation_env else "production"
+    curl_warnings: list[str] = []
+
+    if endpoint is not None and api_type != APIType.PA:
+        error_console.print(
+            "[yellow]Warning:[/yellow] --endpoint is only used with --api pa, ignoring."
+        )
+
+    # 1. Authenticate
+    try:
+        settings = ClientAssertionSettings()
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Configuration not found: {e}")
+        raise typer.Exit(1) from None
+
+    try:
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            manager = PDNDAuthManager(
+                settings=settings,
+                token_endpoint=token_endpoint,
+                api_type=api_type,
+                session_persistence=True,
+                config_dir=get_config_dir(),
+            )
+        _show_auth_warnings(caught_warnings)
+        access_token = manager.get_access_token()
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Failed to get token: {e}")
+        raise typer.Exit(1) from None
+
+    token_ttl = manager.access_token_ttl()
+
+    # 2. Determine server URL, HTTP method, and endpoint path
+    if api_type == APIType.PA:
+        server_url = CONSULT_SERVERS[env_name]
+        http_method = "GET"
+
+        # Select PA endpoint
+        pa_endpoint_name = endpoint or "esisteodonimo"
+        if pa_endpoint_name not in _PA_ENDPOINTS:
+            valid = ", ".join(_PA_ENDPOINT_NAMES)
+            error_console.print(
+                f"[red]Error:[/red] Unknown PA endpoint '{pa_endpoint_name}'. "
+                f"Valid values: {valid}"
+            )
+            raise typer.Exit(1)
+
+        pa_ep = _PA_ENDPOINTS[pa_endpoint_name]
+
+        # Collect user-provided query params
+        user_params: dict[str, str | None] = {
+            "codcom": codcom,
+            "denom": denom,
+            "denomparz": denomparz,
+            "accesso": accesso,
+            "accparz": accparz,
+            "prognaz": prognaz,
+            "prognazacc": prognazacc_param,
+        }
+
+        query_string, query_warnings = _build_pa_query_string(pa_ep, user_params)
+        curl_warnings.extend(query_warnings)
+
+        if query_string:
+            endpoint_path = f"{pa_ep['path']}?{query_string}"
+        else:
+            endpoint_path = pa_ep["path"]
+            curl_warnings.append(
+                f"No query params provided for {pa_endpoint_name}. "
+                f"Required: {', '.join('--' + p for p in pa_ep['params'])}"
+            )
+        request_body = None
+    else:
+        # coordinate (and other POST-based APIs)
+        server_url = SERVERS[env_name]
+        http_method = "POST"
+        endpoint_path = "gestionecoordinate"
+
+        if body is not None:
+            try:
+                # Validate JSON
+                parsed_body = json.loads(body)
+                request_body = json.dumps(
+                    parsed_body, separators=(",", ":"), sort_keys=True
+                )
+            except json.JSONDecodeError as e:
+                error_console.print(f"[red]Error:[/red] Invalid JSON body: {e}")
+                raise typer.Exit(1) from None
+        else:
+            request_body = json.dumps(
+                _SAMPLE_COORDINATE_PAYLOAD, separators=(",", ":"), sort_keys=True
+            )
+            curl_warnings.append(
+                "Using sample payload. ModI headers (Digest, Signature) are computed from this body "
+                "and will be invalid if the body is changed."
+            )
+
+    full_url = f"{server_url}/{endpoint_path}"
+
+    # 3. Build headers
+    headers: dict[str, str] = {"Authorization": f"Bearer {access_token}"}
+
+    if api_type != APIType.PA and request_body is not None:
+        # Generate ModI headers for POST APIs
+        headers["Content-Type"] = "application/json"
+
+        try:
+            from anncsu.common.modi import (
+                ModIHeaderGenerator,
+                create_modi_config_from_settings,
+            )
+
+            modi_config = create_modi_config_from_settings(settings, server_url)
+            audit_context = (
+                settings.get_modi_audit_context()
+                if settings.has_modi_audit_context
+                else None
+            )
+
+            if audit_context is None:
+                curl_warnings.append(
+                    "ModI audit context not configured (PDND_MODI_USER_ID, PDND_MODI_USER_LOCATION, PDND_MODI_LOA). "
+                    "Agid-JWT-TrackingEvidence header will be missing."
+                )
+
+            generator = ModIHeaderGenerator(modi_config, audit_context)
+            payload_dict = json.loads(request_body)
+            modi_headers = generator.generate_headers(payload_dict)
+            headers.update(modi_headers)
+
+            curl_warnings.append(
+                "ModI headers (Agid-JWT-Signature) valid for ~5 minutes from generation."
+            )
+        except Exception as e:
+            error_console.print(
+                f"[yellow]Warning:[/yellow] Could not generate ModI headers: {e}"
+            )
+            curl_warnings.append(f"ModI header generation failed: {e}")
+
+    # 4. Build output
+    header_lines = [f'-H "{k}: {v}"' for k, v in headers.items()]
+
+    if headers_only:
+        # Output only -H flags, one per line
+        if json_output:
+            output = CurlOutput(
+                curl_command="\n".join(header_lines),
+                headers=headers,
+                server_url=full_url,
+                method=http_method,
+                body=request_body,
+                api_type=api_type.value,
+                environment=env_name,
+                token_ttl=token_ttl,
+                warnings=curl_warnings,
+            )
+            print(output.model_dump_json(indent=2))
+        else:
+            for w in curl_warnings:
+                error_console.print(f"[yellow]Warning:[/yellow] {w}")
+            print("\n".join(header_lines))
+        return
+
+    # Full cURL command
+    parts = [f"curl -X {http_method}"]
+    parts.append(f'  "{full_url}"')
+    for hl in header_lines:
+        parts.append(f"  {hl}")
+    if request_body is not None:
+        # Escape single quotes in body for shell safety
+        escaped_body = request_body.replace("'", "'\\''")
+        parts.append(f"  -d '{escaped_body}'")
+
+    curl_cmd = " \\\n".join(parts)
+
+    if json_output:
+        output = CurlOutput(
+            curl_command=curl_cmd,
+            headers=headers,
+            server_url=full_url,
+            method=http_method,
+            body=request_body,
+            api_type=api_type.value,
+            environment=env_name,
+            token_ttl=token_ttl,
+            warnings=curl_warnings,
+        )
+        print(output.model_dump_json(indent=2))
+    else:
+        for w in curl_warnings:
+            error_console.print(f"[yellow]Warning:[/yellow] {w}")
+        if token_ttl is not None:
+            error_console.print(f"[dim]Token TTL: {_format_ttl(token_ttl)}[/dim]")
+        print(curl_cmd)
 
 
 @auth_app.command("logout")

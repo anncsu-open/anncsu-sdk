@@ -434,6 +434,109 @@ curl -H "Authorization: Bearer $(anncsu auth token --api pa)" \
   https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1/esisteodonimo?codcom=H501
 ```
 
+#### `anncsu auth curl`
+
+Generate a complete cURL command with all authentication headers, ready to copy-paste.
+
+For PA (GET) APIs, generates a cURL with Bearer token only.
+For Coordinate (POST) APIs, generates a cURL with Bearer + ModI headers (Digest, Agid-JWT-Signature, Agid-JWT-TrackingEvidence).
+
+```bash
+# PA consultazione — passa i parametri di query direttamente
+anncsu auth curl --api pa --codcom H501 --denom "VIA ROMA"
+anncsu auth curl --api pa --endpoint elencoodonimi --codcom H501 --denomparz VIA
+anncsu auth curl --api pa --endpoint prognazacc --prognazacc 0001234500001
+anncsu auth curl --api pa --endpoint elencoaccessiprog --prognaz 0001234500000 --accparz 1 --production
+
+# Coordinate (POST with ModI headers)
+anncsu auth curl --api coordinate
+anncsu auth curl --api coordinate --body '{"richiesta":{...}}'
+
+# Headers only (for scripting)
+anncsu auth curl --api pa --codcom H501 --denom "VIA ROMA" --headers-only
+
+# JSON output
+anncsu auth curl --api pa --codcom H501 --denom "VIA ROMA" --json
+
+# Copy to clipboard (macOS)
+anncsu auth curl --api pa --codcom H501 --denom "VIA ROMA" | pbcopy
+```
+
+I parametri `--denom` e `--denomparz` accettano testo in chiaro e vengono automaticamente codificati in base64 dal CLI.
+Non serve codificare manualmente: basta passare il nome della strada e la cURL generata conterrà il valore base64 corretto.
+
+Options:
+- `--api`, `-a` - **(required)** API type (`pa`, `coordinate`, etc.)
+- `--endpoint`, `-p` - PA endpoint to query (default: `esisteodonimo`). Only for `--api pa`.
+- `--validation/--production` - Environment (default: `--validation`)
+- `--body`, `-b` - JSON body for POST (coordinate). Uses sample if omitted
+- `--headers-only` - Output only `-H` flags
+- `--json` - Output as structured JSON (`CurlOutput` model)
+- `--token-endpoint`, `-e` - PDND token endpoint URL (default: UAT)
+
+Query parameter options (solo `--api pa`):
+- `--codcom` - Codice Belfiore del comune (es. `H501`)
+- `--denom` - Denominazione esatta dell'odonimo (testo, auto base64)
+- `--denomparz` - Denominazione parziale dell'odonimo (testo, auto base64)
+- `--accesso` - Valore civico (+esponente/specificita) o metrico
+- `--accparz` - Valore parziale del civico o metrico
+- `--prognaz` - Progressivo nazionale dell'odonimo
+- `--prognazacc` - Progressivo nazionale dell'accesso
+
+Available PA endpoints (`--endpoint`):
+
+| Endpoint | Path | Required Params | Description |
+|---|---|---|---|
+| `esisteodonimo` | `/esisteodonimo` | `--codcom`, `--denom` (auto base64) | Verifica esistenza odonimo |
+| `esisteaccesso` | `/esisteaccesso` | `--codcom`, `--denom` (auto base64), `--accesso` | Verifica esistenza accesso |
+| `elencoodonimi` | `/elencoodonimi` | `--codcom`, `--denomparz` (auto base64) | Elenco odonimi |
+| `elencoaccessi` | `/elencoaccessi` | `--codcom`, `--denom` (auto base64), `--accparz` | Elenco accessi |
+| `elencoodonimiprog` | `/elencoodonimiprog` | `--codcom`, `--denomparz` (auto base64) | Elenco odonimi con progressivo nazionale |
+| `elencoaccessiprog` | `/elencoaccessiprog` | `--prognaz`, `--accparz` | Elenco accessi con progressivo nazionale |
+| `prognazarea` | `/prognazarea` | `--prognaz` | Dati odonimo per progressivo nazionale |
+| `prognazacc` | `/prognazacc` | `--prognazacc` | Dati accesso per progressivo nazionale accesso |
+
+Output (PA GET):
+```bash
+# anncsu auth curl --api pa --codcom H501 --denom "VIA ROMA"
+curl -X GET \
+  "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-consultazione/v1/esisteodonimo?codcom=H501&denom=VklBIFJPTUE%3D" \
+  -H "Authorization: Bearer eyJ..."
+```
+
+Output (Coordinate POST):
+```bash
+curl -X POST \
+  "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1/gestionecoordinate" \
+  -H "Authorization: Bearer eyJ..." \
+  -H "Content-Type: application/json" \
+  -H "Digest: SHA-256=..." \
+  -H "Agid-JWT-Signature: eyJ..." \
+  -H "Agid-JWT-TrackingEvidence: eyJ..." \
+  -d '{"richiesta":{"accesso":{"codcom":"H501",...}}}'
+```
+
+JSON output (`--json`):
+```json
+{
+  "curl_command": "curl -X GET ...",
+  "headers": {
+    "Authorization": "Bearer eyJ..."
+  },
+  "server_url": "https://modipa-val.agenziaentrate.it/.../esisteodonimo?codcom=H501&denom=VklBIFJPTUE%3D",
+  "method": "GET",
+  "body": null,
+  "api_type": "pa",
+  "environment": "validation",
+  "token_ttl": 600,
+  "warnings": ["denom: \"VIA ROMA\" -> base64: VklBIFJPTUE="]
+}
+```
+
+> **Note**: ModI headers (Agid-JWT-Signature) are valid for ~5 minutes. The Digest header is computed from the body, so if you modify the body the cURL will be invalid.
+
+> **Note**: Se non vengono passati tutti i parametri richiesti per l'endpoint, il CLI stampa un warning con i parametri mancanti. La cURL viene comunque generata con i parametri forniti.
+
 #### `anncsu auth logout`
 
 Clear cached tokens for a specific API type (end session):
@@ -1794,7 +1897,9 @@ MODI_LOA=SPID_L2
 | `anncsu coordinate bulk update` | ✅ Yes - POST requests with payload |
 | `anncsu coordinate bulk dry-run` | ✅ Yes - POST requests (update + restore) |
 | `anncsu coordinate status` | ❌ No - GET request, no payload |
-| `anncsu auth *` | ❌ No - Authentication only |
+| `anncsu auth curl --api coordinate` | ✅ Yes - Generates cURL with ModI headers |
+| `anncsu auth curl --api pa` | ❌ No - GET request, Bearer only |
+| `anncsu auth *` (other) | ❌ No - Authentication only |
 | `anncsu config *` | ❌ No - Local configuration |
 
 ### Verifying ModI Configuration
