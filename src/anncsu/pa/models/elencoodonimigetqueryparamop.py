@@ -3,6 +3,7 @@
 from __future__ import annotations
 from anncsu.common.sdk.types import BaseModel
 from anncsu.common.sdk.utils import FieldMetadata, QueryParamMetadata
+import pydantic
 from typing import List, Optional
 from typing_extensions import Annotated, NotRequired, TypedDict
 
@@ -27,6 +28,7 @@ class ElencoOdonimiGetQueryParamRequest(BaseModel):
 
 
 class ElencoOdonimiGetQueryParamDataTypedDict(TypedDict):
+    cododocomunale: NotRequired[str]
     dug: NotRequired[str]
     denomuff: NotRequired[str]
     denomloc: NotRequired[str]
@@ -35,9 +37,11 @@ class ElencoOdonimiGetQueryParamDataTypedDict(TypedDict):
 
 
 class ElencoOdonimiGetQueryParamData(BaseModel):
+    cododocomunale: Optional[str] = None
+
     dug: Optional[str] = None
 
-    denomuff: Optional[str] = None
+    denomuff: Annotated[Optional[str], pydantic.Field(alias="duf")] = None
 
     denomloc: Optional[str] = None
 

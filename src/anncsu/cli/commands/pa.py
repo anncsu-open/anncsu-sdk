@@ -239,23 +239,14 @@ def accesso(
         bool,
         typer.Option("--json", help="Output as JSON."),
     ] = False,
-    enrich: Annotated[
-        bool,
-        typer.Option(
-            "--enrich/--no-enrich",
-            help="Enrich with street denomination via additional API call.",
-        ),
-    ] = False,
 ) -> None:
     """Lookup access point by national progressive (with coordinates).
 
     Returns the complete detail: street info, civic number, coordinates,
-    and survey method. Use --enrich to fetch the street denomination
-    (denomuff) via an additional prognazarea lookup.
+    and survey method.
 
     Example:
         anncsu pa accesso --prognazacc 28586543
-        anncsu pa accesso --prognazacc 28586543 --enrich
         anncsu pa accesso --prognazacc 28586543 --production --json
     """
     if server_url is None:
@@ -284,29 +275,6 @@ def accesso(
             f"[red]No results:[/red] No access point found for prognazacc={prognazacc}"
         )
         raise typer.Exit(1) from None
-
-    # Enrich: prognazacc API doesn't return denomuff, fetch it via prognazarea
-    if enrich:
-        for item in response.data:
-            if not item.denomuff and item.prognaz:
-                try:
-                    area_resp = sdk.queryparam.prognazarea_get_query_param(
-                        prognaz=item.prognaz,
-                    )
-                    if area_resp.data:
-                        area = area_resp.data[0]
-                        if area.denomuff:
-                            item.denomuff = area.denomuff
-                        if area.denomloc and not item.denomloc:
-                            item.denomloc = area.denomloc
-                        if area.denomlingua1 and not item.denomlingua1:
-                            item.denomlingua1 = area.denomlingua1
-                        if area.denomlingua2 and not item.denomlingua2:
-                            item.denomlingua2 = area.denomlingua2
-                except Exception as e:
-                    error_console.print(
-                        f"[yellow]Warning:[/yellow] Enrichment failed for prognaz={item.prognaz}: {e}"
-                    )
 
     if json_output:
         import json

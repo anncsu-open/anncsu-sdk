@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 from anncsu.common.sdk.types import BaseModel
+import pydantic
 from typing import List, Optional
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import Annotated, NotRequired, TypedDict
 
 
 class ElencoodonimiprogPostRequestTypedDict(TypedDict):
@@ -26,6 +27,7 @@ class ElencoodonimiprogPostRequest(BaseModel):
 
 class ElencoodonimiprogPostDataTypedDict(TypedDict):
     prognaz: NotRequired[str]
+    cododocomunale: NotRequired[str]
     dug: NotRequired[str]
     denomuff: NotRequired[str]
     denomloc: NotRequired[str]
@@ -36,9 +38,11 @@ class ElencoodonimiprogPostDataTypedDict(TypedDict):
 class ElencoodonimiprogPostData(BaseModel):
     prognaz: Optional[str] = None
 
+    cododocomunale: Optional[str] = None
+
     dug: Optional[str] = None
 
-    denomuff: Optional[str] = None
+    denomuff: Annotated[Optional[str], pydantic.Field(alias="duf")] = None
 
     denomloc: Optional[str] = None
 

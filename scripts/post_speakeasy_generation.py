@@ -222,8 +222,119 @@ def update_imports_in_package(package_path: Path, dry_run: bool = False) -> list
     return modified
 
 
-def process_package(package_name: str, dry_run: bool = False) -> tuple[int, int]:
-    """Process a single API package. Returns (deleted_count, modified_count)."""
+def fix_model_field_aliases(package_path: Path, dry_run: bool = False) -> list[str]:
+    """Fix OAS-vs-real-API field name mismatches in model files.
+
+    The OAS specs define ``denomuff`` but the real API returns ``duf``.
+    Additionally, ``cododocomunale`` and ``codacccomunale`` are returned
+    by the API but missing from OAS specs.
+
+    This function adds Pydantic aliases and missing fields to survive
+    Speakeasy regeneration.  See https://github.com/geobeyond/anncsu-sdk/issues/12
+    """
+    models_path = package_path / "models"
+    if not models_path.exists():
+        return []
+
+    fixed: list[str] = []
+
+    for py_file in sorted(models_path.glob("*.py")):
+        if "__pycache__" in str(py_file):
+            continue
+
+        content = py_file.read_text()
+        original_content = content
+
+        # Skip files that don't contain the denomuff field
+        if "denomuff" not in content:
+            continue
+
+        # 1. Ensure ``import pydantic`` is present
+        if "import pydantic" not in content:
+            content = re.sub(
+                r"(from typing_extensions import .*)",
+                r"\1\nimport pydantic",
+                content,
+                count=1,
+            )
+
+        # 2. Ensure ``Annotated`` is in typing_extensions imports
+        if re.search(r"from typing_extensions import (?!.*Annotated)", content):
+            content = re.sub(
+                r"from typing_extensions import (.*)",
+                r"from typing_extensions import Annotated, \1",
+                content,
+                count=1,
+            )
+
+        # 3. Replace ``denomuff: Optional[str] = None`` with aliased version
+        content = re.sub(
+            r"    denomuff: Optional\[str\] = None",
+            '    denomuff: Annotated[Optional[str], pydantic.Field(alias="duf")] = None',
+            content,
+        )
+
+        # 4. Add ``cododocomunale`` field after ``prognaz`` or before ``dug``
+        if "cododocomunale" not in content:
+            # TypedDict entry
+            if "    prognaz: NotRequired[str]\n    dug:" in content:
+                content = content.replace(
+                    "    prognaz: NotRequired[str]\n    dug:",
+                    "    prognaz: NotRequired[str]\n"
+                    "    cododocomunale: NotRequired[str]\n    dug:",
+                )
+            elif "    dug: NotRequired[str]\n    denomuff:" in content:
+                content = content.replace(
+                    "    dug: NotRequired[str]\n    denomuff:",
+                    "    cododocomunale: NotRequired[str]\n"
+                    "    dug: NotRequired[str]\n    denomuff:",
+                )
+
+            # BaseModel field
+            if "    prognaz: Optional[str] = None\n\n    " in content:
+                content = re.sub(
+                    r"(    prognaz: Optional\[str\] = None\n)"
+                    r"\n(    (?:cododocomunale|dug):)",
+                    r"\1\n    cododocomunale: Optional[str] = None\n\n\2",
+                    content,
+                    count=1,
+                )
+            else:
+                content = re.sub(
+                    r"(class \w+Data\(BaseModel\):\n)(    dug:)",
+                    r"\1    cododocomunale: Optional[str] = None\n\n\2",
+                    content,
+                    count=1,
+                )
+
+        # 5. Add ``codacccomunale`` after ``prognazacc`` (only prognazacc* files)
+        if "codacccomunale" not in content and "prognazacc" in py_file.name:
+            # TypedDict
+            content = re.sub(
+                r"(    prognazacc: NotRequired\[str\]\n)(    civico:)",
+                r"\1    codacccomunale: NotRequired[str]\n\2",
+                content,
+            )
+            # BaseModel
+            content = re.sub(
+                r"(    prognazacc: Optional\[str\] = None\n)"
+                r"\n(    civico:)",
+                r"\1\n    codacccomunale: Optional[str] = None\n\n\2",
+                content,
+            )
+
+        if content != original_content:
+            if not dry_run:
+                py_file.write_text(content)
+            rel_path = py_file.relative_to(package_path)
+            fixed.append(str(rel_path))
+            console.print(f"  [green]Fixed field aliases:[/green] {rel_path}")
+
+    return fixed
+
+
+def process_package(package_name: str, dry_run: bool = False) -> tuple[int, int, int]:
+    """Process a single API package. Returns (deleted, modified, fixed)."""
     package_path = SDK_ROOT / package_name
 
     if not package_path.exists():
@@ -245,7 +356,13 @@ def process_package(package_name: str, dry_run: bool = False) -> tuple[int, int]
     if not modified:
         console.print("  [dim]No imports to update[/dim]")
 
-    return len(deleted), len(modified)
+    # Step 3: Fix model field aliases (Issue #12)
+    console.print("\n[bold]3. Fixing model field aliases (Issue #12)...[/bold]")
+    fixed = fix_model_field_aliases(package_path, dry_run)
+    if not fixed:
+        console.print("  [dim]No field aliases to fix[/dim]")
+
+    return len(deleted), len(modified), len(fixed)
 
 
 @app.command()
@@ -282,29 +399,35 @@ def main(
     1. Delete duplicated files (basesdk.py, httpclient.py, utils/, types/)
 
     2. Update imports to use anncsu.common.sdk instead of local copies
+
+    3. Fix model field aliases (denomuff -> duf, add cododocomunale/codacccomunale)
     """
     if dry_run:
         console.print("[yellow]DRY RUN - No changes will be made[/yellow]\n")
 
     total_deleted = 0
     total_modified = 0
+    total_fixed = 0
 
     if all_packages:
         # Process all known API packages
         for pkg in ALL_PACKAGES:
-            deleted, modified = process_package(pkg, dry_run)
+            deleted, modified, fixed = process_package(pkg, dry_run)
             total_deleted += deleted
             total_modified += modified
+            total_fixed += fixed
     else:
-        deleted, modified = process_package(package, dry_run)
+        deleted, modified, fixed = process_package(package, dry_run)
         total_deleted = deleted
         total_modified = modified
+        total_fixed = fixed
 
     # Summary
     console.print("\n" + "=" * 50)
     console.print("[bold green]Post-generation processing complete![/bold green]")
     console.print(f"\n  Files deleted:  {total_deleted}")
     console.print(f"  Files modified: {total_modified}")
+    console.print(f"  Fields fixed:   {total_fixed}")
 
     if dry_run:
         console.print(

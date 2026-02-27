@@ -3,6 +3,7 @@
 from __future__ import annotations
 from anncsu.common.sdk.types import BaseModel
 from anncsu.common.sdk.utils import FieldMetadata, QueryParamMetadata
+import pydantic
 from typing import List, Optional
 from typing_extensions import Annotated, NotRequired, TypedDict
 
@@ -21,6 +22,7 @@ class PrognazareaGetQueryParamRequest(BaseModel):
 
 class PrognazareaGetQueryParamDataTypedDict(TypedDict):
     prognaz: NotRequired[str]
+    cododocomunale: NotRequired[str]
     dug: NotRequired[str]
     denomuff: NotRequired[str]
     denomloc: NotRequired[str]
@@ -31,9 +33,11 @@ class PrognazareaGetQueryParamDataTypedDict(TypedDict):
 class PrognazareaGetQueryParamData(BaseModel):
     prognaz: Optional[str] = None
 
+    cododocomunale: Optional[str] = None
+
     dug: Optional[str] = None
 
-    denomuff: Optional[str] = None
+    denomuff: Annotated[Optional[str], pydantic.Field(alias="duf")] = None
 
     denomloc: Optional[str] = None
 
