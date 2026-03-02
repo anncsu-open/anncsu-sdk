@@ -40,7 +40,7 @@ dev = [
 requires = ["hatchling", "uv-dynamic-versioning"]
 build-backend = "hatchling.build"
 [tool.uv.build-backend]
-module-name = "anncsu.pa"
+module-name = "anncsu"
 module-root = "src"
 [tool.hatch.version]
 source = "uv-dynamic-versioning"
