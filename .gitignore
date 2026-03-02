@@ -210,3 +210,4 @@ __marimo__/
 **/.speakeasy/temp/
 **/.speakeasy/logs/
 .speakeasy/reports
+*.DS_Store

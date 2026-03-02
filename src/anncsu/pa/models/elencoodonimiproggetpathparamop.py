@@ -3,6 +3,7 @@
 from __future__ import annotations
 from anncsu.common.sdk.types import BaseModel
 from anncsu.common.sdk.utils import FieldMetadata, PathParamMetadata
+import pydantic
 from typing import List, Optional
 from typing_extensions import Annotated, NotRequired, TypedDict
 
@@ -28,6 +29,7 @@ class ElencoodonimiprogGetPathParamRequest(BaseModel):
 
 class ElencoodonimiprogGetPathParamDataTypedDict(TypedDict):
     prognaz: NotRequired[str]
+    cododocomunale: NotRequired[str]
     dug: NotRequired[str]
     denomuff: NotRequired[str]
     denomloc: NotRequired[str]
@@ -38,9 +40,11 @@ class ElencoodonimiprogGetPathParamDataTypedDict(TypedDict):
 class ElencoodonimiprogGetPathParamData(BaseModel):
     prognaz: Optional[str] = None
 
+    cododocomunale: Optional[str] = None
+
     dug: Optional[str] = None
 
-    denomuff: Optional[str] = None
+    denomuff: Annotated[Optional[str], pydantic.Field(alias="duf")] = None
 
     denomloc: Optional[str] = None
 

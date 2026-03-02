@@ -22,12 +22,14 @@ class PrognazaccGetPathParamRequest(BaseModel):
 
 class PrognazaccGetPathParamDataTypedDict(TypedDict):
     prognaz: NotRequired[str]
+    cododocomunale: NotRequired[str]
     dug: NotRequired[str]
     denomuff: NotRequired[str]
     denomloc: NotRequired[str]
     denomlingua1: NotRequired[str]
     denomlingua2: NotRequired[str]
     prognazacc: NotRequired[str]
+    codacccomunale: NotRequired[str]
     civico: NotRequired[str]
     esp: NotRequired[str]
     specif: NotRequired[str]
@@ -41,9 +43,11 @@ class PrognazaccGetPathParamDataTypedDict(TypedDict):
 class PrognazaccGetPathParamData(BaseModel):
     prognaz: Optional[str] = None
 
+    cododocomunale: Optional[str] = None
+
     dug: Optional[str] = None
 
-    denomuff: Optional[str] = None
+    denomuff: Annotated[Optional[str], pydantic.Field(alias="duf")] = None
 
     denomloc: Optional[str] = None
 
@@ -52,6 +56,8 @@ class PrognazaccGetPathParamData(BaseModel):
     denomlingua2: Optional[str] = None
 
     prognazacc: Optional[str] = None
+
+    codacccomunale: Optional[str] = None
 
     civico: Optional[str] = None
 
