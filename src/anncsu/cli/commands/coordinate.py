@@ -47,6 +47,17 @@ coordinate_app.add_typer(
 console = Console()
 error_console = Console(stderr=True)
 
+
+def _print_raw(response: object, label: str = "Raw API response") -> None:
+    """Print raw API response to stderr as formatted JSON."""
+    import json
+
+    error_console.print(
+        f"[dim]{label}:[/dim]\n"
+        f"{json.dumps(response.model_dump(), indent=2, default=str)}"
+    )
+
+
 # Default token endpoint for UAT
 DEFAULT_TOKEN_ENDPOINT = "https://auth.uat.interop.pagopa.it/token.oauth2"
 
@@ -348,6 +359,10 @@ def update(
         bool,
         typer.Option("--json", help="Output as JSON."),
     ] = False,
+    raw_output: Annotated[
+        bool,
+        typer.Option("--raw", help="Print raw API response to stderr."),
+    ] = False,
 ) -> None:
     """Update coordinates for an access point (civico).
 
@@ -395,6 +410,9 @@ def update(
     except Exception as e:
         error_console.print(f"[red]Error:[/red] API call failed: {e}")
         raise typer.Exit(1) from None
+
+    if raw_output:
+        _print_raw(response)
 
     # Validate response using the validated model
     validated_response = ValidatedRispostaOperazione.model_validate(
@@ -501,6 +519,10 @@ def dry_run(
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Output as JSON."),
+    ] = False,
+    raw_output: Annotated[
+        bool,
+        typer.Option("--raw", help="Print raw API responses to stderr."),
     ] = False,
 ) -> None:
     """Dry-run coordinate update: search, test update, then restore original values.
@@ -614,6 +636,9 @@ def dry_run(
             error_console.print(f"[red]Error:[/red] Access point lookup failed: {e}")
             raise typer.Exit(1) from None
 
+        if raw_output:
+            _print_raw(prognazacc_response, "Raw lookup response")
+
         # data is a List[PrognazaccGetQueryParamData]
         data_list = prognazacc_response.data
         if not data_list:
@@ -653,6 +678,9 @@ def dry_run(
             error_console.print(f"[red]Error:[/red] Odonimo search failed: {e}")
             raise typer.Exit(1) from None
 
+        if raw_output:
+            _print_raw(odonimo_response, "Raw odonimo response")
+
         if not odonimo_response.data or len(odonimo_response.data) == 0:
             error_console.print(
                 f"[red]Error:[/red] No odonimo found for codcom={codcom}, denom={denom}"
@@ -686,6 +714,9 @@ def dry_run(
         except Exception as e:
             error_console.print(f"[red]Error:[/red] Access search failed: {e}")
             raise typer.Exit(1) from None
+
+        if raw_output:
+            _print_raw(search_response, "Raw accessi response")
 
         if not search_response.data or len(search_response.data) == 0:
             error_console.print(
@@ -775,6 +806,9 @@ def dry_run(
         test_response = coord_sdk.json_post.gestionecoordinate(
             richiesta=test_richiesta,
         )
+        if raw_output:
+            _print_raw(test_response, "Raw test update response")
+
         # Validate response (esito="0" means success per ANNCSU API convention)
         validated_test = ValidatedRispostaOperazione.model_validate(
             test_response.model_dump()
@@ -827,6 +861,9 @@ def dry_run(
         restore_response = coord_sdk.json_post.gestionecoordinate(
             richiesta=restore_richiesta,
         )
+        if raw_output:
+            _print_raw(restore_response, "Raw restore response")
+
         # Validate response (esito="0" means success per ANNCSU API convention)
         validated_restore = ValidatedRispostaOperazione.model_validate(
             restore_response.model_dump()
@@ -950,6 +987,10 @@ def status(
         bool,
         typer.Option("--json", help="Output as JSON."),
     ] = False,
+    raw_output: Annotated[
+        bool,
+        typer.Option("--raw", help="Print raw API response to stderr."),
+    ] = False,
 ) -> None:
     """Check the status of the Coordinate API service.
 
@@ -970,6 +1011,8 @@ def status(
 
     try:
         response = sdk.status.show_status()
+        if raw_output:
+            _print_raw(response)
         api_status = response.status or "unknown"
         is_available = api_status.lower() == "ok" or api_status.lower() == "running"
     except Exception as e:

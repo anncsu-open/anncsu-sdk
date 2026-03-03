@@ -26,6 +26,16 @@ console = Console()
 error_console = Console(stderr=True)
 
 
+def _print_raw(response: object, label: str = "Raw API response") -> None:
+    """Print raw API response to stderr as formatted JSON."""
+    import json
+
+    error_console.print(
+        f"[dim]{label}:[/dim]\n"
+        f"{json.dumps(response.model_dump(), indent=2, default=str)}"
+    )
+
+
 @pa_app.command("odonimo")
 def odonimo(
     codcom: Annotated[
@@ -86,6 +96,10 @@ def odonimo(
         bool,
         typer.Option("--json", help="Output as JSON."),
     ] = False,
+    raw_output: Annotated[
+        bool,
+        typer.Option("--raw", help="Print raw API response to stderr."),
+    ] = False,
 ) -> None:
     """Search streets (odonimi) in a municipality or lookup by national code.
 
@@ -131,6 +145,9 @@ def odonimo(
             error_console.print(f"[red]Error:[/red] Odonimo lookup failed: {e}")
             raise typer.Exit(1) from None
 
+        if raw_output:
+            _print_raw(response)
+
         if not response.data:
             error_console.print(
                 f"[red]No results:[/red] No odonimo found for prognaz={prognaz}"
@@ -148,6 +165,9 @@ def odonimo(
         except Exception as e:
             error_console.print(f"[red]Error:[/red] Odonimo search failed: {e}")
             raise typer.Exit(1) from None
+
+        if raw_output:
+            _print_raw(response)
 
         if not response.data:
             error_console.print(
@@ -239,6 +259,10 @@ def accesso(
         bool,
         typer.Option("--json", help="Output as JSON."),
     ] = False,
+    raw_output: Annotated[
+        bool,
+        typer.Option("--raw", help="Print raw API response to stderr."),
+    ] = False,
 ) -> None:
     """Lookup access point by national progressive (with coordinates).
 
@@ -269,6 +293,9 @@ def accesso(
     except Exception as e:
         error_console.print(f"[red]Error:[/red] Access point lookup failed: {e}")
         raise typer.Exit(1) from None
+
+    if raw_output:
+        _print_raw(response)
 
     if not response.data:
         error_console.print(
@@ -374,6 +401,10 @@ def accessi(
         bool,
         typer.Option("--json", help="Output as JSON."),
     ] = False,
+    raw_output: Annotated[
+        bool,
+        typer.Option("--raw", help="Print raw API response to stderr."),
+    ] = False,
 ) -> None:
     """List access points for a street.
 
@@ -407,6 +438,9 @@ def accessi(
         error_console.print(f"[red]Error:[/red] Odonimo search failed: {e}")
         raise typer.Exit(1) from None
 
+    if raw_output:
+        _print_raw(odonimo_response, "Raw odonimo response")
+
     if not odonimo_response.data:
         error_console.print(
             f"[red]No results:[/red] No odonimo found for codcom={codcom}, denom={denom}"
@@ -436,6 +470,9 @@ def accessi(
     except Exception as e:
         error_console.print(f"[red]Error:[/red] Access search failed: {e}")
         raise typer.Exit(1) from None
+
+    if raw_output:
+        _print_raw(accessi_response, "Raw accessi response")
 
     if not accessi_response.data:
         error_console.print(
