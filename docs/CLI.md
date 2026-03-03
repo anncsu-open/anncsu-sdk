@@ -603,6 +603,7 @@ Options:
 - `--validation/--production` - Use validation (UAT) or production environment
 - `--no-verify-ssl` - Disable SSL certificate verification (use with caution)
 - `--json` - Output as JSON
+- `--raw` - Print raw API response to stderr
 
 Example with JSON output:
 ```bash
@@ -647,6 +648,7 @@ Options:
 - `--validation/--production` - Use validation (UAT) or production environment
 - `--no-verify-ssl` - Disable SSL certificate verification
 - `--json` - Output as JSON
+- `--raw` - Print raw API response to stderr
 
 Example checking production environment:
 ```bash
@@ -769,6 +771,7 @@ Options:
 - `--validation/--production` - Use validation (UAT) or production environment
 - `--no-verify-ssl` - Disable SSL certificate verification (use with caution)
 - `--json` - Output as JSON
+- `--raw` - Print raw API responses to stderr (one per API call: lookup, test update, restore)
 
 > **Note**: You must provide either `--prognazacc` OR both `--codcom` and `--denom`.
 > If `--prognazacc` is provided, `--codcom` and `--denom` are ignored.
@@ -1585,6 +1588,7 @@ anncsu pa odonimo --codcom I501 --denom "VklBIFJPTUE=" --json
 | `--server-url`, `-s` | No | API server URL (overrides environment default) |
 | `--no-verify-ssl` | No | Disable SSL verification |
 | `--json` | No | Output as JSON |
+| `--raw` | No | Print raw API response to stderr |
 
 **Output columns:** Prog. Naz., DUG, Denominazione Ufficiale, Denominazione Locale, Lingua 1, Lingua 2
 
@@ -1596,12 +1600,12 @@ Lookup a single access point by its national progressive number. Returns complet
 # Lookup access point
 anncsu pa accesso --prognazacc 28586543
 
-# With enrichment (additional API call to fetch street denomination)
-anncsu pa accesso --prognazacc 28586543 --enrich
-
 # Production with JSON output
 anncsu pa accesso --prognazacc 28586543 --production \
   --token-endpoint https://auth.interop.pagopa.it/token.oauth2 --json
+
+# See raw API response on stderr
+anncsu pa accesso --prognazacc 28586543 --raw
 ```
 
 **Options:**
@@ -1609,16 +1613,16 @@ anncsu pa accesso --prognazacc 28586543 --production \
 | Option | Required | Description |
 |--------|----------|-------------|
 | `--prognazacc`, `-p` | Yes | Progressivo nazionale dell'accesso |
-| `--enrich/--no-enrich` | No | Enrich with street denomination via prognazarea (default: no-enrich) |
 | `--validation/--production` | No | Environment (default: validation) |
 | `--token-endpoint`, `-e` | No | PDND token endpoint URL |
 | `--server-url`, `-s` | No | API server URL (overrides environment default) |
 | `--no-verify-ssl` | No | Disable SSL verification |
 | `--json` | No | Output as JSON |
+| `--raw` | No | Print raw API response to stderr |
 
 **Output fields:** Prog. Naz. Odonimo, DUG, Denominazione Ufficiale, Denominazione Locale, Lingua 1, Lingua 2, Prog. Naz. Accesso, Civico, Esponente, Specificita, Metrico, Coord X, Coord Y, Quota, Metodo
 
-**Note:** The `prognazacc` API does not return the street denomination (`denomuff`). Use `--enrich` to fetch it via an additional `prognazarea` call. This is optional because some odonimi in ANNCSU have empty `denomuff` at the database level.
+**Note:** The `denomuff` field is now correctly populated via Pydantic alias mapping (`duf` → `denomuff`). See Issue #12.
 
 **JSON output example:**
 
@@ -1627,7 +1631,7 @@ anncsu pa accesso --prognazacc 28586543 --production \
   {
     "prognaz": "1222543",
     "dug": "LARGO",
-    "denomuff": null,
+    "denomuff": "CHIAFFREDO BERGIA",
     "denomloc": "",
     "denomlingua1": "",
     "denomlingua2": "",
@@ -1672,6 +1676,7 @@ anncsu pa accessi --codcom I501 --denom "VklBIFJPTUE=" --production \
 | `--server-url`, `-s` | No | API server URL (overrides environment default) |
 | `--no-verify-ssl` | No | Disable SSL verification |
 | `--json` | No | Output as JSON |
+| `--raw` | No | Print raw API responses to stderr (odonimo + accessi) |
 
 **Output columns:** Prog. Naz. Acc., Civico, Esp., Specif., Metrico, Coord X, Coord Y, Quota, Metodo
 
