@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -15,16 +16,36 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
 
+_ANSI_BYTES_RE = re.compile(rb"\x1b\[[0-9;]*m")
+
+
+class NoColorCliRunner(CliRunner):
+    """CliRunner that strips Rich ANSI escape codes from captured output.
+
+    Rich's module-level ``Console()`` instances cache color detection at
+    import time, so ``CliRunner(env={"NO_COLOR": "1"})`` doesn't help.
+    Stripping the captured bytes lets substring asserts and JSON parsing
+    work whether colors are forced (CI sets ``FORCE_COLOR=1``) or absent
+    (local non-TTY)."""
+
+    def invoke(self, *args, **kwargs):
+        result = super().invoke(*args, **kwargs)
+        result.stdout_bytes = _ANSI_BYTES_RE.sub(b"", result.stdout_bytes)
+        result.stderr_bytes = _ANSI_BYTES_RE.sub(b"", result.stderr_bytes)
+        result.output_bytes = _ANSI_BYTES_RE.sub(b"", result.output_bytes)
+        return result
+
+
 @pytest.fixture
 def cli_runner() -> CliRunner:
     """Create a Typer CLI test runner."""
-    return CliRunner()
+    return NoColorCliRunner()
 
 
 @pytest.fixture
 def isolated_runner(cli_runner: CliRunner, tmp_path: Path) -> CliRunner:
     """Create a CLI runner with isolated filesystem."""
-    return CliRunner(mix_stderr=False, env={"HOME": str(tmp_path)})
+    return NoColorCliRunner(env={"HOME": str(tmp_path)})
 
 
 @pytest.fixture

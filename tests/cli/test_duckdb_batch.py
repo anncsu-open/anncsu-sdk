@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -18,7 +19,25 @@ from anncsu.cli.app import app
 if TYPE_CHECKING:
     pass
 
-runner = CliRunner()
+_ANSI_BYTES_RE = re.compile(rb"\x1b\[[0-9;]*m")
+
+
+class _NoColorCliRunner(CliRunner):
+    """CliRunner that strips Rich ANSI codes from captured output so
+    substring assertions match whether colors are forced (CI sets
+    ``FORCE_COLOR=1``) or absent (local non-TTY). Mirrors
+    ``NoColorCliRunner`` in ``tests/cli/conftest.py`` — duplicated here
+    because conftest isn't importable as a regular module."""
+
+    def invoke(self, *args, **kwargs):
+        result = super().invoke(*args, **kwargs)
+        result.stdout_bytes = _ANSI_BYTES_RE.sub(b"", result.stdout_bytes)
+        result.stderr_bytes = _ANSI_BYTES_RE.sub(b"", result.stderr_bytes)
+        result.output_bytes = _ANSI_BYTES_RE.sub(b"", result.output_bytes)
+        return result
+
+
+runner = _NoColorCliRunner()
 
 
 @pytest.fixture
