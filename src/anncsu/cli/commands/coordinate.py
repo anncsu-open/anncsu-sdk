@@ -7,11 +7,20 @@ from __future__ import annotations
 import warnings
 from typing import Annotated
 
+import duckdb
 import httpx
 import typer
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
 from rich.table import Table
 
+from anncsu.cli.commands.bulk import bulk_app
+from anncsu.cli.commands.constants import DEFAULT_TOKEN_ENDPOINT, SERVERS
 from anncsu.cli.models import (
     CoordinateStatusResult,
     CoordinateUpdateResult,
@@ -29,7 +38,6 @@ from anncsu.common.session import get_config_dir
 from anncsu.coordinate import AnncsuCoordinate
 from anncsu.coordinate.models import Accesso, Coordinate, Richiesta, Security
 from anncsu.coordinate.models.validated import ValidatedRispostaOperazione
-from anncsu.cli.commands.bulk import bulk_app
 from anncsu.pa import AnncsuConsultazione
 
 coordinate_app = typer.Typer(
@@ -48,6 +56,68 @@ console = Console()
 error_console = Console(stderr=True)
 
 
+def _create_results_table(db_path: str) -> None:
+    """Create results table in DuckDB if it doesn't exist."""
+    conn = duckdb.connect(db_path)
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS batch_update_results (
+                run_id VARCHAR,
+                timestamp VARCHAR,
+                progressivo_accesso INTEGER,
+                civico INTEGER,
+                http_status INTEGER,
+                esito VARCHAR,
+                messaggio VARCHAR,
+                id_richiesta VARCHAR,
+                error_detail VARCHAR,
+                elapsed_ms DOUBLE
+            )
+        """)
+        conn.close()
+    except Exception as e:
+        error_console.print(f"[red]Error creating results table:[/red] {e}")
+        raise
+
+
+def _insert_result(
+    db_path: str,
+    run_id: str,
+    timestamp: str,
+    progressivo_accesso: int,
+    civico: int,
+    http_status: int | None,
+    esito: str | None,
+    messaggio: str | None,
+    id_richiesta: str | None,
+    error_detail: str | None,
+    elapsed_ms: float,
+) -> None:
+    """Insert update result into DuckDB."""
+    conn = duckdb.connect(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO batch_update_results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                run_id,
+                timestamp,
+                progressivo_accesso,
+                civico,
+                http_status,
+                esito,
+                messaggio,
+                id_richiesta,
+                error_detail,
+                elapsed_ms,
+            ],
+        )
+        conn.close()
+    except Exception as e:
+        error_console.print(f"[red]Error inserting result:[/red] {e}")
+
+
 def _print_raw(response: object, label: str = "Raw API response") -> None:
     """Print raw API response to stderr as formatted JSON."""
     import json
@@ -57,16 +127,6 @@ def _print_raw(response: object, label: str = "Raw API response") -> None:
         f"{json.dumps(response.model_dump(), indent=2, default=str)}"
     )
 
-
-# Default token endpoint for UAT
-DEFAULT_TOKEN_ENDPOINT = "https://auth.uat.interop.pagopa.it/token.oauth2"
-
-# Default server URLs for coordinate API
-# Note: Uses AgenziaEntrate-PDND path and anncsu-aggiornamento-coordinate endpoint
-SERVERS = {
-    "production": "https://modipa.agenziaentrate.gov.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1",
-    "validation": "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate-PDND/anncsu-aggiornamento-coordinate/v1",
-}
 
 # Default server URLs for consultazione API
 CONSULT_SERVERS = {
@@ -949,6 +1009,411 @@ def dry_run(
 
     if restore_failed:
         raise typer.Exit(1)
+
+
+@coordinate_app.command()
+def duckdb_batch_update(
+    db_path: Annotated[
+        str,
+        typer.Option(
+            "--db",
+            "-d",
+            help="Path to DuckDB file",
+        ),
+    ],
+    source_table: Annotated[
+        str,
+        typer.Option(
+            "--source-table",
+            "-t",
+            help="Source table name containing coordinates",
+        ),
+    ] = "deoverlapped_geocoded_anncsu",
+    codcom: Annotated[
+        str,
+        typer.Option(
+            "--codcom",
+            "-c",
+            help="Codice comune (Belfiore code)",
+        ),
+    ] = None,
+    max_records: Annotated[
+        int,
+        typer.Option(
+            "--max-records",
+            "-m",
+            help="Maximum number of records to process (0 = all)",
+        ),
+    ] = 0,
+    token_endpoint: Annotated[
+        str,
+        typer.Option(
+            "--token-endpoint",
+            "-e",
+            help="PDND token endpoint URL",
+        ),
+    ] = DEFAULT_TOKEN_ENDPOINT,
+    server_url: Annotated[
+        str | None,
+        typer.Option(
+            "--server-url",
+            "-s",
+            help="API server URL. Defaults to validation environment.",
+        ),
+    ] = None,
+    validation_env: Annotated[
+        bool,
+        typer.Option(
+            "--validation/--production",
+            help="Use validation (UAT) or production environment.",
+        ),
+    ] = True,
+    no_verify_ssl: Annotated[
+        bool,
+        typer.Option(
+            "--no-verify-ssl",
+            help="Disable SSL certificate verification.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
+    resume_run_id: Annotated[
+        str | None,
+        typer.Option(
+            "--resume",
+            help="Resume a previous run by its Run ID. Skips already succeeded records.",
+        ),
+    ] = None,
+) -> None:
+    """Batch update coordinates from DuckDB table.
+
+    Reads from source table and updates each record via ANNCSU API,
+    storing results in batch_update_results table.
+
+    Use --max-records 4000 to respect the daily limit per comune,
+    then --resume RUN_ID the next day to continue.
+
+    Example:
+        anncsu coordinate duckdb-batch-update --db data.duckdb --codcom A269 --production --max-records 4000
+        anncsu coordinate duckdb-batch-update --db data.duckdb --codcom A269 --production --max-records 4000 --resume 20260319_140554
+    """
+    import time
+    from datetime import datetime
+    from pathlib import Path
+
+    # Validate DB path
+    db_file = Path(db_path)
+    if not db_file.exists():
+        error_console.print(f"[red]Error:[/red] Database file not found: {db_path}")
+        raise typer.Exit(1)
+
+    # Load settings from environment
+    try:
+        ClientAssertionSettings()
+    except Exception as e:
+        error_console.print(f"[red]Error loading settings:[/red] {e}")
+        raise typer.Exit(1) from e
+
+    # Determine server URL
+    if server_url is None:
+        server_url = SERVERS["validation"] if validation_env else SERVERS["production"]
+
+    # Create results table
+    _create_results_table(db_path)
+
+    # Generate or reuse run ID
+    if resume_run_id:
+        run_id = resume_run_id
+    else:
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().isoformat()
+
+    # Connect to DuckDB
+    conn = duckdb.connect(db_path)
+
+    # Validate coordinate lengths before processing
+    try:
+        validation_query = f"""
+            SELECT COUNT(*) as invalid_count,
+                MAX(LENGTH(CAST(COORD_X_COMUNE AS VARCHAR))) as max_len_x,
+                MAX(LENGTH(CAST(COORD_Y_COMUNE AS VARCHAR))) as max_len_y,
+                MAX(LENGTH(CAST(QUOTA AS VARCHAR))) as max_len_z
+            FROM {source_table}
+            WHERE CODICE_COMUNE = '{codcom}'
+            AND PROGRESSIVO_ACCESSO IS NOT NULL
+            AND COORD_X_COMUNE IS NOT NULL
+            AND COORD_Y_COMUNE IS NOT NULL
+            AND (
+                LENGTH(CAST(COORD_X_COMUNE AS VARCHAR)) > 12
+                OR LENGTH(CAST(COORD_Y_COMUNE AS VARCHAR)) > 12
+                OR (QUOTA IS NOT NULL AND LENGTH(CAST(QUOTA AS VARCHAR)) > 7)
+            )
+        """
+        validation = conn.execute(validation_query).fetchone()
+        invalid_count, max_len_x, max_len_y, max_len_z = validation
+
+        if invalid_count > 0:
+            error_console.print(
+                f"[red]Source table '{source_table}' is not valid:[/red] "
+                f"{invalid_count} records have coordinates exceeding maxLength limits"
+            )
+            error_console.print(
+                f"  max len(x)={max_len_x} (limit 12), "
+                f"max len(y)={max_len_y} (limit 12), "
+                f"max len(z)={max_len_z} (limit 7)"
+            )
+            error_console.print(
+                "[yellow]Use a '_prepared' table with VARCHAR coordinates "
+                "truncated to the correct lengths.[/yellow]"
+            )
+            conn.close()
+            raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        error_console.print(f"[red]Error validating source table:[/red] {e}")
+        conn.close()
+        raise typer.Exit(1) from e
+
+    # Read source data — cast to VARCHAR in SQL to avoid Python float expansion
+    try:
+        # When resuming, exclude records already succeeded (esito='0') for this run_id
+        if resume_run_id:
+            already_done = conn.execute(
+                """
+                SELECT COUNT(*) FROM batch_update_results
+                WHERE run_id = ? AND esito = '0'
+                """,
+                [resume_run_id],
+            ).fetchone()[0]
+            console.print(
+                f"[cyan]Resuming run {resume_run_id}: "
+                f"{already_done} records already succeeded, skipping them[/cyan]"
+            )
+            exclude_clause = f"""
+                AND PROGRESSIVO_ACCESSO NOT IN (
+                    SELECT progressivo_accesso FROM batch_update_results
+                    WHERE run_id = '{resume_run_id}' AND esito = '0'
+                )
+            """
+        else:
+            exclude_clause = ""
+
+        query = f"""
+            SELECT
+                PROGRESSIVO_ACCESSO,
+                CIVICO,
+                CAST(COORD_X_COMUNE AS VARCHAR) as x,
+                CAST(COORD_Y_COMUNE AS VARCHAR) as y,
+                CAST(QUOTA AS VARCHAR) as z,
+                CAST(METODO AS VARCHAR) as metodo
+            FROM {source_table}
+            WHERE CODICE_COMUNE = '{codcom}'
+            AND PROGRESSIVO_ACCESSO IS NOT NULL
+            AND COORD_X_COMUNE IS NOT NULL
+            AND COORD_Y_COMUNE IS NOT NULL
+            {exclude_clause}
+        """
+        if max_records > 0:
+            query += f" LIMIT {max_records}"
+
+        results = conn.execute(query).fetchall()
+        columns = [desc[0].lower() for desc in conn.description]
+
+        if not results:
+            if resume_run_id:
+                console.print(
+                    f"[green]All records already completed for run {resume_run_id}[/green]"
+                )
+            else:
+                error_console.print(
+                    f"[red]No records found in {source_table} for comune {codcom}"
+                )
+            conn.close()
+            raise typer.Exit(0 if resume_run_id else 1)
+
+        console.print(f"[cyan]Found {len(results)} records to process[/cyan]")
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        error_console.print(f"[red]Error reading source table:[/red] {e}")
+        conn.close()
+        raise typer.Exit(1) from e
+
+    # Get SDK
+    try:
+        sdk, _ = _get_sdk(
+            token_endpoint=token_endpoint,
+            server_url=server_url,
+            verify_ssl=not no_verify_ssl,
+            modi_audience=server_url,
+        )
+    except Exception as e:
+        error_console.print(f"[red]Error initializing SDK:[/red] {e}")
+        conn.close()
+        raise typer.Exit(1) from e
+
+    # Process each record
+    stats = {
+        "total": len(results),
+        "success": 0,
+        "failed": 0,
+        "errors": [],
+    }
+
+    from rich.progress import (
+        Progress,
+    )
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(
+            "Processing: 0/{} (ok=0 err=0)".format(len(results)),
+            total=len(results),
+        )
+
+        processed = 0
+        for row in results:
+            row_dict = dict(zip(columns, row, strict=True))
+            progressivo_accesso = row_dict.get("progressivo_accesso")
+            civico = row_dict.get("civico")
+            x = row_dict.get("x")
+            y = row_dict.get("y")
+            z = row_dict.get("z")
+            metodo = row_dict.get("metodo")
+
+            http_status = None
+            esito = None
+            messaggio = None
+            id_richiesta = None
+            error_detail = None
+            elapsed_ms = 0.0
+
+            try:
+                # Build request
+                coordinate_obj = Coordinate(
+                    x=str(x) if x else None,
+                    y=str(y) if y else None,
+                    z=str(z) if z else None,
+                    metodo=str(metodo) if metodo else None,
+                )
+
+                richiesta = Richiesta(
+                    accesso=Accesso(
+                        codcom=codcom,
+                        progr_civico=str(progressivo_accesso),
+                        coordinate=coordinate_obj,
+                    )
+                )
+
+                # Make API call
+                start_time = time.time()
+                response = sdk.json_post.gestionecoordinate(richiesta=richiesta)
+                elapsed_ms = (time.time() - start_time) * 1000
+
+                # Extract response details
+                validated_response = ValidatedRispostaOperazione.model_validate(
+                    response.model_dump()
+                )
+                http_status = 200
+                esito = validated_response.esito
+                messaggio = validated_response.messaggio
+                id_richiesta = validated_response.id_richiesta
+
+                if validated_response.is_success:
+                    stats["success"] += 1
+                else:
+                    stats["failed"] += 1
+                    error_detail = f"API returned esito={esito}: {messaggio}"
+                    stats["errors"].append(
+                        {
+                            "progr_accesso": progressivo_accesso,
+                            "error": error_detail,
+                        }
+                    )
+
+            except Exception as e:
+                stats["failed"] += 1
+                error_detail = str(e)
+                stats["errors"].append(
+                    {
+                        "progr_accesso": progressivo_accesso,
+                        "error": error_detail,
+                    }
+                )
+
+            # Insert result
+            _insert_result(
+                db_path,
+                run_id,
+                timestamp,
+                progressivo_accesso,
+                civico,
+                http_status,
+                esito,
+                messaggio,
+                id_richiesta,
+                error_detail,
+                elapsed_ms,
+            )
+
+            processed += 1
+            progress.update(
+                task,
+                completed=processed,
+                description=f"Processing: {processed}/{stats['total']} (ok={stats['success']} err={stats['failed']})",
+            )
+
+    # Print summary
+    if json_output:
+        import json
+
+        output = {
+            "run_id": run_id,
+            "timestamp": timestamp,
+            "total": stats["total"],
+            "success": stats["success"],
+            "failed": stats["failed"],
+            "errors": stats["errors"],
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        console.print("\n[bold]Batch Update Summary[/bold]")
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value")
+        table.add_row("Run ID", run_id)
+        table.add_row("Total Records", str(stats["total"]))
+        success_pct = (
+            (stats["success"] / stats["total"] * 100) if stats["total"] > 0 else 0
+        )
+        table.add_row(
+            "Success", f"[green]{stats['success']}[/green] ({success_pct:.1f}%)"
+        )
+        table.add_row("Failed", f"[red]{stats['failed']}[/red]")
+
+        console.print(table)
+
+        if stats["errors"]:
+            console.print(f"\n[red]Errors ({len(stats['errors'])}):[/red]")
+            for err in stats["errors"][:10]:  # Show first 10
+                console.print(f"  - Progr: {err['progr_accesso']} - {err['error']}")
+            if len(stats["errors"]) > 10:
+                console.print(f"  ... and {len(stats['errors']) - 10} more")
+
+    # Close connection
+    conn.close()
+
+    console.print("\n[cyan]Results saved to batch_update_results table[/cyan]")
+    console.print(f"[cyan]Run ID: {run_id}[/cyan]")
 
 
 @coordinate_app.command("status")
