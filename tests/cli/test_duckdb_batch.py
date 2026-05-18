@@ -46,12 +46,21 @@ def _mock_pdnd_env(monkeypatch):
     check inside ``duckdb-batch-update`` passes in CI (where env vars aren't
     set). Tests that mock ``_get_sdk`` never reach the real auth flow, but the
     upstream env-var validation still runs and would otherwise abort the
-    command with ``ValidationError: Field required`` before our asserts."""
+    command before our asserts.
+
+    All ``PDND_PURPOSE_ID_*`` vars must be present (can be empty) — see
+    ``ClientAssertionSettings`` validator."""
     monkeypatch.setenv("PDND_KID", "test-kid")
     monkeypatch.setenv("PDND_ISSUER", "test-issuer")
     monkeypatch.setenv("PDND_SUBJECT", "test-subject")
     monkeypatch.setenv("PDND_AUDIENCE", "auth.uat.interop.pagopa.it/client-assertion")
     monkeypatch.setenv("PDND_KEY_PATH", "/tmp/dummy.pem")
+    monkeypatch.setenv("PDND_PURPOSE_ID_PA", "")
+    monkeypatch.setenv("PDND_PURPOSE_ID_COORDINATE", "")
+    monkeypatch.setenv("PDND_PURPOSE_ID_COORDINATE_BULK", "")
+    monkeypatch.setenv("PDND_PURPOSE_ID_ACCESSI", "")
+    monkeypatch.setenv("PDND_PURPOSE_ID_INTERNI", "")
+    monkeypatch.setenv("PDND_PURPOSE_ID_ODONIMI", "")
 
 
 @pytest.fixture
