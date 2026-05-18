@@ -1109,6 +1109,14 @@ def duckdb_batch_update(
         error_console.print(f"[red]Error:[/red] Database file not found: {db_path}")
         raise typer.Exit(1)
 
+    # Load settings from environment — fail fast on missing PDND env vars
+    # before touching DuckDB or making any network call via _get_sdk().
+    try:
+        ClientAssertionSettings()
+    except Exception as e:
+        error_console.print(f"[red]Error loading settings:[/red] {e}")
+        raise typer.Exit(1) from e
+
     # Determine server URL
     if server_url is None:
         server_url = SERVERS["validation"] if validation_env else SERVERS["production"]
@@ -1233,17 +1241,6 @@ def duckdb_batch_update(
         raise
     except Exception as e:
         error_console.print(f"[red]Error reading source table:[/red] {e}")
-        conn.close()
-        raise typer.Exit(1) from e
-
-    # Validate PDND credentials before the SDK init — fails fast with a
-    # clearer message than the one from _get_sdk() when env vars are missing.
-    # Deferred until after the no-records check so the command can report
-    # "no records found" without requiring authentication setup.
-    try:
-        ClientAssertionSettings()
-    except Exception as e:
-        error_console.print(f"[red]Error loading settings:[/red] {e}")
         conn.close()
         raise typer.Exit(1) from e
 

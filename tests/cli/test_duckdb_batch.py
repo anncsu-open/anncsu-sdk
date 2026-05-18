@@ -40,6 +40,20 @@ class _NoColorCliRunner(CliRunner):
 runner = _NoColorCliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _mock_pdnd_env(monkeypatch):
+    """Provide mock PDND credentials so the early ``ClientAssertionSettings()``
+    check inside ``duckdb-batch-update`` passes in CI (where env vars aren't
+    set). Tests that mock ``_get_sdk`` never reach the real auth flow, but the
+    upstream env-var validation still runs and would otherwise abort the
+    command with ``ValidationError: Field required`` before our asserts."""
+    monkeypatch.setenv("PDND_KID", "test-kid")
+    monkeypatch.setenv("PDND_ISSUER", "test-issuer")
+    monkeypatch.setenv("PDND_SUBJECT", "test-subject")
+    monkeypatch.setenv("PDND_AUDIENCE", "auth.uat.interop.pagopa.it/client-assertion")
+    monkeypatch.setenv("PDND_KEY_PATH", "/tmp/dummy.pem")
+
+
 @pytest.fixture
 def duckdb_test_file():
     """Create a temporary DuckDB file with test data."""
