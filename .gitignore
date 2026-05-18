@@ -136,6 +136,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
 .envrc
 .venv
 env/
@@ -143,6 +144,11 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Private keys / credentials — never commit
+keys/
+*.pem
+*.key
 
 # Spyder project settings
 .spyderproject

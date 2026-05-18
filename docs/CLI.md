@@ -896,6 +896,120 @@ Note: Access has no coordinates. Using test coordinates (will be cleared after t
 
 ---
 
+#### `anncsu coordinate duckdb-batch-update`
+
+Batch update coordinates from a DuckDB table for small municipalities that don't have access to the bulk coordinate API endpoint. Reads geocoded data from a DuckDB source table, updates coordinates one-by-one via the ANNCSU API, and stores all results in a `batch_update_results` table for auditing.
+
+Supports resumable multi-day execution with `--resume` to respect the daily limit of 4,000 records per municipality.
+
+```bash
+# First run (day 1): process up to 4000 records
+anncsu coordinate duckdb-batch-update \
+  --db ~/Downloads/anncsu_anagni/A269.duckdb \
+  --source-table deoverlapped_geocoded_anncsu_prepared \
+  --codcom A269 \
+  --production \
+  --token-endpoint https://auth.interop.pagopa.it/token.oauth2 \
+  --max-records 4000
+
+# Day 2: resume with same run ID
+anncsu coordinate duckdb-batch-update \
+  --db ~/Downloads/anncsu_anagni/A269.duckdb \
+  --source-table deoverlapped_geocoded_anncsu_prepared \
+  --codcom A269 \
+  --production \
+  --token-endpoint https://auth.interop.pagopa.it/token.oauth2 \
+  --max-records 4000 \
+  --resume 20260319_140554
+
+# Day 3: finish remaining records (no --max-records needed)
+anncsu coordinate duckdb-batch-update \
+  --db ~/Downloads/anncsu_anagni/A269.duckdb \
+  --source-table deoverlapped_geocoded_anncsu_prepared \
+  --codcom A269 \
+  --production \
+  --token-endpoint https://auth.interop.pagopa.it/token.oauth2 \
+  --resume 20260319_140554
+```
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--db`, `-d` | Path to DuckDB file (required) | — |
+| `--codcom`, `-c` | Codice comune / Belfiore code (required) | — |
+| `--source-table`, `-t` | Source table name | `deoverlapped_geocoded_anncsu` |
+| `--max-records`, `-m` | Max records to process (0 = all) | `0` |
+| `--resume` | Resume a previous run by its Run ID | — |
+| `--token-endpoint`, `-e` | PDND token endpoint URL | UAT endpoint |
+| `--server-url`, `-s` | API server URL (auto-detected) | — |
+| `--validation/--production` | Environment selection | `--validation` |
+| `--no-verify-ssl` | Disable SSL verification | `false` |
+| `--json` | Output as JSON | `false` |
+
+**Source table requirements:**
+
+The source table must have coordinate columns as `VARCHAR` with length ≤ 12 for `x`/`y` and ≤ 7 for `z`. If the coordinates are stored as `FLOAT`/`DOUBLE`, create a `_prepared` table first:
+
+```sql
+CREATE TABLE deoverlapped_geocoded_anncsu_prepared AS
+SELECT
+    PROGRESSIVO_ACCESSO::INTEGER as PROGRESSIVO_ACCESSO,
+    CIVICO::INTEGER as CIVICO,
+    CODICE_COMUNE,
+    CAST(ROUND(COORD_X_COMUNE, 6) AS VARCHAR) as COORD_X_COMUNE,
+    CAST(ROUND(COORD_Y_COMUNE, 6) AS VARCHAR) as COORD_Y_COMUNE,
+    CASE WHEN QUOTA IS NOT NULL THEN CAST(ROUND(QUOTA, 1) AS VARCHAR) ELSE NULL END as QUOTA,
+    CAST(METODO AS VARCHAR) as METODO
+FROM deoverlapped_geocoded_anncsu
+WHERE CODICE_COMUNE = 'A269'
+AND PROGRESSIVO_ACCESSO IS NOT NULL
+AND COORD_X_COMUNE IS NOT NULL
+AND COORD_Y_COMUNE IS NOT NULL;
+```
+
+The command will reject the source table if any coordinate exceeds the maxLength limits.
+
+**Resume behavior:**
+
+- `--resume RUN_ID` skips records already succeeded (esito='0') for that run
+- Failed records are retried on resume
+- The same `run_id` is reused across all days for consistent auditing
+- When all records are complete, exits with code 0 and a confirmation message
+
+**JSON output (`--json`):**
+
+```json
+{
+  "run_id": "20260319_140554",
+  "timestamp": "2026-03-19T14:05:54",
+  "total": 4000,
+  "success": 3998,
+  "failed": 2,
+  "errors": [
+    {"progr_accesso": 12345, "error": "Network error"}
+  ]
+}
+```
+
+**Query results in DuckDB:**
+
+```sql
+-- Summary by run
+SELECT run_id, COUNT(*) as total,
+       SUM(CASE WHEN esito = '0' THEN 1 ELSE 0 END) as success,
+       SUM(CASE WHEN esito != '0' OR esito IS NULL THEN 1 ELSE 0 END) as failed
+FROM batch_update_results
+GROUP BY run_id;
+
+-- Failed records for retry analysis
+SELECT progressivo_accesso, error_detail, elapsed_ms
+FROM batch_update_results
+WHERE run_id = '20260319_140554' AND (esito != '0' OR esito IS NULL);
+```
+
+---
+
 ### `anncsu coordinate bulk` - Bulk Coordinate Operations
 
 Bulk coordinate operations with CSV input and DuckDB local persistence.
