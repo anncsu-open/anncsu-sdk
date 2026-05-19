@@ -1,6 +1,14 @@
 workflowVersion: 1.0.0
 speakeasyVersion: latest
 sources:
+    ANNCSU Accessi API:
+        inputs:
+            - location: oas/dev/Specifica API - ANNCSU - Aggiornamento accessi.yaml
+        transformations:
+            - removeUnused: true
+        output: .speakeasy/out.accessi.openapi.yaml
+        registry:
+            location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-accessi-api
     ANNCSU Coordinate API:
         inputs:
             - location: oas/dev/Specifica API - ANNCSU - Aggiornamento coordinate.yml
@@ -18,6 +26,16 @@ sources:
         registry:
             location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-rest-api
 targets:
+    accessi:
+        target: python
+        source: ANNCSU Accessi API
+        output: accessi-sdk
+        codeSamples:
+            registry:
+                location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-accessi-api-python-code-samples
+            labelOverride:
+                fixedValue: Python (SDK)
+            blocking: false
     anncsu:
         target: python
         source: ANNCSU REST API

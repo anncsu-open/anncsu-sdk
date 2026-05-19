@@ -1,5 +1,12 @@
-speakeasyVersion: 1.697.5
+speakeasyVersion: 1.763.2
 sources:
+    ANNCSU Accessi API:
+        sourceNamespace: anncsu-accessi-api
+        sourceRevisionDigest: sha256:387592e53ffd05369ce0dc0191c7d3a1469acecd9d9d2e58d8c1c1e37d890b6d
+        sourceBlobDigest: sha256:ca3e2ffc2221dbed8d0235f0731e91145226f47207b782b6a08e05ce5cd4f0e8
+        tags:
+            - latest
+            - 1.0.2
     ANNCSU Coordinate API:
         sourceNamespace: anncsu-coordinate-api
         sourceRevisionDigest: sha256:bb5e672f1588b08480aa22c74b61b358305c0bb1fecedf56890b56f3780c29a4
@@ -8,6 +15,13 @@ sources:
             - latest
             - 1.0.1
 targets:
+    accessi:
+        source: ANNCSU Accessi API
+        sourceNamespace: anncsu-accessi-api
+        sourceRevisionDigest: sha256:387592e53ffd05369ce0dc0191c7d3a1469acecd9d9d2e58d8c1c1e37d890b6d
+        sourceBlobDigest: sha256:ca3e2ffc2221dbed8d0235f0731e91145226f47207b782b6a08e05ce5cd4f0e8
+        codeSamplesNamespace: anncsu-accessi-api-python-code-samples
+        codeSamplesRevisionDigest: sha256:42266fee8cbad892ecc24b832c1a46eac389f0471b47961ddb316dead664f30f
     coordinate:
         source: ANNCSU Coordinate API
         sourceNamespace: anncsu-coordinate-api
@@ -19,6 +33,14 @@ workflow:
     workflowVersion: 1.0.0
     speakeasyVersion: latest
     sources:
+        ANNCSU Accessi API:
+            inputs:
+                - location: oas/dev/Specifica API - ANNCSU - Aggiornamento accessi.yaml
+            transformations:
+                - removeUnused: true
+            output: .speakeasy/out.accessi.openapi.yaml
+            registry:
+                location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-accessi-api
         ANNCSU Coordinate API:
             inputs:
                 - location: oas/dev/Specifica API - ANNCSU - Aggiornamento coordinate.yml
@@ -36,6 +58,16 @@ workflow:
             registry:
                 location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-rest-api
     targets:
+        accessi:
+            target: python
+            source: ANNCSU Accessi API
+            output: accessi-sdk
+            codeSamples:
+                registry:
+                    location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-accessi-api-python-code-samples
+                labelOverride:
+                    fixedValue: Python (SDK)
+                blocking: false
         anncsu:
             target: python
             source: ANNCSU REST API

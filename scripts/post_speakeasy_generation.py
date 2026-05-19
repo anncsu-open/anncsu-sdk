@@ -30,6 +30,9 @@ SDK_ROOT = Path(__file__).parent.parent / "src" / "anncsu"
 
 # Files to delete from each API package (they exist in common/sdk/)
 FILES_TO_DELETE = [
+    "_hooks/__init__.py",
+    "_hooks/sdkhooks.py",
+    "_hooks/types.py",
     "basesdk.py",
     "httpclient.py",
     "types/__init__.py",
@@ -37,6 +40,7 @@ FILES_TO_DELETE = [
     "utils/__init__.py",
     "utils/annotations.py",
     "utils/datetimes.py",
+    "utils/dynamic_imports.py",
     "utils/enums.py",
     "utils/eventstreaming.py",
     "utils/forms.py",
@@ -148,7 +152,7 @@ IMPORT_REPLACEMENTS = [
 ]
 
 # All known API packages
-ALL_PACKAGES = ["pa", "coordinate"]
+ALL_PACKAGES = ["pa", "coordinate", "accessi"]
 
 # Files that should NOT have their imports modified (except specific patterns)
 EXCLUDE_FILES = [
@@ -168,7 +172,7 @@ def delete_duplicated_files(package_path: Path, dry_run: bool = False) -> list[s
             console.print(f"  [red]Deleted:[/red] {file_rel}")
 
     # Clean up empty directories
-    for dir_name in ["types", "utils"]:
+    for dir_name in ["_hooks", "types", "utils"]:
         dir_path = package_path / dir_name
         if dir_path.exists():
             try:
