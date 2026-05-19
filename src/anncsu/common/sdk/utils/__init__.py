@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         retry,
         retry_async,
     )
+    from .dynamic_imports import lazy_dir, lazy_getattr
     from .security import get_security, get_security_from_env
     from .serializers import (
         get_pydantic_model,
@@ -77,6 +78,8 @@ __all__ = [
     "get_response_headers",
     "get_security",
     "get_security_from_env",
+    "lazy_dir",
+    "lazy_getattr",
     "HeaderMetadata",
     "Logger",
     "marshal_json",
@@ -133,6 +136,8 @@ _dynamic_imports: dict[str, str] = {
     "get_response_headers": ".headers",
     "get_security": ".security",
     "get_security_from_env": ".security",
+    "lazy_dir": ".dynamic_imports",
+    "lazy_getattr": ".dynamic_imports",
     "HeaderMetadata": ".metadata",
     "Logger": ".logger",
     "marshal_json": ".serializers",
