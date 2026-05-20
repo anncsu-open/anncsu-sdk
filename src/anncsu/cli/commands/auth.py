@@ -12,6 +12,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from anncsu.cli.commands.constants import _resolve_token_endpoint
 from anncsu.cli.models import AuthStatus, CurlOutput, LoginResult, TokenStatus
 from anncsu.common import PDNDAuthManager
 from anncsu.common.config import APIType, ClientAssertionSettings
@@ -567,13 +568,16 @@ def curl_command(
         ),
     ],
     token_endpoint: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--token-endpoint",
             "-e",
-            help="PDND token endpoint URL.",
+            help=(
+                "PDND token endpoint URL. If omitted, defaults to UAT or "
+                "production based on --validation/--production."
+            ),
         ),
-    ] = DEFAULT_TOKEN_ENDPOINT,
+    ] = None,
     validation_env: Annotated[
         bool,
         typer.Option(
@@ -668,6 +672,7 @@ def curl_command(
 
     api_type = _get_api_type()
     env_name = "validation" if validation_env else "production"
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
     curl_warnings: list[str] = []
 
     if endpoint is not None and api_type != APIType.PA:

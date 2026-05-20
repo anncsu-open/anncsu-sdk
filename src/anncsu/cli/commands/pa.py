@@ -10,9 +10,9 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from anncsu.cli.commands.constants import _resolve_token_endpoint
 from anncsu.cli.commands.coordinate import (
     CONSULT_SERVERS,
-    DEFAULT_TOKEN_ENDPOINT,
     _get_consult_sdk,
 )
 
@@ -63,13 +63,16 @@ def odonimo(
         ),
     ] = None,
     token_endpoint: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--token-endpoint",
             "-e",
-            help="PDND token endpoint URL.",
+            help=(
+                "PDND token endpoint URL. If omitted, defaults to UAT or "
+                "production based on --validation/--production."
+            ),
         ),
-    ] = DEFAULT_TOKEN_ENDPOINT,
+    ] = None,
     server_url: Annotated[
         str | None,
         typer.Option(
@@ -128,6 +131,7 @@ def odonimo(
             if validation_env
             else CONSULT_SERVERS["production"]
         )
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
 
     sdk = _get_consult_sdk(
         token_endpoint=token_endpoint,
@@ -226,13 +230,16 @@ def accesso(
         ),
     ],
     token_endpoint: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--token-endpoint",
             "-e",
-            help="PDND token endpoint URL.",
+            help=(
+                "PDND token endpoint URL. If omitted, defaults to UAT or "
+                "production based on --validation/--production."
+            ),
         ),
-    ] = DEFAULT_TOKEN_ENDPOINT,
+    ] = None,
     server_url: Annotated[
         str | None,
         typer.Option(
@@ -279,6 +286,7 @@ def accesso(
             if validation_env
             else CONSULT_SERVERS["production"]
         )
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
 
     sdk = _get_consult_sdk(
         token_endpoint=token_endpoint,
@@ -368,13 +376,16 @@ def accessi(
         ),
     ] = None,
     token_endpoint: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--token-endpoint",
             "-e",
-            help="PDND token endpoint URL.",
+            help=(
+                "PDND token endpoint URL. If omitted, defaults to UAT or "
+                "production based on --validation/--production."
+            ),
         ),
-    ] = DEFAULT_TOKEN_ENDPOINT,
+    ] = None,
     server_url: Annotated[
         str | None,
         typer.Option(
@@ -421,6 +432,7 @@ def accessi(
             if validation_env
             else CONSULT_SERVERS["production"]
         )
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
 
     sdk = _get_consult_sdk(
         token_endpoint=token_endpoint,

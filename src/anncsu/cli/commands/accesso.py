@@ -34,6 +34,7 @@ from anncsu.accessi.models.richiestaoperazione import (
     Richiesta,
 )
 from anncsu.accessi.models.validated import ValidatedAccesso
+from anncsu.cli.commands.constants import _resolve_token_endpoint
 from anncsu.cli.models import (
     AccessoDryRunResult,
     AccessoOperationResult,
@@ -57,9 +58,6 @@ accesso_app = typer.Typer(
 
 console = Console()
 error_console = Console(stderr=True)
-
-# Default token endpoint for UAT (matches the pattern used in coordinate.py).
-DEFAULT_TOKEN_ENDPOINT = "https://auth.uat.interop.pagopa.it/token.oauth2"
 
 # Default server URLs for the Accessi e-service.
 # The OAS spec lists path ``AgenziaEntrate/anncsuaccessi/v1`` but real
@@ -1121,9 +1119,16 @@ def insert(
         ),
     ] = None,
     token_endpoint: Annotated[
-        str,
-        typer.Option("--token-endpoint", "-e", help="PDND token endpoint URL."),
-    ] = DEFAULT_TOKEN_ENDPOINT,
+        str | None,
+        typer.Option(
+            "--token-endpoint",
+            "-e",
+            help=(
+                "PDND token endpoint URL. If omitted, defaults to UAT or "
+                "production based on --validation/--production."
+            ),
+        ),
+    ] = None,
     server_url: Annotated[
         str | None,
         typer.Option(
@@ -1188,6 +1193,7 @@ def insert(
         data_valid_amm=data_valid_amm,
     )
 
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
     resolved_server = _resolve_server_url(server_url, validation_env)
 
     if dry_run:
@@ -1310,9 +1316,16 @@ def update(
         ),
     ] = None,
     token_endpoint: Annotated[
-        str,
-        typer.Option("--token-endpoint", "-e", help="PDND token endpoint URL."),
-    ] = DEFAULT_TOKEN_ENDPOINT,
+        str | None,
+        typer.Option(
+            "--token-endpoint",
+            "-e",
+            help=(
+                "PDND token endpoint URL. If omitted, defaults to UAT or "
+                "production based on --validation/--production."
+            ),
+        ),
+    ] = None,
     server_url: Annotated[
         str | None,
         typer.Option("--server-url", "-s", help="API server URL."),
@@ -1354,6 +1367,10 @@ def update(
             --progr-civico 1370588 --numero 12
     """
     # Resolve progr_civico either explicitly or via PA lookup.
+    # Resolve token endpoint up-front: --auto-resolve below also uses it
+    # (via PA consultation SDK), so it must be the right environment.
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
+
     if auto_resolve:
         if not civico:
             error_console.print(
@@ -1471,9 +1488,16 @@ def delete(
         ),
     ] = None,
     token_endpoint: Annotated[
-        str,
-        typer.Option("--token-endpoint", "-e", help="PDND token endpoint URL."),
-    ] = DEFAULT_TOKEN_ENDPOINT,
+        str | None,
+        typer.Option(
+            "--token-endpoint",
+            "-e",
+            help=(
+                "PDND token endpoint URL. If omitted, defaults to UAT or "
+                "production based on --validation/--production."
+            ),
+        ),
+    ] = None,
     server_url: Annotated[
         str | None,
         typer.Option("--server-url", "-s", help="API server URL."),
@@ -1519,6 +1543,10 @@ def delete(
         anncsu accesso delete --codcom A062 --prognaz 2000449 \\
             --progr-civico 1370588
     """
+    # Resolve token endpoint up-front: --auto-resolve below also uses it
+    # (via PA consultation SDK), so it must be the right environment.
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
+
     # Resolve progr_civico either explicitly or via PA lookup.
     if auto_resolve:
         if not civico:
@@ -1583,9 +1611,16 @@ def delete(
 @accesso_app.command("status")
 def status(
     token_endpoint: Annotated[
-        str,
-        typer.Option("--token-endpoint", "-e", help="PDND token endpoint URL."),
-    ] = DEFAULT_TOKEN_ENDPOINT,
+        str | None,
+        typer.Option(
+            "--token-endpoint",
+            "-e",
+            help=(
+                "PDND token endpoint URL. If omitted, defaults to UAT or "
+                "production based on --validation/--production."
+            ),
+        ),
+    ] = None,
     server_url: Annotated[
         str | None,
         typer.Option("--server-url", "-s", help="API server URL."),
@@ -1609,6 +1644,7 @@ def status(
     ] = False,
 ) -> None:
     """Check the Accessi API health (GET ``/status``)."""
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
     resolved_url = _resolve_server_url(server_url, validation_env)
     # status is a GET, no ModI signature needed → omit modi_audience.
     sdk, _ = _get_sdk(
