@@ -11,6 +11,7 @@ import typer
 from rich.console import Console
 
 from anncsu.cli.commands import (
+    accesso_app,
     assertion_app,
     auth_app,
     config_app,
@@ -41,6 +42,11 @@ app.add_typer(
     pa_app,
     name="pa",
     help="PA consultazione (read-only queries)",
+)
+app.add_typer(
+    accesso_app,
+    name="accesso",
+    help="Accesso CRUD (insert/update/delete) and status",
 )
 
 console = Console()
