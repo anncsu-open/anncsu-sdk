@@ -904,12 +904,12 @@ Supports resumable multi-day execution with `--resume` to respect the daily limi
 
 ```bash
 # First run (day 1): process up to 4000 records
+# --production auto-selects the production token endpoint.
 anncsu coordinate duckdb-batch-update \
   --db ~/Downloads/anncsu_anagni/A269.duckdb \
   --source-table deoverlapped_geocoded_anncsu_prepared \
   --codcom A269 \
   --production \
-  --token-endpoint https://auth.interop.pagopa.it/token.oauth2 \
   --max-records 4000
 
 # Day 2: resume with same run ID
@@ -918,7 +918,6 @@ anncsu coordinate duckdb-batch-update \
   --source-table deoverlapped_geocoded_anncsu_prepared \
   --codcom A269 \
   --production \
-  --token-endpoint https://auth.interop.pagopa.it/token.oauth2 \
   --max-records 4000 \
   --resume 20260319_140554
 
@@ -928,7 +927,6 @@ anncsu coordinate duckdb-batch-update \
   --source-table deoverlapped_geocoded_anncsu_prepared \
   --codcom A269 \
   --production \
-  --token-endpoint https://auth.interop.pagopa.it/token.oauth2 \
   --resume 20260319_140554
 ```
 
@@ -1683,9 +1681,8 @@ Search streets (odonimi) in a municipality by partial name.
 # Search streets in Scanno (I501)
 anncsu pa odonimo --codcom I501 --denom "VklBIFJPTUE="
 
-# Production environment
-anncsu pa odonimo --codcom I501 --denom "VklBIFJPTUE=" --production \
-  --token-endpoint https://auth.interop.pagopa.it/token.oauth2
+# Production environment (--production auto-selects the production token endpoint)
+anncsu pa odonimo --codcom I501 --denom "VklBIFJPTUE=" --production
 
 # JSON output
 anncsu pa odonimo --codcom I501 --denom "VklBIFJPTUE=" --json
@@ -1715,8 +1712,7 @@ Lookup a single access point by its national progressive number. Returns complet
 anncsu pa accesso --prognazacc 28586543
 
 # Production with JSON output
-anncsu pa accesso --prognazacc 28586543 --production \
-  --token-endpoint https://auth.interop.pagopa.it/token.oauth2 --json
+anncsu pa accesso --prognazacc 28586543 --production --json
 
 # See raw API response on stderr
 anncsu pa accesso --prognazacc 28586543 --raw
@@ -1774,8 +1770,7 @@ anncsu pa accessi --codcom I501 --denom "VklBIFJPTUE="
 anncsu pa accessi --codcom I501 --denom "VklBIFJPTUE=" --accparz "1"
 
 # Production with JSON output
-anncsu pa accessi --codcom I501 --denom "VklBIFJPTUE=" --production \
-  --token-endpoint https://auth.interop.pagopa.it/token.oauth2 --json
+anncsu pa accessi --codcom I501 --denom "VklBIFJPTUE=" --production --json
 ```
 
 **Options:**
@@ -2184,6 +2179,8 @@ The ANNCSU APIs are exposed through the GovWay gateway on two environments. Each
 |-------------|---------------|-----------------|
 | UAT (Validation) | `https://auth.uat.interop.pagopa.it/token.oauth2` | `https://modipa-val.agenziaentrate.it/govway/rest/in` |
 | Production | `https://auth.interop.pagopa.it/token.oauth2` | `https://modipa.agenziaentrate.gov.it/govway/rest/in` |
+
+> **Note on `--token-endpoint`**: every CLI command that supports `--validation/--production` picks the token endpoint automatically based on that flag if `--token-endpoint` is omitted. You can still pass `--token-endpoint` explicitly — the CLI then validates that it matches the selected environment and exits with an error if it does not (preventing the silent `015-0008 Unable to generate a token` failure when the two diverge).
 
 ### API Types and GovWay Paths
 

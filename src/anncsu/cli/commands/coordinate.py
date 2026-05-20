@@ -20,7 +20,11 @@ from rich.progress import (
 from rich.table import Table
 
 from anncsu.cli.commands.bulk import bulk_app
-from anncsu.cli.commands.constants import DEFAULT_TOKEN_ENDPOINT, SERVERS
+from anncsu.cli.commands.constants import (
+    DEFAULT_TOKEN_ENDPOINT,
+    SERVERS,
+    _resolve_token_endpoint,
+)
 from anncsu.cli.models import (
     CoordinateStatusResult,
     CoordinateUpdateResult,
@@ -386,13 +390,16 @@ def update(
         ),
     ] = None,
     token_endpoint: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--token-endpoint",
             "-e",
-            help="PDND token endpoint URL.",
+            help=(
+                "PDND token endpoint URL. If omitted, defaults to UAT or "
+                "production based on --validation/--production."
+            ),
         ),
-    ] = DEFAULT_TOKEN_ENDPOINT,
+    ] = None,
     server_url: Annotated[
         str | None,
         typer.Option(
@@ -432,6 +439,7 @@ def update(
     # Determine server URL
     if server_url is None:
         server_url = SERVERS["validation"] if validation_env else SERVERS["production"]
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
 
     # Create SDK with ModI hook (modi_audience is the API base URL)
     # The hook automatically adds Digest, Agid-JWT-Signature, and
@@ -547,13 +555,16 @@ def dry_run(
         ),
     ] = None,
     token_endpoint: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--token-endpoint",
             "-e",
-            help="PDND token endpoint URL.",
+            help=(
+                "PDND token endpoint URL. If omitted, defaults to UAT or "
+                "production based on --validation/--production."
+            ),
         ),
-    ] = DEFAULT_TOKEN_ENDPOINT,
+    ] = None,
     server_url: Annotated[
         str | None,
         typer.Option(
@@ -661,6 +672,10 @@ def dry_run(
             "Provide --prognazacc OR (--codcom AND --denom)."
         )
         raise typer.Exit(1) from None
+
+    # Resolve token endpoint up-front: it's used by both the consult and
+    # the coordinate SDKs below, so it must be set before any SDK init.
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
 
     # Determine server URLs
     coord_server = server_url or (
@@ -1120,6 +1135,7 @@ def duckdb_batch_update(
     # Determine server URL
     if server_url is None:
         server_url = SERVERS["validation"] if validation_env else SERVERS["production"]
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
 
     # Create results table
     _create_results_table(db_path)
@@ -1420,13 +1436,16 @@ def duckdb_batch_update(
 @coordinate_app.command("status")
 def status(
     token_endpoint: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--token-endpoint",
             "-e",
-            help="PDND token endpoint URL.",
+            help=(
+                "PDND token endpoint URL. If omitted, defaults to UAT or "
+                "production based on --validation/--production."
+            ),
         ),
-    ] = DEFAULT_TOKEN_ENDPOINT,
+    ] = None,
     server_url: Annotated[
         str | None,
         typer.Option(
@@ -1467,6 +1486,7 @@ def status(
     # Determine server URL
     if server_url is None:
         server_url = SERVERS["validation"] if validation_env else SERVERS["production"]
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
 
     # Create SDK (no ModI needed for status - GET request, hook will skip it)
     sdk, _ = _get_sdk(

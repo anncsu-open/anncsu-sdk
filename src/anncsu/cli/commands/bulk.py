@@ -19,6 +19,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
+from anncsu.cli.commands.constants import _resolve_token_endpoint
 from anncsu.common.session import get_config_dir
 from anncsu.coordinate.bulk.db import BulkDB
 from anncsu.coordinate.bulk.executor import (
@@ -234,9 +235,16 @@ def bulk_update(
         ),
     ],
     token_endpoint: Annotated[
-        str,
-        typer.Option("--token-endpoint", "-e", help="PDND token endpoint URL."),
-    ] = "https://auth.uat.interop.pagopa.it/token.oauth2",
+        str | None,
+        typer.Option(
+            "--token-endpoint",
+            "-e",
+            help=(
+                "PDND token endpoint URL. If omitted, defaults to UAT or "
+                "production based on --validation/--production."
+            ),
+        ),
+    ] = None,
     server_url: Annotated[
         str | None,
         typer.Option("--server-url", "-s", help="API server URL."),
@@ -271,6 +279,7 @@ def bulk_update(
         anncsu coordinate bulk update input.csv --max-records 1000
         anncsu coordinate bulk update input.csv --json
     """
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
     coord_server, _ = _resolve_servers(validation_env, server_url)
 
     try:
@@ -451,9 +460,16 @@ def bulk_dry_run(
         typer.Option("--max-records", "-n", help="Maximum records to test."),
     ] = 10,
     token_endpoint: Annotated[
-        str,
-        typer.Option("--token-endpoint", "-e", help="PDND token endpoint URL."),
-    ] = "https://auth.uat.interop.pagopa.it/token.oauth2",
+        str | None,
+        typer.Option(
+            "--token-endpoint",
+            "-e",
+            help=(
+                "PDND token endpoint URL. If omitted, defaults to UAT or "
+                "production based on --validation/--production."
+            ),
+        ),
+    ] = None,
     server_url: Annotated[
         str | None,
         typer.Option("--server-url", "-s", help="API server URL."),
@@ -486,6 +502,7 @@ def bulk_dry_run(
     """
     from anncsu.coordinate.bulk.dryrun import BulkDryRunner
 
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
     coord_server, consult_server = _resolve_servers(validation_env, server_url)
 
     try:
@@ -632,9 +649,16 @@ def resume(
         typer.Argument(help="Run ID to resume."),
     ],
     token_endpoint: Annotated[
-        str,
-        typer.Option("--token-endpoint", "-e", help="PDND token endpoint URL."),
-    ] = "https://auth.uat.interop.pagopa.it/token.oauth2",
+        str | None,
+        typer.Option(
+            "--token-endpoint",
+            "-e",
+            help=(
+                "PDND token endpoint URL. If omitted, defaults to UAT or "
+                "production based on --validation/--production."
+            ),
+        ),
+    ] = None,
     server_url: Annotated[
         str | None,
         typer.Option("--server-url", "-s", help="API server URL."),
@@ -666,6 +690,7 @@ def resume(
     Example:
         anncsu coordinate bulk resume abc123-def456
     """
+    token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
     coord_server, _ = _resolve_servers(validation_env, server_url)
 
     db_file = _find_db_for_run(run_id)
