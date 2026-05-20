@@ -1986,6 +1986,126 @@ JSON output:
 }
 ```
 
+#### `anncsu accesso *` — `--dry-run` flag
+
+All three write commands (`insert`, `update`, `delete`) accept `--dry-run` to execute a test cycle that automatically rolls back, useful for verifying authentication, ModI configuration, and end-to-end connectivity without persisting changes.
+
+**Rollback flow per operation**:
+
+| Command | Test op | Rollback | Caveats |
+|---|---|---|---|
+| `insert --dry-run` | `I` (insert) | `S` on the assigned `progr_civico` | ✅ Clean: the temporary accesso is fully removed |
+| `update --dry-run` | `R` with new values | `R` with original values (read via PA API) | ⚠️ Pre-check: aborts if originals have null fields (legacy data); see below |
+| `delete --dry-run` | `S` (soppressione) | `I` rebuilt from original values | ⚠️ Re-inserted accesso has a **new `progr_civico`** (ANNCSU assigns it autonomously — cannot be forced to the old one) |
+
+**Crash safety**: before the rollback API call, a JSON file is written to `~/.anncsu/dryrun_pending.json` containing all data needed to manually clean up if the CLI crashes between test op and rollback.
+
+**Pre-check for `update --dry-run`** (legacy ANNCSU data):
+The CLI fetches the original accesso fields via PA API before issuing any write. If a required field (currently `metodo`) is null on the originals — common for legacy data uploaded before validation rules were tightened — the dry-run **aborts before any write**, with a clear error message. This guarantees that an `update --dry-run` is never partially destructive.
+
+Examples:
+
+```bash
+# Insert dry-run — creates an accesso, then immediately deletes it
+anncsu accesso insert --codcom A062 --prognaz 2000449 --numero 12 --dry-run
+
+# Update dry-run — applies new coordinates, then restores originals
+anncsu accesso update --codcom A062 --prognaz 2000449 \
+    --progr-civico 1370588 --numero 12 \
+    --coord-x 13.10 --coord-y 41.88 --metodo 3 --dry-run
+
+# Delete dry-run — soppresses, then re-inserts with original data
+anncsu accesso delete --codcom A062 --prognaz 2000449 \
+    --progr-civico 1370588 --dry-run
+```
+
+JSON output of `--dry-run` (any command):
+
+```json
+{
+  "success": true,
+  "operazione_civico": "I",
+  "test_op": {
+    "success": true,
+    "operazione_civico": "I",
+    "id_richiesta": "REQ-001",
+    "esito": "0",
+    "messaggio": "OK",
+    "dati_count": 1
+  },
+  "rollback": {
+    "success": true,
+    "operazione_civico": "S",
+    "id_richiesta": "REQ-002",
+    "esito": "0",
+    "messaggio": "OK",
+    "dati_count": 0
+  },
+  "rollback_failed": false,
+  "rollback_progr_civico_changed": false,
+  "pending_log_path": "/Users/me/.anncsu/dryrun_pending.json",
+  "error_message": null
+}
+```
+
+For `delete --dry-run` specifically, `rollback_progr_civico_changed` will be `true` when ANNCSU assigns a different `progr_civico` to the re-inserted accesso (always, in practice, since the spec does not allow forcing the old identifier).
+
+##### Recovery from a pending log
+
+If the CLI crashes between the test op and the rollback, the file `~/.anncsu/dryrun_pending.json` is left behind containing every detail needed for manual cleanup. Example content for a crashed `insert --dry-run`:
+
+```json
+{
+  "timestamp": "2026-05-19T10:34:21.123456+00:00",
+  "operazione": "S",
+  "payload": {
+    "codcom": "A062",
+    "progr_nazionale": "2000449",
+    "progr_civico": "9999999",
+    "originating_test_op": "I"
+  },
+  "note": "Insert dry-run pending rollback. If you see this file, the CLI crashed between insert and delete — manually run `anncsu accesso delete --codcom A062 --prognaz 2000449 --progr-civico 9999999`.",
+  "pid": 12345
+}
+```
+
+The `note` field always contains the exact command to run for cleanup. Possible scenarios per dry-run type:
+
+| Operation | What was done | Manual cleanup command |
+|---|---|---|
+| `insert --dry-run` crashed after I | An accesso was created but not deleted | `anncsu accesso delete --codcom X --prognaz Y --progr-civico <from payload>` |
+| `update --dry-run` crashed after first R | New values are live; originals saved in payload | `anncsu accesso update --codcom X --prognaz Y --progr-civico Z --numero <original> --metodo <original> ...` |
+| `delete --dry-run` crashed after S | Accesso is deleted, re-insert never happened | `anncsu accesso insert --codcom X --prognaz Y --numero <original> --metodo <original> ...` (note: the new accesso will have a different progr_civico) |
+
+After resolving the issue, **delete the pending file** manually so it doesn't shadow future dry-runs:
+
+```bash
+rm ~/.anncsu/dryrun_pending.json
+```
+
+There is no automatic recovery command yet — the design intentionally keeps recovery a manual, deliberate operation to avoid hidden state mutations.
+
+#### `anncsu accesso update/delete` — `--auto-resolve` flag
+
+`update` and `delete` both require `--progr-civico` to identify the target accesso. As an alternative, pass `--auto-resolve` together with `--civico` to have the CLI look up the `progr_civico` automatically via PA API.
+
+```bash
+# Delete via auto-resolve (no need to know progr_civico in advance)
+anncsu accesso delete --codcom A062 --prognaz 2000449 \
+    --auto-resolve --civico 12
+
+# Update via auto-resolve
+anncsu accesso update --codcom A062 --prognaz 2000449 \
+    --auto-resolve --civico 12 --metodo 3
+```
+
+Errors:
+- `--auto-resolve` without `--civico` → error (lookup needs the civico number)
+- PA lookup returns 0 matches → error (no accesso found)
+- PA lookup returns >1 matches → error (ambiguous, specify `--progr-civico` directly)
+
+The default (without `--auto-resolve`) remains `--progr-civico` explicit — safer for scripting and CI/CD, where you typically already know the identifier.
+
 ---
 
 ## Environment Variables

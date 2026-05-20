@@ -189,6 +189,54 @@ class AccessoStatusResult(BaseModel):
     environment: str = Field(description="Environment (validation or production)")
 
 
+class AccessoDryRunResult(BaseModel):
+    """Result of an accesso ``--dry-run`` cycle (test op + rollback).
+
+    The exact semantics of ``test_op`` and ``rollback`` depend on the
+    operation under test:
+
+    * ``insert``: ``test_op`` is the I, ``rollback`` is the S that deletes
+      the newly created accesso.
+    * ``update``: ``test_op`` is the R with new values, ``rollback`` is the
+      R that re-applies the original values.
+    * ``delete``: ``test_op`` is the S, ``rollback`` is the I that
+      re-inserts an accesso with the original data (the new accesso has a
+      different ``progr_civico`` assigned by ANNCSU — this is documented in
+      ``rollback_progr_civico_changed``).
+    """
+
+    success: bool = Field(description="Whether both test op and rollback succeeded")
+    operazione_civico: str = Field(description="Operation under test (I, R, or S)")
+    test_op: AccessoOperationResult = Field(description="Result of the test operation")
+    rollback: AccessoOperationResult | None = Field(
+        default=None,
+        description="Result of the rollback operation (None if test_op failed before rollback)",
+    )
+    rollback_failed: bool = Field(
+        default=False,
+        description="Whether the rollback failed (requires manual cleanup)",
+    )
+    rollback_progr_civico_changed: bool = Field(
+        default=False,
+        description=(
+            "For delete --dry-run: True when the re-insert (rollback I) "
+            "produced a new progr_civico, meaning the original accesso could "
+            "not be restored byte-identically."
+        ),
+    )
+    pending_log_path: str | None = Field(
+        default=None,
+        description=(
+            "Path to ~/.anncsu/dryrun_pending.json which is written before the "
+            "rollback API call. If the CLI crashes between test_op and rollback, "
+            "the file contains the data needed for manual cleanup."
+        ),
+    )
+    error_message: str | None = Field(
+        default=None, description="Error message if the dry-run failed"
+    )
+
+
 class DryRunResult(BaseModel):
     """Result of a coordinate dry-run operation."""
 
