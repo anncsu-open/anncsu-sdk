@@ -34,14 +34,20 @@ from anncsu.accessi.models.richiestaoperazione import (
     Richiesta,
 )
 from anncsu.accessi.models.validated import ValidatedAccesso
-from anncsu.cli.models import AccessoOperationResult, AccessoStatusResult
+from anncsu.cli.models import (
+    AccessoDryRunResult,
+    AccessoOperationResult,
+    AccessoStatusResult,
+)
 from anncsu.common import PDNDAuthManager
 from anncsu.common.auth import extract_voucher_audience
 from anncsu.common.config import APIType, ClientAssertionSettings
 from anncsu.common.errors import AudienceMismatchError
 from anncsu.common.hooks import SDKHooks, register_modi_hook
 from anncsu.common.modi import AuditContext, ModIConfig
+from anncsu.common.security import Security as PASecurity
 from anncsu.common.session import get_config_dir
+from anncsu.pa import AnncsuConsultazione
 
 accesso_app = typer.Typer(
     name="accesso",
@@ -69,6 +75,167 @@ SERVERS = {
         "AgenziaEntrate/anncsuaccessi/v1"
     ),
 }
+
+
+# Fields that must be valued in the original accesso for a R rollback to be
+# safe. If any of these is null/missing on the originals (legacy ANNCSU
+# data), update --dry-run aborts before any write to avoid an irreversible
+# update.
+DRY_RUN_REQUIRED_ORIGINAL_FIELDS: tuple[str, ...] = (
+    "metodo",
+    # sezione_censimento is optional in the OAS but commonly null on legacy
+    # data — we only require the strict ones to keep dry-run usable.
+)
+
+
+def _get_consult_sdk(
+    token_endpoint: str,
+    verify_ssl: bool = True,
+) -> AnncsuConsultazione:
+    """Build a read-only PA Consultazione SDK for accesso lookups.
+
+    Used by ``--dry-run`` (to fetch the original values before rollback)
+    and by ``--auto-resolve`` (to resolve progr_civico from prognaz+civico).
+    Auto-discovers the server URL from the voucher audience.
+    """
+    try:
+        settings = ClientAssertionSettings()
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Configuration not found: {e}")
+        raise typer.Exit(1) from None
+
+    try:
+        manager = PDNDAuthManager(
+            api_type=APIType.PA,
+            settings=settings,
+            token_endpoint=token_endpoint,
+            session_persistence=True,
+            config_dir=get_config_dir(),
+        )
+        access_token = manager.get_access_token()
+    except Exception as e:
+        error_console.print(
+            f"[red]Error:[/red] PA Consultazione authentication failed: {e}"
+        )
+        raise typer.Exit(1) from None
+
+    # Auto-discover PA server URL from voucher.
+    server_url = extract_voucher_audience(access_token)
+
+    def security_provider() -> PASecurity:
+        return PASecurity(bearer=manager.get_access_token())
+
+    client = httpx.Client(verify=verify_ssl)
+    return AnncsuConsultazione(
+        security=security_provider,
+        server_url=server_url,
+        client=client,
+    )
+
+
+def _resolve_progr_civico_via_pa(
+    consult_sdk: AnncsuConsultazione,
+    *,
+    prognaz: str,
+    civico: str,
+) -> str:
+    """Resolve ``progr_civico`` from ``prognaz`` + ``civico`` via PA API.
+
+    Used by ``--auto-resolve``. Errors out if zero or multiple matches are
+    found, since either case is a setup error the user must address.
+    """
+    try:
+        response = consult_sdk.queryparam.elencoaccessiprog_get_query_param(
+            prognaz=prognaz, accparz=civico
+        )
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] PA lookup failed: {e}")
+        raise typer.Exit(1) from None
+
+    matches = list(response.data or [])
+    if not matches:
+        error_console.print(
+            f"[red]Error:[/red] No accesso found for prognaz={prognaz} "
+            f"civico={civico}. Cannot auto-resolve progr_civico."
+        )
+        raise typer.Exit(1)
+    if len(matches) > 1:
+        error_console.print(
+            f"[red]Error:[/red] Ambiguous lookup: {len(matches)} matches for "
+            f"prognaz={prognaz} civico={civico}. Specify --progr-civico "
+            f"explicitly to disambiguate."
+        )
+        raise typer.Exit(1)
+
+    return str(matches[0].prognazacc)
+
+
+def _lookup_accesso_originali(
+    consult_sdk: AnncsuConsultazione,
+    progr_civico: str,
+) -> dict[str, str | None]:
+    """Fetch the original field values of an accesso by ``progr_civico``.
+
+    Returns a dict of the fields needed to construct a rollback payload.
+    Raises typer.Exit(1) if the accesso is not found.
+    """
+    try:
+        response = consult_sdk.queryparam.prognazacc_get_query_param(
+            prognazacc=progr_civico
+        )
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Original accesso lookup failed: {e}")
+        raise typer.Exit(1) from None
+
+    data_list = response.data or []
+    if not data_list:
+        error_console.print(
+            f"[red]Error:[/red] No accesso found for progr_civico={progr_civico}."
+        )
+        raise typer.Exit(1)
+
+    item = data_list[0]
+    return {
+        "civico": getattr(item, "civico", None),
+        "metrico": getattr(item, "metrico", None),
+        "esponente": getattr(item, "esp", None),
+        "specificita": getattr(item, "specif", None),
+        "coord_x": getattr(item, "coord_x", None),
+        "coord_y": getattr(item, "coord_y", None),
+        "quota": getattr(item, "quota", None),
+        "metodo": getattr(item, "metodo", None),
+    }
+
+
+def _write_pending_log(
+    *,
+    operazione: str,
+    payload: dict,
+    note: str,
+) -> str:
+    """Write a pending-rollback log file before issuing the rollback call.
+
+    If the CLI crashes between the test op and the rollback, the user has
+    a JSON file with every detail needed to clean up manually.
+
+    Returns the absolute path to the file written.
+    """
+    import datetime
+    import json
+    import os
+
+    config_dir = get_config_dir()
+    config_dir.mkdir(parents=True, exist_ok=True)
+    pending_path = config_dir / "dryrun_pending.json"
+    record = {
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "operazione": operazione,
+        "payload": payload,
+        "note": note,
+        "pid": os.getpid(),
+    }
+    pending_path.write_text(json.dumps(record, indent=2, default=str))
+    return str(pending_path)
 
 
 def _get_sdk(
@@ -207,6 +374,575 @@ def _print_raw(response: object, label: str = "Raw API response") -> None:
         f"[dim]{label}:[/dim]\n"
         f"{json.dumps(response.model_dump(), indent=2, default=str)}"
     )
+
+
+def _build_result_from_response(
+    response: object, operazione_civico: str
+) -> AccessoOperationResult:
+    """Convert a raw SDK response into an AccessoOperationResult."""
+    esito = getattr(response, "esito", None)
+    return AccessoOperationResult(
+        success=esito == "0",
+        operazione_civico=operazione_civico,
+        id_richiesta=getattr(response, "id_richiesta", None),
+        esito=esito,
+        messaggio=getattr(response, "messaggio", None),
+        dati_count=len(getattr(response, "dati", []) or []),
+    )
+
+
+def _run_insert_dry_run(
+    *,
+    codcom: str,
+    progr_nazionale: str,
+    accesso: Accesso,
+    token_endpoint: str,
+    server_url: str,
+    verify_ssl: bool,
+    raw_output: bool,
+    json_output: bool,
+) -> None:
+    """Insert + immediate S rollback. Writes a pending log between the two
+    API calls so the user has a recovery trail if the process crashes."""
+    try:
+        ValidatedAccesso.model_validate(accesso.model_dump(exclude_unset=True))
+    except Exception as e:
+        error_console.print(f"[red]Validation error:[/red] {e}")
+        raise typer.Exit(1) from None
+
+    sdk, _ = _get_sdk(
+        token_endpoint=token_endpoint,
+        server_url=server_url,
+        verify_ssl=verify_ssl,
+        modi_audience=server_url,
+    )
+
+    # Step 1: I (insert)
+    richiesta = Richiesta(
+        codcom=codcom, progr_nazionale=progr_nazionale, accesso=accesso
+    )
+    try:
+        insert_response = sdk.anncsu.gestione_anncsu_pdnd(richiesta=richiesta)
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Insert API call failed: {e}")
+        raise typer.Exit(1) from None
+
+    if raw_output:
+        _print_raw(insert_response, "Raw insert response")
+
+    test_op_result = _build_result_from_response(insert_response, "I")
+
+    # Extract the progr_civico assigned by the API (needed for rollback S).
+    dati = getattr(insert_response, "dati", None) or []
+    assigned_progr_civico: str | None = None
+    if dati:
+        assigned_progr_civico = getattr(dati[0], "progr_civico", None)
+
+    if not test_op_result.success or not assigned_progr_civico:
+        # Insert itself failed → nothing to roll back.
+        error_console.print("[red]Insert failed; no rollback executed.[/red]")
+        dry_run_result = AccessoDryRunResult(
+            success=False,
+            operazione_civico="I",
+            test_op=test_op_result,
+            rollback=None,
+            rollback_failed=False,
+            error_message=(
+                "Insert did not return a progr_civico — cannot roll back."
+                if test_op_result.success
+                else (test_op_result.messaggio or "Insert failed")
+            ),
+        )
+        if json_output:
+            print(dry_run_result.model_dump_json(indent=2))
+        else:
+            console.print(f"[red]Dry-run aborted:[/red] {dry_run_result.error_message}")
+        raise typer.Exit(1)
+
+    # Step 2: persist pending log BEFORE issuing the rollback. If the
+    # process dies between here and the next API call, the user finds the
+    # log file and can clean up manually.
+    rollback_accesso = Accesso(
+        operazione_civico="S",
+        progr_civico=assigned_progr_civico,
+    )
+    pending_path = _write_pending_log(
+        operazione="S",
+        payload={
+            "codcom": codcom,
+            "progr_nazionale": progr_nazionale,
+            "progr_civico": assigned_progr_civico,
+            "originating_test_op": "I",
+        },
+        note=(
+            "Insert dry-run pending rollback. If you see this file, the CLI "
+            "crashed between insert and delete — manually run "
+            f"`anncsu accesso delete --codcom {codcom} --prognaz "
+            f"{progr_nazionale} --progr-civico {assigned_progr_civico}`."
+        ),
+    )
+    if not json_output:
+        console.print(f"[dim]Pending log written to:[/dim] {pending_path}")
+
+    # Step 3: S (rollback)
+    rollback_richiesta = Richiesta(
+        codcom=codcom, progr_nazionale=progr_nazionale, accesso=rollback_accesso
+    )
+    rollback_failed = False
+    rollback_error: str | None = None
+    try:
+        rollback_response = sdk.anncsu.gestione_anncsu_pdnd(
+            richiesta=rollback_richiesta
+        )
+        if raw_output:
+            _print_raw(rollback_response, "Raw rollback response")
+        rollback_result = _build_result_from_response(rollback_response, "S")
+        if not rollback_result.success:
+            rollback_failed = True
+            rollback_error = rollback_result.messaggio
+    except Exception as e:
+        rollback_failed = True
+        rollback_error = str(e)
+        rollback_result = AccessoOperationResult(
+            success=False,
+            operazione_civico="S",
+            messaggio=str(e),
+        )
+
+    dry_run_result = AccessoDryRunResult(
+        success=test_op_result.success and not rollback_failed,
+        operazione_civico="I",
+        test_op=test_op_result,
+        rollback=rollback_result,
+        rollback_failed=rollback_failed,
+        pending_log_path=pending_path,
+        error_message=rollback_error if rollback_failed else None,
+    )
+
+    if json_output:
+        print(dry_run_result.model_dump_json(indent=2))
+        if not dry_run_result.success:
+            raise typer.Exit(1)
+        return
+
+    if dry_run_result.success:
+        console.print("[green]Dry-run cycle successful (insert + rollback).[/green]")
+    else:
+        console.print(
+            f"[red]Dry-run failed at rollback step.[/red] "
+            f"Manual cleanup may be needed: {pending_path}"
+        )
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Step", style="cyan")
+    table.add_column("Result")
+    table.add_column("Details")
+    table.add_row(
+        "Insert (test_op)",
+        "[green]OK[/green]" if test_op_result.success else "[red]FAILED[/red]",
+        test_op_result.messaggio or "—",
+    )
+    table.add_row(
+        "Delete (rollback)",
+        "[green]OK[/green]" if rollback_result.success else "[red]FAILED[/red]",
+        rollback_result.messaggio or "—",
+    )
+    console.print(table)
+
+    if not dry_run_result.success:
+        raise typer.Exit(1)
+
+
+def _run_update_dry_run(
+    *,
+    codcom: str,
+    progr_nazionale: str,
+    new_accesso: Accesso,
+    token_endpoint: str,
+    server_url: str,
+    verify_ssl: bool,
+    raw_output: bool,
+    json_output: bool,
+) -> None:
+    """Update + immediate R rollback to original values.
+
+    Pre-checks that every field required for a clean rollback (currently
+    ``metodo``) is populated on the originals. If any is null/missing on
+    ANNCSU side (legacy data), the dry-run aborts BEFORE the first R is
+    sent — guaranteeing no irreversible write.
+    """
+    progr_civico = new_accesso.progr_civico
+    if not progr_civico:
+        error_console.print(
+            "[red]Error:[/red] update --dry-run requires --progr-civico."
+        )
+        raise typer.Exit(1)
+
+    consult_sdk = _get_consult_sdk(token_endpoint=token_endpoint, verify_ssl=verify_ssl)
+    originali = _lookup_accesso_originali(consult_sdk, progr_civico)
+
+    # Pre-check: rollback would fail on legacy data with null required fields.
+    missing_required = [
+        f for f in DRY_RUN_REQUIRED_ORIGINAL_FIELDS if not originali.get(f)
+    ]
+    if missing_required:
+        msg = (
+            f"[red]Dry-run aborted:[/red] the original accesso has null/missing "
+            f"fields needed to rebuild the rollback payload: "
+            f"{', '.join(missing_required)}. This is typical for legacy ANNCSU "
+            f"data — proceeding would result in an irreversible update."
+        )
+        if json_output:
+            print(
+                AccessoDryRunResult(
+                    success=False,
+                    operazione_civico="R",
+                    test_op=AccessoOperationResult(
+                        success=False, operazione_civico="R"
+                    ),
+                    error_message=(
+                        f"legacy originali con campi null: "
+                        f"{', '.join(missing_required)}"
+                    ),
+                ).model_dump_json(indent=2)
+            )
+        else:
+            console.print(msg)
+        raise typer.Exit(1)
+
+    sdk, _ = _get_sdk(
+        token_endpoint=token_endpoint,
+        server_url=server_url,
+        verify_ssl=verify_ssl,
+        modi_audience=server_url,
+    )
+
+    # Step 1: R with new values
+    try:
+        new_response = sdk.anncsu.gestione_anncsu_pdnd(
+            richiesta=Richiesta(
+                codcom=codcom,
+                progr_nazionale=progr_nazionale,
+                accesso=new_accesso,
+            )
+        )
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Update API call failed: {e}")
+        raise typer.Exit(1) from None
+
+    if raw_output:
+        _print_raw(new_response, "Raw update response")
+    test_op_result = _build_result_from_response(new_response, "R")
+
+    if not test_op_result.success:
+        dry_run_result = AccessoDryRunResult(
+            success=False,
+            operazione_civico="R",
+            test_op=test_op_result,
+            error_message=test_op_result.messaggio or "Update failed",
+        )
+        if json_output:
+            print(dry_run_result.model_dump_json(indent=2))
+        else:
+            console.print(
+                f"[red]Dry-run aborted at update step.[/red] "
+                f"{test_op_result.messaggio or ''}"
+            )
+        raise typer.Exit(1)
+
+    # Persist pending log before rollback (R original).
+    pending_path = _write_pending_log(
+        operazione="R",
+        payload={
+            "codcom": codcom,
+            "progr_nazionale": progr_nazionale,
+            "progr_civico": progr_civico,
+            "originals": originali,
+            "originating_test_op": "R",
+        },
+        note=(
+            f"Update dry-run pending rollback. The accesso "
+            f"progr_civico={progr_civico} has been updated with new values; "
+            f"if you see this file, manually run `anncsu accesso update ...` "
+            f"with the originals above to restore."
+        ),
+    )
+    if not json_output:
+        console.print(f"[dim]Pending log written to:[/dim] {pending_path}")
+
+    # Step 2: R with original values (rollback)
+    rollback_coordinate: Coordinate | None = None
+    if originali.get("coord_x") or originali.get("coord_y"):
+        rollback_coordinate = Coordinate(
+            x=originali.get("coord_x"),
+            y=originali.get("coord_y"),
+            z=originali.get("quota"),
+            metodo=originali.get("metodo"),
+        )
+    rollback_accesso = Accesso(
+        operazione_civico="R",
+        progr_civico=progr_civico,
+        numero=originali.get("civico"),
+        metrico=originali.get("metrico"),
+        esponente=originali.get("esponente"),
+        specificita=originali.get("specificita"),
+        coordinate=rollback_coordinate,
+    )
+
+    rollback_failed = False
+    rollback_error: str | None = None
+    try:
+        rollback_response = sdk.anncsu.gestione_anncsu_pdnd(
+            richiesta=Richiesta(
+                codcom=codcom,
+                progr_nazionale=progr_nazionale,
+                accesso=rollback_accesso,
+            )
+        )
+        if raw_output:
+            _print_raw(rollback_response, "Raw rollback response")
+        rollback_result = _build_result_from_response(rollback_response, "R")
+        if not rollback_result.success:
+            rollback_failed = True
+            rollback_error = rollback_result.messaggio
+    except Exception as e:
+        rollback_failed = True
+        rollback_error = str(e)
+        rollback_result = AccessoOperationResult(
+            success=False, operazione_civico="R", messaggio=str(e)
+        )
+
+    dry_run_result = AccessoDryRunResult(
+        success=test_op_result.success and not rollback_failed,
+        operazione_civico="R",
+        test_op=test_op_result,
+        rollback=rollback_result,
+        rollback_failed=rollback_failed,
+        pending_log_path=pending_path,
+        error_message=rollback_error if rollback_failed else None,
+    )
+
+    if json_output:
+        print(dry_run_result.model_dump_json(indent=2))
+        if not dry_run_result.success:
+            raise typer.Exit(1)
+        return
+
+    if dry_run_result.success:
+        console.print(
+            "[green]Dry-run cycle successful (update + restore originals).[/green]"
+        )
+    else:
+        console.print(
+            f"[red]Dry-run failed at rollback step.[/red] "
+            f"Manual cleanup may be needed: {pending_path}"
+        )
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Step", style="cyan")
+    table.add_column("Result")
+    table.add_column("Details")
+    table.add_row(
+        "Update new (test_op)",
+        "[green]OK[/green]" if test_op_result.success else "[red]FAILED[/red]",
+        test_op_result.messaggio or "—",
+    )
+    table.add_row(
+        "Restore original (rollback)",
+        "[green]OK[/green]" if rollback_result.success else "[red]FAILED[/red]",
+        rollback_result.messaggio or "—",
+    )
+    console.print(table)
+
+    if not dry_run_result.success:
+        raise typer.Exit(1)
+
+
+def _run_delete_dry_run(
+    *,
+    codcom: str,
+    progr_nazionale: str,
+    progr_civico: str,
+    data_valid_amm: str | None,
+    token_endpoint: str,
+    server_url: str,
+    verify_ssl: bool,
+    raw_output: bool,
+    json_output: bool,
+) -> None:
+    """Delete + immediate re-insert rollback.
+
+    Flow: PA lookup of original fields → S → I (rebuilt from originals).
+    The re-inserted accesso gets a new ``progr_civico`` assigned by ANNCSU
+    (the spec doesn't let us force the old one), so the rollback result
+    flags ``rollback_progr_civico_changed=True``.
+    """
+    consult_sdk = _get_consult_sdk(token_endpoint=token_endpoint, verify_ssl=verify_ssl)
+    originali = _lookup_accesso_originali(consult_sdk, progr_civico)
+
+    sdk, _ = _get_sdk(
+        token_endpoint=token_endpoint,
+        server_url=server_url,
+        verify_ssl=verify_ssl,
+        modi_audience=server_url,
+    )
+
+    # Step 1: S (delete under test)
+    delete_accesso = Accesso(
+        operazione_civico="S",
+        progr_civico=progr_civico,
+        data_valid_amm=data_valid_amm,
+    )
+    try:
+        delete_response = sdk.anncsu.gestione_anncsu_pdnd(
+            richiesta=Richiesta(
+                codcom=codcom,
+                progr_nazionale=progr_nazionale,
+                accesso=delete_accesso,
+            )
+        )
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Delete API call failed: {e}")
+        raise typer.Exit(1) from None
+
+    if raw_output:
+        _print_raw(delete_response, "Raw delete response")
+    test_op_result = _build_result_from_response(delete_response, "S")
+
+    if not test_op_result.success:
+        dry_run_result = AccessoDryRunResult(
+            success=False,
+            operazione_civico="S",
+            test_op=test_op_result,
+            error_message=test_op_result.messaggio or "Delete failed",
+        )
+        if json_output:
+            print(dry_run_result.model_dump_json(indent=2))
+        else:
+            console.print(
+                f"[red]Dry-run aborted at delete step.[/red] "
+                f"{test_op_result.messaggio or ''}"
+            )
+        raise typer.Exit(1)
+
+    # Persist pending log before rollback (I).
+    pending_path = _write_pending_log(
+        operazione="I",
+        payload={
+            "codcom": codcom,
+            "progr_nazionale": progr_nazionale,
+            "deleted_progr_civico": progr_civico,
+            "originals": originali,
+            "originating_test_op": "S",
+        },
+        note=(
+            f"Delete dry-run pending rollback. The accesso "
+            f"progr_civico={progr_civico} has been soppressed; if you see "
+            f"this file, the CLI crashed before the re-insert. Manually run "
+            f"`anncsu accesso insert ...` with the data above to restore it."
+        ),
+    )
+    if not json_output:
+        console.print(f"[dim]Pending log written to:[/dim] {pending_path}")
+
+    # Step 2: I (rollback) using original values.
+    rollback_coordinate: Coordinate | None = None
+    if originali.get("coord_x") or originali.get("coord_y"):
+        rollback_coordinate = Coordinate(
+            x=originali.get("coord_x"),
+            y=originali.get("coord_y"),
+            z=originali.get("quota"),
+            metodo=originali.get("metodo"),
+        )
+    rollback_accesso = Accesso(
+        operazione_civico="I",
+        numero=originali.get("civico"),
+        metrico=originali.get("metrico"),
+        esponente=originali.get("esponente"),
+        specificita=originali.get("specificita"),
+        coordinate=rollback_coordinate,
+    )
+
+    rollback_failed = False
+    rollback_error: str | None = None
+    progr_civico_changed = False
+    try:
+        rollback_response = sdk.anncsu.gestione_anncsu_pdnd(
+            richiesta=Richiesta(
+                codcom=codcom,
+                progr_nazionale=progr_nazionale,
+                accesso=rollback_accesso,
+            )
+        )
+        if raw_output:
+            _print_raw(rollback_response, "Raw rollback response")
+        rollback_result = _build_result_from_response(rollback_response, "I")
+        if rollback_result.success:
+            # ANNCSU assigns a new progr_civico — we cannot preserve the old.
+            new_dati = getattr(rollback_response, "dati", None) or []
+            if new_dati:
+                new_progr = getattr(new_dati[0], "progr_civico", None)
+                if new_progr and str(new_progr) != progr_civico:
+                    progr_civico_changed = True
+        else:
+            rollback_failed = True
+            rollback_error = rollback_result.messaggio
+    except Exception as e:
+        rollback_failed = True
+        rollback_error = str(e)
+        rollback_result = AccessoOperationResult(
+            success=False, operazione_civico="I", messaggio=str(e)
+        )
+
+    dry_run_result = AccessoDryRunResult(
+        success=test_op_result.success and not rollback_failed,
+        operazione_civico="S",
+        test_op=test_op_result,
+        rollback=rollback_result,
+        rollback_failed=rollback_failed,
+        rollback_progr_civico_changed=progr_civico_changed,
+        pending_log_path=pending_path,
+        error_message=rollback_error if rollback_failed else None,
+    )
+
+    if json_output:
+        print(dry_run_result.model_dump_json(indent=2))
+        if not dry_run_result.success:
+            raise typer.Exit(1)
+        return
+
+    if dry_run_result.success:
+        msg = "[green]Dry-run cycle successful (delete + re-insert).[/green]"
+        if progr_civico_changed:
+            msg += (
+                " [yellow]Note:[/yellow] the re-inserted accesso has a NEW "
+                "progr_civico (ANNCSU assigns it autonomously)."
+            )
+        console.print(msg)
+    else:
+        console.print(
+            f"[red]Dry-run failed at rollback step.[/red] "
+            f"Manual cleanup may be needed: {pending_path}"
+        )
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Step", style="cyan")
+    table.add_column("Result")
+    table.add_column("Details")
+    table.add_row(
+        "Delete (test_op)",
+        "[green]OK[/green]" if test_op_result.success else "[red]FAILED[/red]",
+        test_op_result.messaggio or "—",
+    )
+    table.add_row(
+        "Re-insert (rollback)",
+        "[green]OK[/green]" if rollback_result.success else "[red]FAILED[/red]",
+        rollback_result.messaggio or "—",
+    )
+    console.print(table)
+
+    if not dry_run_result.success:
+        raise typer.Exit(1)
 
 
 def _execute_operation(
@@ -416,6 +1152,17 @@ def insert(
     raw_output: Annotated[
         bool, typer.Option("--raw", help="Print raw API response to stderr.")
     ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help=(
+                "Run insert and immediately delete the new accesso (S rollback). "
+                "A pending log is written to ~/.anncsu/dryrun_pending.json "
+                "before the rollback so a crash leaves a manual-recovery trail."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Insert a new accesso (``operazione_civico='I'``).
 
@@ -441,13 +1188,28 @@ def insert(
         data_valid_amm=data_valid_amm,
     )
 
+    resolved_server = _resolve_server_url(server_url, validation_env)
+
+    if dry_run:
+        _run_insert_dry_run(
+            codcom=codcom,
+            progr_nazionale=prognaz,
+            accesso=accesso,
+            token_endpoint=token_endpoint,
+            server_url=resolved_server,
+            verify_ssl=not no_verify_ssl,
+            raw_output=raw_output,
+            json_output=json_output,
+        )
+        return
+
     _execute_operation(
         operazione_civico="I",
         codcom=codcom,
         progr_nazionale=prognaz,
         accesso=accesso,
         token_endpoint=token_endpoint,
-        server_url=_resolve_server_url(server_url, validation_env),
+        server_url=resolved_server,
         verify_ssl=not no_verify_ssl,
         raw_output=raw_output,
         json_output=json_output,
@@ -467,13 +1229,33 @@ def update(
         typer.Option("--prognaz", "-p", help="Progressivo nazionale dell'odonimo."),
     ],
     progr_civico: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--progr-civico",
             "-P",
-            help="Progressivo civico (identifier of the accesso).",
+            help=(
+                "Progressivo civico (identifier of the accesso). Required "
+                "unless --auto-resolve is used."
+            ),
         ),
-    ],
+    ] = None,
+    civico: Annotated[
+        str | None,
+        typer.Option(
+            "--civico",
+            help="Numero civico — used with --auto-resolve to look up progr_civico.",
+        ),
+    ] = None,
+    auto_resolve: Annotated[
+        bool,
+        typer.Option(
+            "--auto-resolve",
+            help=(
+                "Resolve progr_civico automatically via PA accesso lookup "
+                "(requires --civico). Errors if 0 or >1 matches are found."
+            ),
+        ),
+    ] = False,
     numero: Annotated[
         str | None,
         typer.Option(
@@ -552,6 +1334,18 @@ def update(
     raw_output: Annotated[
         bool, typer.Option("--raw", help="Print raw API response to stderr.")
     ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help=(
+                "Run update + immediate restore of originals (R + R). Pre-checks "
+                "that the originals have all required fields (e.g. metodo) "
+                "populated — aborts before any write if legacy data with nulls "
+                "is detected."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Update/replace an existing accesso (``operazione_civico='R'``).
 
@@ -559,6 +1353,27 @@ def update(
         anncsu accesso update --codcom A062 --prognaz 2000449 \\
             --progr-civico 1370588 --numero 12
     """
+    # Resolve progr_civico either explicitly or via PA lookup.
+    if auto_resolve:
+        if not civico:
+            error_console.print(
+                "[red]Error:[/red] --auto-resolve requires --civico to look up "
+                "the progr_civico via PA API."
+            )
+            raise typer.Exit(1)
+        consult_sdk = _get_consult_sdk(
+            token_endpoint=token_endpoint, verify_ssl=not no_verify_ssl
+        )
+        progr_civico = _resolve_progr_civico_via_pa(
+            consult_sdk, prognaz=prognaz, civico=civico
+        )
+    elif not progr_civico:
+        error_console.print(
+            "[red]Error:[/red] --progr-civico is required (or pass --auto-resolve "
+            "with --civico)."
+        )
+        raise typer.Exit(1)
+
     coordinate_obj: Coordinate | None = None
     if any(v is not None for v in (coord_x, coord_y, coord_z, metodo)):
         coordinate_obj = Coordinate(x=coord_x, y=coord_y, z=coord_z, metodo=metodo)
@@ -577,13 +1392,28 @@ def update(
         data_valid_amm=data_valid_amm,
     )
 
+    resolved_server = _resolve_server_url(server_url, validation_env)
+
+    if dry_run:
+        _run_update_dry_run(
+            codcom=codcom,
+            progr_nazionale=prognaz,
+            new_accesso=accesso,
+            token_endpoint=token_endpoint,
+            server_url=resolved_server,
+            verify_ssl=not no_verify_ssl,
+            raw_output=raw_output,
+            json_output=json_output,
+        )
+        return
+
     _execute_operation(
         operazione_civico="R",
         codcom=codcom,
         progr_nazionale=prognaz,
         accesso=accesso,
         token_endpoint=token_endpoint,
-        server_url=_resolve_server_url(server_url, validation_env),
+        server_url=resolved_server,
         verify_ssl=not no_verify_ssl,
         raw_output=raw_output,
         json_output=json_output,
@@ -603,13 +1433,33 @@ def delete(
         typer.Option("--prognaz", "-p", help="Progressivo nazionale dell'odonimo."),
     ],
     progr_civico: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--progr-civico",
             "-P",
-            help="Progressivo civico of the accesso to delete.",
+            help=(
+                "Progressivo civico of the accesso to delete. Required unless "
+                "--auto-resolve is used."
+            ),
         ),
-    ],
+    ] = None,
+    civico: Annotated[
+        str | None,
+        typer.Option(
+            "--civico",
+            help="Numero civico — used with --auto-resolve to look up progr_civico.",
+        ),
+    ] = None,
+    auto_resolve: Annotated[
+        bool,
+        typer.Option(
+            "--auto-resolve",
+            help=(
+                "Resolve progr_civico automatically via PA accesso lookup "
+                "(requires --civico). Errors if 0 or >1 matches are found."
+            ),
+        ),
+    ] = False,
     data_valid_amm: Annotated[
         str | None,
         typer.Option(
@@ -645,6 +1495,17 @@ def delete(
     raw_output: Annotated[
         bool, typer.Option("--raw", help="Print raw API response to stderr.")
     ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help=(
+                "Run delete and immediately re-insert the accesso with its "
+                "original data. The re-inserted accesso gets a NEW progr_civico "
+                "(ANNCSU assigns it autonomously)."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Delete (soppressione) an accesso (``operazione_civico='S'``).
 
@@ -658,6 +1519,43 @@ def delete(
         anncsu accesso delete --codcom A062 --prognaz 2000449 \\
             --progr-civico 1370588
     """
+    # Resolve progr_civico either explicitly or via PA lookup.
+    if auto_resolve:
+        if not civico:
+            error_console.print(
+                "[red]Error:[/red] --auto-resolve requires --civico to look up "
+                "the progr_civico via PA API."
+            )
+            raise typer.Exit(1)
+        consult_sdk = _get_consult_sdk(
+            token_endpoint=token_endpoint, verify_ssl=not no_verify_ssl
+        )
+        progr_civico = _resolve_progr_civico_via_pa(
+            consult_sdk, prognaz=prognaz, civico=civico
+        )
+    elif not progr_civico:
+        error_console.print(
+            "[red]Error:[/red] --progr-civico is required (or pass --auto-resolve "
+            "with --civico)."
+        )
+        raise typer.Exit(1)
+
+    resolved_server = _resolve_server_url(server_url, validation_env)
+
+    if dry_run:
+        _run_delete_dry_run(
+            codcom=codcom,
+            progr_nazionale=prognaz,
+            progr_civico=progr_civico,
+            data_valid_amm=data_valid_amm,
+            token_endpoint=token_endpoint,
+            server_url=resolved_server,
+            verify_ssl=not no_verify_ssl,
+            raw_output=raw_output,
+            json_output=json_output,
+        )
+        return
+
     accesso = Accesso(
         operazione_civico="S",
         progr_civico=progr_civico,
@@ -670,7 +1568,7 @@ def delete(
         progr_nazionale=prognaz,
         accesso=accesso,
         token_endpoint=token_endpoint,
-        server_url=_resolve_server_url(server_url, validation_env),
+        server_url=resolved_server,
         verify_ssl=not no_verify_ssl,
         raw_output=raw_output,
         json_output=json_output,
