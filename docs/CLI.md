@@ -1824,6 +1824,170 @@ anncsu pa accessi --codcom I501 --denom "VklBIFJPTUE=" --production \
 
 ---
 
+### `anncsu accesso` - Accesso CRUD
+
+CRUD operations on ANNCSU access points (civici). Three sub-commands map 1:1 to the `operazione_civico` field of the POST `/accessi` endpoint:
+
+| Sub-command | `operazione_civico` | Purpose |
+|---|---|---|
+| `insert` | `I` | Create a new accesso |
+| `update` | `R` | Replace/update an existing accesso |
+| `delete` | `S` | Soppressione (logical delete) |
+
+Plus `status` for the GET `/status` health check.
+
+> **ModI headers required**: All write operations (`insert`/`update`/`delete`) require `Agid-JWT-Signature` (INTEGRITY_REST_02) and `Agid-JWT-TrackingEvidence` (AUDIT_REST_02). They are added automatically by the ModI pre-request hook when `PDND_MODI_*` variables are configured. See the [ModI Headers](#modi-headers-coordinate-api) section below.
+
+> **Validation rules**: Inputs are pre-validated by `ValidatedAccesso` before the API call. Common rules:
+> - `operazione_civico` must be `I`, `R`, or `S`
+> - `progr_civico` is required for `R` and `S`, optional for `I`
+> - `numero` and `metrico` are mutually exclusive: exactly one is required for `I`/`R`
+> - For `S`, fields like `numero`, `metrico`, `esponente`, `specificita`, `sezione_censimento`, `isolato`, `coordinate` are not allowed (and not exposed in the `delete` signature)
+
+#### `anncsu accesso insert`
+
+Insert a new accesso (`operazione_civico='I'`). Exactly one of `--numero` or `--metrico` must be provided.
+
+```bash
+# Civico-numbered accesso
+anncsu accesso insert --codcom A062 --prognaz 2000449 --numero 12
+
+# With esponente and coordinates
+anncsu accesso insert --codcom A062 --prognaz 2000449 \
+    --numero 12 --esponente A --sezione-censimento 9 \
+    --coord-x 13.1022000 --coord-y 41.8847600 --metodo 3
+
+# Metrico (non-civico-numbered) accesso
+anncsu accesso insert --codcom A062 --prognaz 2000449 --metrico 300
+```
+
+Options:
+- `--codcom, -c` - Codice comune (Belfiore code) **[required]**
+- `--prognaz, -p` - Progressivo nazionale dell'odonimo **[required]**
+- `--numero, -n` - Numero civico (mutually exclusive with `--metrico`)
+- `--metrico, -M` - Metrico (mutually exclusive with `--numero`)
+- `--esponente` - Esponente (e.g. `A`, `BIS`)
+- `--specificita` - Specificita (e.g. `ROSSO`)
+- `--sezione-censimento` - Sezione di censimento
+- `--isolato` - Codice isolato (facoltativo)
+- `--codice-civico-comunale` - Codifica comunale dell'accesso
+- `--coord-x` / `--coord-y` / `--coord-z` - Coordinate (longitudine, latitudine, quota)
+- `--metodo, -m` - Metodo di rilevazione (1-4)
+- `--data-valid-amm` - Data inizio validità amministrativa (formato `dd/MM/yyyy`)
+- `--token-endpoint, -e` - PDND token endpoint URL
+- `--server-url, -s` - API server URL (auto-discovered from voucher if omitted)
+- `--validation/--production` - Use validation (UAT) or production environment
+- `--no-verify-ssl` - Disable SSL certificate verification
+- `--json` - Output as JSON
+- `--raw` - Print raw API response to stderr
+
+JSON output:
+```json
+{
+  "success": true,
+  "operazione_civico": "I",
+  "id_richiesta": "5144",
+  "esito": "0",
+  "messaggio": "OK",
+  "dati_count": 1
+}
+```
+
+#### `anncsu accesso update`
+
+Update/replace an existing accesso (`operazione_civico='R'`). Requires `--progr-civico` to identify the target. Exactly one of `--numero` or `--metrico` must be provided.
+
+```bash
+# Replace coordinates of an existing accesso
+anncsu accesso update --codcom A062 --prognaz 2000449 \
+    --progr-civico 1370588 --numero 12 \
+    --coord-x 13.1022001 --coord-y 41.8847601 --metodo 3
+```
+
+Options (additional to `insert` ones):
+- `--progr-civico, -P` - Progressivo civico of the accesso to update **[required]**
+
+JSON output:
+```json
+{
+  "success": true,
+  "operazione_civico": "R",
+  "id_richiesta": "5145",
+  "esito": "0",
+  "messaggio": "OK",
+  "dati_count": 1
+}
+```
+
+#### `anncsu accesso delete`
+
+Soppressione (logical delete) of an accesso (`operazione_civico='S'`).
+
+```bash
+# Minimal delete (data_valid_amm defaults to today)
+anncsu accesso delete --codcom A062 --prognaz 2000449 --progr-civico 1370588
+
+# With explicit end-of-validity date
+anncsu accesso delete --codcom A062 --prognaz 2000449 \
+    --progr-civico 1370588 --data-valid-amm 31/12/2025
+```
+
+Options:
+- `--codcom, -c` - Codice comune **[required]**
+- `--prognaz, -p` - Progressivo nazionale dell'odonimo **[required]**
+- `--progr-civico, -P` - Progressivo civico of the accesso to delete **[required]**
+- `--data-valid-amm` - Data **fine** validità amministrativa (formato `dd/MM/yyyy`). Defaults to today if omitted.
+- `--token-endpoint, -e` / `--server-url, -s` / `--validation/--production` / `--no-verify-ssl` / `--json` / `--raw` - same as `insert`
+
+> **Note**: `delete` does NOT accept `--numero`, `--metrico`, `--esponente`, `--specificita`, `--sezione-censimento`, `--isolato`, `--coord-*`, or `--metodo` — Typer rejects them at parse time as unknown options because they have no meaning for a deletion.
+
+JSON output:
+```json
+{
+  "success": true,
+  "operazione_civico": "S",
+  "id_richiesta": "5146",
+  "esito": "0",
+  "messaggio": "OK",
+  "dati_count": 0
+}
+```
+
+#### `anncsu accesso status`
+
+Check the status of the Accessi API service:
+
+```bash
+anncsu accesso status
+anncsu accesso status --production
+anncsu accesso status --json
+```
+
+Output:
+```
+Accessi API Status — Validation (UAT)
+
+┌─────────────────────────────────────────┐
+│ Field        │ Value                    │
+├─────────────────────────────────────────┤
+│ Status       │ OK (OK)                  │
+│ Environment  │ validation               │
+│ Server URL   │ https://modipa-val…      │
+└─────────────────────────────────────────┘
+```
+
+JSON output:
+```json
+{
+  "available": true,
+  "status": "OK",
+  "server_url": "https://modipa-val.agenziaentrate.it/govway/rest/in/AgenziaEntrate/anncsuaccessi/v1",
+  "environment": "validation"
+}
+```
+
+---
+
 ## Environment Variables
 
 The CLI reads configuration from environment variables (with `PDND_` prefix) or a `.env` file:
@@ -1958,9 +2122,9 @@ The `aud` claim should match the full GovWay URL for the API type being used.
 
 ---
 
-## ModI Headers (Coordinate API)
+## ModI Headers (Coordinate and Accessi APIs)
 
-The Coordinate API requires ModI (Modello di Interoperabilità) security headers in addition to the standard bearer token. These headers implement the AGID interoperability patterns:
+The Coordinate and Accessi APIs require ModI (Modello di Interoperabilità) security headers in addition to the standard bearer token. These headers implement the AGID interoperability patterns:
 
 - **INTEGRITY_REST_02**: Integrity of REST message payload in PDND
 - **AUDIT_REST_02**: Forwarding of tracked data in the Consumer domain
@@ -1975,7 +2139,7 @@ To enable ModI headers, add these environment variables to your `.env`:
 | `MODI_USER_LOCATION` | Yes* | Workstation/system identifier from which the request originates |
 | `MODI_LOA` | Yes* | Level of Assurance in the authentication process |
 
-*Required only for Coordinate API (POST requests). If not configured, ModI headers will not be sent.
+*Required for POST requests on Coordinate and Accessi APIs. If not configured, ModI headers will not be sent (API calls may be rejected by GovWay).
 
 ### Level of Assurance (LoA) Values
 
@@ -2016,6 +2180,10 @@ MODI_LOA=SPID_L2
 | `anncsu coordinate bulk update` | ✅ Yes - POST requests with payload |
 | `anncsu coordinate bulk dry-run` | ✅ Yes - POST requests (update + restore) |
 | `anncsu coordinate status` | ❌ No - GET request, no payload |
+| `anncsu accesso insert` | ✅ Yes - POST request with payload |
+| `anncsu accesso update` | ✅ Yes - POST request with payload |
+| `anncsu accesso delete` | ✅ Yes - POST request with payload |
+| `anncsu accesso status` | ❌ No - GET request, no payload |
 | `anncsu auth curl --api coordinate` | ✅ Yes - Generates cURL with ModI headers |
 | `anncsu auth curl --api pa` | ❌ No - GET request, Bearer only |
 | `anncsu auth *` (other) | ❌ No - Authentication only |
@@ -2170,7 +2338,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
     PDND_PURPOSE_ID_PA: ${{ secrets.PDND_PURPOSE_ID_PA }}
     PDND_PURPOSE_ID_COORDINATE: ${{ secrets.PDND_PURPOSE_ID_COORDINATE }}
     PDND_PURPOSE_ID_COORDINATE_BULK: ${{ secrets.PDND_PURPOSE_ID_COORDINATE_BULK }}
-    PDND_PURPOSE_ID_ACCESSI: ""
+    PDND_PURPOSE_ID_ACCESSI: ${{ secrets.PDND_PURPOSE_ID_ACCESSI }}
     PDND_PURPOSE_ID_INTERNI: ""
     PDND_PURPOSE_ID_ODONIMI: ""
     PDND_PRIVATE_KEY: ${{ secrets.PDND_PRIVATE_KEY }}

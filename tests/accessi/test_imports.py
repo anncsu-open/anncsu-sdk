@@ -4,10 +4,10 @@ This test suite verifies that all modules in the anncsu.accessi package
 can be imported successfully and that they correctly reference shared
 components from anncsu.common.
 
-Mirrors the pattern of tests/coordinate/test_imports.py (Session 27).
-These tests are written BEFORE the Speakeasy SDK generation (RED phase
-of TDD) and will pass once src/anncsu/accessi/ is generated and the
-post-generation script has rewired the common/sdk/ imports.
+Mirrors the pattern of tests/coordinate/test_imports.py.
+Validates that the Speakeasy-generated package is structured correctly
+and that the post-generation script has rewired imports to use
+``anncsu.common.sdk`` instead of duplicated local copies.
 """
 
 import pytest
@@ -171,8 +171,8 @@ class TestAccessiUsesCommonComponents:
 class TestAccessiUsesCommonSdk:
     """Test that Accessi package correctly uses common SDK infrastructure.
 
-    Like Coordinate (post-Session 26 refactoring), Accessi must NOT have
-    its own duplicated types/utils — these are centralized in common/sdk/.
+    Accessi must NOT have its own duplicated types/utils — these are
+    centralized in ``anncsu.common.sdk``.
     """
 
     def test_accessi_uses_common_sdk_types(self):
