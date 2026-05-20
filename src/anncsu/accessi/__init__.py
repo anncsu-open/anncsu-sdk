@@ -7,6 +7,16 @@ from ._version import (
     __user_agent__,
     __version__,
 )
+from .errors.accesso_validation import (
+    AccessoMaxLengthError,
+    AccessoValidationError,
+    FieldNotAllowedForDeleteError,
+    FieldNotAllowedForOperationError,
+    NumeroMetricoMutexError,
+    OperazioneCivicoError,
+    ProgrCivicoRequiredError,
+)
+from .models.validated import ValidatedAccesso
 from .sdk import AnncsuAccessi
 from .sdkconfiguration import SDKConfiguration
 
@@ -21,8 +31,16 @@ __all__ = [
     "__openapi_doc_version__",
     "__gen_version__",
     "__user_agent__",
+    "AccessoMaxLengthError",
+    "AccessoValidationError",
     "AnncsuAccessi",
+    "FieldNotAllowedForDeleteError",
+    "FieldNotAllowedForOperationError",
+    "NumeroMetricoMutexError",
+    "OperazioneCivicoError",
+    "ProgrCivicoRequiredError",
     "SDKConfiguration",
+    "ValidatedAccesso",
     "VERSION",
     "OPENAPI_DOC_VERSION",
     "SPEAKEASY_GENERATOR_VERSION",
