@@ -370,10 +370,53 @@ def fix_do_request_kwarg(package_path: Path, dry_run: bool = False) -> list[str]
     return fixed
 
 
+# Speakeasy 1.7+ emits ``from anncsu.common.sdk.utils import unmarshal_json_response``
+# but ``unmarshal_json_response`` is a sub-module whose name collides with the
+# inner function. Python resolves the import to the module, breaking the call
+# with ``TypeError: 'module' object is not callable``. See issue #28.
+UNMARSHAL_IMPORT_PATTERN = re.compile(
+    r"^from anncsu\.common\.sdk\.utils import unmarshal_json_response$",
+    flags=re.MULTILINE,
+)
+UNMARSHAL_IMPORT_REPLACEMENT = (
+    "from anncsu.common.sdk.utils.unmarshal_json_response import "
+    "unmarshal_json_response"
+)
+
+
+def fix_unmarshal_import(package_path: Path, dry_run: bool = False) -> list[str]:
+    """Rewrite the ambiguous package-level ``unmarshal_json_response`` import
+    to the explicit sub-module form used by the pa/coordinate packages."""
+    fixed: list[str] = []
+
+    for py_file in package_path.rglob("*.py"):
+        if "__pycache__" in str(py_file):
+            continue
+
+        content = py_file.read_text()
+        new_content, count = UNMARSHAL_IMPORT_PATTERN.subn(
+            UNMARSHAL_IMPORT_REPLACEMENT, content
+        )
+
+        if count > 0:
+            if not dry_run:
+                py_file.write_text(new_content)
+            rel_path = py_file.relative_to(package_path)
+            fixed.append(str(rel_path))
+            console.print(
+                f"  [green]Fixed unmarshal_json_response import ({count}x):[/green] {rel_path}"
+            )
+
+    return fixed
+
+
 def process_package(
     package_name: str, dry_run: bool = False
-) -> tuple[int, int, int, int]:
-    """Process a single API package. Returns (deleted, modified, fixed, do_request_fixed)."""
+) -> tuple[int, int, int, int, int]:
+    """Process a single API package.
+
+    Returns (deleted, modified, fixed, do_request_fixed, unmarshal_fixed).
+    """
     package_path = SDK_ROOT / package_name
 
     if not package_path.exists():
@@ -407,7 +450,21 @@ def process_package(
     if not do_request_fixed:
         console.print("  [dim]No do_request kwargs to fix[/dim]")
 
-    return len(deleted), len(modified), len(fixed), len(do_request_fixed)
+    # Step 5: Fix unmarshal_json_response import (Issue #28)
+    console.print(
+        "\n[bold]5. Fixing unmarshal_json_response import (Issue #28)...[/bold]"
+    )
+    unmarshal_fixed = fix_unmarshal_import(package_path, dry_run)
+    if not unmarshal_fixed:
+        console.print("  [dim]No unmarshal_json_response imports to fix[/dim]")
+
+    return (
+        len(deleted),
+        len(modified),
+        len(fixed),
+        len(do_request_fixed),
+        len(unmarshal_fixed),
+    )
 
 
 @app.command()
@@ -454,21 +511,36 @@ def main(
     total_modified = 0
     total_fixed = 0
     total_do_request_fixed = 0
+    total_unmarshal_fixed = 0
 
     if all_packages:
         # Process all known API packages
         for pkg in ALL_PACKAGES:
-            deleted, modified, fixed, do_request_fixed = process_package(pkg, dry_run)
+            (
+                deleted,
+                modified,
+                fixed,
+                do_request_fixed,
+                unmarshal_fixed,
+            ) = process_package(pkg, dry_run)
             total_deleted += deleted
             total_modified += modified
             total_fixed += fixed
             total_do_request_fixed += do_request_fixed
+            total_unmarshal_fixed += unmarshal_fixed
     else:
-        deleted, modified, fixed, do_request_fixed = process_package(package, dry_run)
+        (
+            deleted,
+            modified,
+            fixed,
+            do_request_fixed,
+            unmarshal_fixed,
+        ) = process_package(package, dry_run)
         total_deleted = deleted
         total_modified = modified
         total_fixed = fixed
         total_do_request_fixed = do_request_fixed
+        total_unmarshal_fixed = unmarshal_fixed
 
     # Summary
     console.print("\n" + "=" * 50)
@@ -477,6 +549,7 @@ def main(
     console.print(f"  Files modified:      {total_modified}")
     console.print(f"  Fields fixed:        {total_fixed}")
     console.print(f"  do_request fixed:    {total_do_request_fixed}")
+    console.print(f"  unmarshal fixed:     {total_unmarshal_fixed}")
 
     if dry_run:
         console.print(
