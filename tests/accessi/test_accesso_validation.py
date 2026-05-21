@@ -39,6 +39,7 @@ from anncsu.accessi.errors.accesso_validation import (
     NumeroMetricoMutexError,
     OperazioneCivicoError,
     ProgrCivicoRequiredError,
+    SezioneCensimentoRequiredError,
 )
 from anncsu.accessi.models.validated import ValidatedAccesso
 from anncsu.coordinate.errors.coordinate_validation import (
@@ -64,13 +65,18 @@ class TestAccessoOperazioneCivicoValidation:
 
     def test_operazione_civico_I_valid(self) -> None:
         """Test that operazione_civico='I' (insert) is accepted."""
-        accesso = ValidatedAccesso(operazione_civico="I", numero="12")
+        accesso = ValidatedAccesso(
+            operazione_civico="I", numero="12", sezione_censimento="9"
+        )
         assert accesso.operazione_civico == "I"
 
     def test_operazione_civico_R_valid(self) -> None:
         """Test that operazione_civico='R' (replace) is accepted."""
         accesso = ValidatedAccesso(
-            operazione_civico="R", progr_civico="1370588", numero="12"
+            operazione_civico="R",
+            progr_civico="1370588",
+            numero="12",
+            sezione_censimento="9",
         )
         assert accesso.operazione_civico == "R"
 
@@ -115,7 +121,9 @@ class TestAccessoProgrCivicoDependency:
 
     def test_insert_without_progr_civico_valid(self) -> None:
         """Test that I (insert) does not require progr_civico (assigned by API)."""
-        accesso = ValidatedAccesso(operazione_civico="I", numero="12")
+        accesso = ValidatedAccesso(
+            operazione_civico="I", numero="12", sezione_censimento="9"
+        )
         assert accesso.progr_civico is None
 
     def test_replace_requires_progr_civico(self) -> None:
@@ -137,7 +145,10 @@ class TestAccessoProgrCivicoDependency:
     def test_replace_with_progr_civico_valid(self) -> None:
         """Test that R with progr_civico is valid."""
         accesso = ValidatedAccesso(
-            operazione_civico="R", progr_civico="1370588", numero="12"
+            operazione_civico="R",
+            progr_civico="1370588",
+            numero="12",
+            sezione_censimento="9",
         )
         assert accesso.progr_civico == "1370588"
 
@@ -157,12 +168,16 @@ class TestAccessoNumeroMetricoMutex:
 
     def test_insert_with_numero_only_valid(self) -> None:
         """Test that I with only numero is valid (civico)."""
-        accesso = ValidatedAccesso(operazione_civico="I", numero="12")
+        accesso = ValidatedAccesso(
+            operazione_civico="I", numero="12", sezione_censimento="9"
+        )
         assert accesso.numero == "12"
 
     def test_insert_with_metrico_only_valid(self) -> None:
         """Test that I with only metrico is valid (metric-identified)."""
-        accesso = ValidatedAccesso(operazione_civico="I", metrico="300")
+        accesso = ValidatedAccesso(
+            operazione_civico="I", metrico="300", sezione_censimento="9"
+        )
         assert accesso.metrico == "300"
 
     def test_insert_with_both_numero_and_metrico_invalid(self) -> None:
@@ -182,14 +197,20 @@ class TestAccessoNumeroMetricoMutex:
     def test_replace_with_numero_only_valid(self) -> None:
         """Test that R with only numero is valid."""
         accesso = ValidatedAccesso(
-            operazione_civico="R", progr_civico="1370588", numero="12"
+            operazione_civico="R",
+            progr_civico="1370588",
+            numero="12",
+            sezione_censimento="9",
         )
         assert accesso.numero == "12"
 
     def test_replace_with_metrico_only_valid(self) -> None:
         """Test that R with only metrico is valid."""
         accesso = ValidatedAccesso(
-            operazione_civico="R", progr_civico="1370588", metrico="300"
+            operazione_civico="R",
+            progr_civico="1370588",
+            metrico="300",
+            sezione_censimento="9",
         )
         assert accesso.metrico == "300"
 
@@ -273,6 +294,68 @@ class TestAccessoFieldsNotAllowedForDelete:
         accesso = ValidatedAccesso(operazione_civico="S", progr_civico="1370588")
         assert accesso.operazione_civico == "S"
         assert accesso.progr_civico == "1370588"
+
+
+# ---------------------------------------------------------------------------
+# 4b. sezione_censimento required for I/R (Issue #30)
+# ---------------------------------------------------------------------------
+
+
+class TestAccessoSezioneCensimentoRequired:
+    """Tests that ``sezione_censimento`` is mandatory for I and R.
+
+    Per OAS spec the field has no ``nullable: true`` and is described as
+    "da valorizzare solo per operazione_civico='I','R'". Missing it for
+    I or R must fail locally before the API call.
+    """
+
+    def test_insert_without_sezione_censimento_raises(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            ValidatedAccesso(operazione_civico="I", numero="12")
+        cause = get_validation_error_cause(exc_info)
+        assert isinstance(cause, SezioneCensimentoRequiredError)
+        assert "I" in str(cause)
+
+    def test_replace_without_sezione_censimento_raises(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            ValidatedAccesso(operazione_civico="R", progr_civico="1370588", numero="12")
+        cause = get_validation_error_cause(exc_info)
+        assert isinstance(cause, SezioneCensimentoRequiredError)
+        assert "R" in str(cause)
+
+    def test_insert_with_empty_sezione_censimento_raises(self) -> None:
+        """Empty string must be treated as missing (matches _get_value semantics)."""
+        with pytest.raises(ValidationError) as exc_info:
+            ValidatedAccesso(operazione_civico="I", numero="12", sezione_censimento="")
+        cause = get_validation_error_cause(exc_info)
+        assert isinstance(cause, SezioneCensimentoRequiredError)
+
+    def test_insert_with_sezione_censimento_valid(self) -> None:
+        accesso = ValidatedAccesso(
+            operazione_civico="I", numero="12", sezione_censimento="9"
+        )
+        assert accesso.sezione_censimento == "9"
+
+    def test_replace_with_sezione_censimento_valid(self) -> None:
+        accesso = ValidatedAccesso(
+            operazione_civico="R",
+            progr_civico="1370588",
+            numero="12",
+            sezione_censimento="9",
+        )
+        assert accesso.sezione_censimento == "9"
+
+    def test_delete_without_sezione_censimento_still_valid(self) -> None:
+        """Regression: S must NOT require sezione_censimento (Rule 4 still forbids it)."""
+        accesso = ValidatedAccesso(operazione_civico="S", progr_civico="1370588")
+        assert accesso.operazione_civico == "S"
+        assert accesso.sezione_censimento is None
+
+    def test_sezione_censimento_error_is_accesso_validation_error(self) -> None:
+        """The new error must sit under the AccessoValidationError hierarchy
+        so existing ``except AccessoValidationError`` blocks catch it."""
+        err = SezioneCensimentoRequiredError(operazione="I")
+        assert isinstance(err, AccessoValidationError)
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +463,7 @@ class TestAccessoCoordinateIntegration:
         accesso = ValidatedAccesso(
             operazione_civico="I",
             numero="12",
+            sezione_censimento="9",
             coordinate={
                 "x": "13.1022000",
                 "y": "41.8847600",
@@ -395,6 +479,7 @@ class TestAccessoCoordinateIntegration:
             ValidatedAccesso(
                 operazione_civico="I",
                 numero="12",
+                sezione_censimento="9",
                 coordinate={
                     "x": "99.0",  # outside Italy bounds (6-18)
                     "y": "41.8847600",
@@ -424,7 +509,9 @@ class TestAccessoCoordinateIntegration:
 
     def test_accesso_without_coordinates_valid(self) -> None:
         """Test that accesso without coordinates is valid (coordinates optional)."""
-        accesso = ValidatedAccesso(operazione_civico="I", numero="12")
+        accesso = ValidatedAccesso(
+            operazione_civico="I", numero="12", sezione_censimento="9"
+        )
         assert accesso.coordinate is None
 
 
@@ -444,6 +531,7 @@ class TestAccessoValidationErrorHierarchy:
             FieldNotAllowedForDeleteError,
             NumeroMetricoMutexError,
             FieldNotAllowedForOperationError,
+            SezioneCensimentoRequiredError,
             AccessoMaxLengthError,
         ):
             assert issubclass(err_class, AccessoValidationError)
@@ -492,6 +580,7 @@ class TestAccessoIntegration:
             operazione_civico="R",
             progr_civico="1370588",
             numero="12",
+            sezione_censimento="9",
             coordinate={
                 "x": "13.1022001",
                 "y": "41.8847601",
@@ -517,6 +606,7 @@ class TestAccessoIntegration:
         accesso = ValidatedAccesso(
             operazione_civico="I",
             metrico="300",
+            sezione_censimento="9",
             coordinate={
                 "x": "13.1022000",
                 "y": "41.8847600",

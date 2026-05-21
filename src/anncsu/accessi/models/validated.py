@@ -22,6 +22,8 @@ Rules (derived from the OAS spec):
 6. ``coordinate``, when present, is re-validated through the existing
    ``ValidatedCoordinate`` model (Italy bounds, X/Y dependency, metodo
    1-4, maxLength X/Y/Z).
+7. ``sezione_censimento`` is mandatory for ``I`` and ``R`` (OAS field has
+   no ``nullable: true``); rule 4 already forbids it for ``S``.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ from anncsu.accessi.errors.accesso_validation import (
     NumeroMetricoMutexError,
     OperazioneCivicoError,
     ProgrCivicoRequiredError,
+    SezioneCensimentoRequiredError,
 )
 from anncsu.accessi.models.richiestaoperazione import Accesso
 from anncsu.coordinate.models.validated import ValidatedCoordinate
@@ -119,6 +122,12 @@ class ValidatedAccesso(Accesso):
                 raise NumeroMetricoMutexError(has_numero=True, has_metrico=True)
             if not has_numero and not has_metrico:
                 raise NumeroMetricoMutexError(has_numero=False, has_metrico=False)
+
+        # Rule 7 (issue #30): sezione_censimento required for I/R.
+        # OAS declares the field without ``nullable: true`` — the API rejects
+        # the request server-side if absent. Mirror that contract locally.
+        if op in {"I", "R"} and self._get_value(self.sezione_censimento) is None:
+            raise SezioneCensimentoRequiredError(operazione=op)
 
         # Rule 6: re-validate embedded coordinates via ValidatedCoordinate
         if self.coordinate is not None:
