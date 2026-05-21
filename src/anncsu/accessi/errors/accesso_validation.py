@@ -134,6 +134,27 @@ class FieldNotAllowedForOperationError(AccessoValidationError):
 
 
 @dataclass
+class SezioneCensimentoRequiredError(AccessoValidationError):
+    """Raised when sezione_censimento is missing for I (insert) or R (replace).
+
+    Per OAS spec: ``sezione_censimento`` has no ``nullable: true`` and is
+    described as "da valorizzare solo per operazione_civico='I','R'".
+    Missing it triggers a server-side rejection like
+    ``Sezione di censimento:   non presente nel Comune <X>``; catching it
+    locally gives a clearer message before the API call.
+    """
+
+    operazione: str
+
+    def __str__(self) -> str:
+        return (
+            f"Il campo 'sezione_censimento' e' obbligatorio per "
+            f"operazione_civico='{self.operazione}'. "
+            f"Per 'S' (soppressione) non deve essere valorizzato."
+        )
+
+
+@dataclass
 class AccessoMaxLengthError(AccessoValidationError):
     """Raised when a string field exceeds its OAS maxLength constraint.
 
@@ -163,5 +184,6 @@ __all__ = [
     "NumeroMetricoMutexError",
     "FieldNotAllowedForDeleteError",
     "FieldNotAllowedForOperationError",
+    "SezioneCensimentoRequiredError",
     "AccessoMaxLengthError",
 ]

@@ -148,6 +148,8 @@ class TestAccessoInsert:
                                 "2000449",
                                 "--numero",
                                 "12",
+                                "--sezione-censimento",
+                                "9",
                             ],
                         )
 
@@ -269,6 +271,8 @@ class TestAccessoUpdate:
                                 "1370588",
                                 "--numero",
                                 "12",
+                                "--sezione-censimento",
+                                "9",
                             ],
                         )
 
@@ -469,6 +473,8 @@ class TestAccessoJsonOutput:
                                 "2000449",
                                 "--numero",
                                 "12",
+                                "--sezione-censimento",
+                                "9",
                                 "--json",
                             ],
                         )
@@ -545,6 +551,8 @@ class TestAccessoInsertDryRun:
                         "2000449",
                         "--numero",
                         "12",
+                        "--sezione-censimento",
+                        "9",
                         "--dry-run",
                     ],
                 )
@@ -606,6 +614,8 @@ class TestAccessoInsertDryRun:
                         "2000449",
                         "--numero",
                         "12",
+                        "--sezione-censimento",
+                        "9",
                         "--dry-run",
                     ],
                 )
@@ -656,6 +666,8 @@ class TestAccessoInsertDryRun:
                         "2000449",
                         "--numero",
                         "12",
+                        "--sezione-censimento",
+                        "9",
                         "--dry-run",
                         "--json",
                     ],
