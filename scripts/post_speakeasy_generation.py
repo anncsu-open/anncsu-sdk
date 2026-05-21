@@ -337,8 +337,43 @@ def fix_model_field_aliases(package_path: Path, dry_run: bool = False) -> list[s
     return fixed
 
 
-def process_package(package_name: str, dry_run: bool = False) -> tuple[int, int, int]:
-    """Process a single API package. Returns (deleted, modified, fixed)."""
+# Speakeasy 1.7+ emits ``is_error_status_code=lambda c: utils.match_status_codes(LIST, c)``
+# but ``BaseSDK.do_request`` accepts ``error_status_codes=LIST``. See issue #26.
+DO_REQUEST_KWARG_PATTERN = re.compile(
+    r"is_error_status_code=lambda \w+: utils\.match_status_codes\((\[[^\]]+\]), \w+\)"
+)
+
+
+def fix_do_request_kwarg(package_path: Path, dry_run: bool = False) -> list[str]:
+    """Rewrite Speakeasy 1.7+ ``is_error_status_code`` lambda to the
+    ``error_status_codes`` list form expected by ``BaseSDK.do_request``."""
+    fixed: list[str] = []
+
+    for py_file in package_path.rglob("*.py"):
+        if "__pycache__" in str(py_file):
+            continue
+
+        content = py_file.read_text()
+        new_content, count = DO_REQUEST_KWARG_PATTERN.subn(
+            r"error_status_codes=\1", content
+        )
+
+        if count > 0:
+            if not dry_run:
+                py_file.write_text(new_content)
+            rel_path = py_file.relative_to(package_path)
+            fixed.append(str(rel_path))
+            console.print(
+                f"  [green]Fixed do_request kwarg ({count}x):[/green] {rel_path}"
+            )
+
+    return fixed
+
+
+def process_package(
+    package_name: str, dry_run: bool = False
+) -> tuple[int, int, int, int]:
+    """Process a single API package. Returns (deleted, modified, fixed, do_request_fixed)."""
     package_path = SDK_ROOT / package_name
 
     if not package_path.exists():
@@ -366,7 +401,13 @@ def process_package(package_name: str, dry_run: bool = False) -> tuple[int, int,
     if not fixed:
         console.print("  [dim]No field aliases to fix[/dim]")
 
-    return len(deleted), len(modified), len(fixed)
+    # Step 4: Fix do_request kwarg (Issue #26)
+    console.print("\n[bold]4. Fixing do_request kwarg (Issue #26)...[/bold]")
+    do_request_fixed = fix_do_request_kwarg(package_path, dry_run)
+    if not do_request_fixed:
+        console.print("  [dim]No do_request kwargs to fix[/dim]")
+
+    return len(deleted), len(modified), len(fixed), len(do_request_fixed)
 
 
 @app.command()
@@ -412,26 +453,30 @@ def main(
     total_deleted = 0
     total_modified = 0
     total_fixed = 0
+    total_do_request_fixed = 0
 
     if all_packages:
         # Process all known API packages
         for pkg in ALL_PACKAGES:
-            deleted, modified, fixed = process_package(pkg, dry_run)
+            deleted, modified, fixed, do_request_fixed = process_package(pkg, dry_run)
             total_deleted += deleted
             total_modified += modified
             total_fixed += fixed
+            total_do_request_fixed += do_request_fixed
     else:
-        deleted, modified, fixed = process_package(package, dry_run)
+        deleted, modified, fixed, do_request_fixed = process_package(package, dry_run)
         total_deleted = deleted
         total_modified = modified
         total_fixed = fixed
+        total_do_request_fixed = do_request_fixed
 
     # Summary
     console.print("\n" + "=" * 50)
     console.print("[bold green]Post-generation processing complete![/bold green]")
-    console.print(f"\n  Files deleted:  {total_deleted}")
-    console.print(f"  Files modified: {total_modified}")
-    console.print(f"  Fields fixed:   {total_fixed}")
+    console.print(f"\n  Files deleted:       {total_deleted}")
+    console.print(f"  Files modified:      {total_modified}")
+    console.print(f"  Fields fixed:        {total_fixed}")
+    console.print(f"  do_request fixed:    {total_do_request_fixed}")
 
     if dry_run:
         console.print(
