@@ -6,7 +6,7 @@ from anncsu.common.sdk import utils
 from anncsu.common.hooks import HookContext
 from anncsu.common.sdk.types import OptionalNullable, UNSET
 from anncsu.common.sdk.utils import get_security_from_env
-from anncsu.common.sdk.utils import unmarshal_json_response
+from anncsu.common.sdk.utils.unmarshal_json_response import unmarshal_json_response
 from typing import Any, Mapping, Optional
 
 

@@ -125,3 +125,83 @@ class TestFixDoRequestKwarg:
         post_gen_module.fix_do_request_kwarg(pkg_dir, dry_run=False)
 
         assert target.read_text() == '            error_status_codes=["400", "5XX"],\n'
+
+
+BAD_UNMARSHAL_IMPORT = "from anncsu.common.sdk.utils import unmarshal_json_response\n"
+GOOD_UNMARSHAL_IMPORT = (
+    "from anncsu.common.sdk.utils.unmarshal_json_response import "
+    "unmarshal_json_response\n"
+)
+
+
+class TestFixUnmarshalImport:
+    """Issue #28: ``from anncsu.common.sdk.utils import unmarshal_json_response``
+    resolves to the sub-module, not the function. The post-gen script must
+    rewrite it to the explicit ``from utils.unmarshal_json_response import
+    unmarshal_json_response`` form used by the pa/coordinate packages."""
+
+    def test_rewrites_unmarshal_import(self, post_gen_module, tmp_path):
+        pkg_dir = tmp_path / "fake_pkg"
+        pkg_dir.mkdir()
+        target = pkg_dir / "endpoint.py"
+        target.write_text(BAD_UNMARSHAL_IMPORT)
+
+        fixed = post_gen_module.fix_unmarshal_import(pkg_dir, dry_run=False)
+
+        assert "endpoint.py" in fixed
+        assert target.read_text() == GOOD_UNMARSHAL_IMPORT
+
+    def test_leaves_already_correct_import_unchanged(self, post_gen_module, tmp_path):
+        pkg_dir = tmp_path / "fake_pkg"
+        pkg_dir.mkdir()
+        target = pkg_dir / "endpoint.py"
+        target.write_text(GOOD_UNMARSHAL_IMPORT)
+
+        fixed = post_gen_module.fix_unmarshal_import(pkg_dir, dry_run=False)
+
+        assert fixed == []
+        assert target.read_text() == GOOD_UNMARSHAL_IMPORT
+
+    def test_dry_run_does_not_modify_file(self, post_gen_module, tmp_path):
+        pkg_dir = tmp_path / "fake_pkg"
+        pkg_dir.mkdir()
+        target = pkg_dir / "endpoint.py"
+        target.write_text(BAD_UNMARSHAL_IMPORT)
+
+        post_gen_module.fix_unmarshal_import(pkg_dir, dry_run=True)
+
+        assert target.read_text() == BAD_UNMARSHAL_IMPORT
+
+    def test_no_match_returns_empty_list(self, post_gen_module, tmp_path):
+        pkg_dir = tmp_path / "fake_pkg"
+        pkg_dir.mkdir()
+        target = pkg_dir / "models.py"
+        target.write_text("class Foo:\n    pass\n")
+
+        fixed = post_gen_module.fix_unmarshal_import(pkg_dir, dry_run=False)
+
+        assert fixed == []
+
+
+class TestUnmarshalImportResolvesToFunction:
+    """Integration check: after the fix is applied to the accessi package,
+    the imported ``unmarshal_json_response`` must be a callable (function),
+    not a module. This catches the runtime symptom directly."""
+
+    def test_accessi_unmarshal_is_callable(self):
+        import importlib
+
+        mod = importlib.import_module("anncsu.accessi.accessi")
+        assert callable(mod.unmarshal_json_response), (
+            "anncsu.accessi.accessi.unmarshal_json_response must be a "
+            "function, not a module — see issue #28."
+        )
+
+    def test_status_unmarshal_is_callable(self):
+        import importlib
+
+        mod = importlib.import_module("anncsu.accessi.status")
+        assert callable(mod.unmarshal_json_response), (
+            "anncsu.accessi.status.unmarshal_json_response must be a "
+            "function, not a module — see issue #28."
+        )
