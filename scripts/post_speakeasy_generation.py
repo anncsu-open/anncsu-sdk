@@ -152,7 +152,7 @@ IMPORT_REPLACEMENTS = [
 ]
 
 # All known API packages
-ALL_PACKAGES = ["pa", "coordinate", "accessi"]
+ALL_PACKAGES = ["pa", "coordinate", "accessi", "odonimi"]
 
 # Files that should NOT have their imports modified (except specific patterns)
 EXCLUDE_FILES = [

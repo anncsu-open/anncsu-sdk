@@ -56,5 +56,10 @@ metadata = false
 [tool.ruff.lint]
 extend-select = ["B"]
 extend-ignore = ["B026"]
+
+[tool.ruff.lint.per-file-ignores]
+# Speakeasy-generated enum classes use single-letter values (I/R/S) that map
+# 1:1 to the OAS enum. Cannot be renamed without breaking the API contract.
+"src/anncsu/*/models/richiestaoperazione.py" = ["E741"]
 [tool.pytest.ini_options]
 addopts = "--maxfail=1 --cov=anncsu"

@@ -17,6 +17,14 @@ sources:
         output: .speakeasy/out.coordinate.openapi.yaml
         registry:
             location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-coordinate-api
+    ANNCSU Odonimi API:
+        inputs:
+            - location: oas/dev/Specifica API - ANNCSU - Aggiornamento odonimi.yaml
+        transformations:
+            - removeUnused: true
+        output: .speakeasy/out.odonimi.openapi.yaml
+        registry:
+            location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-odonimi-api
     ANNCSU REST API:
         inputs:
             - location: ../oas/dev/Specifica API - ANNCSU – Consultazione per le PA.yaml
@@ -52,6 +60,16 @@ targets:
         codeSamples:
             registry:
                 location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-coordinate-api-python-code-samples
+            labelOverride:
+                fixedValue: Python (SDK)
+            blocking: false
+    odonimi:
+        target: python
+        source: ANNCSU Odonimi API
+        output: odonimi-sdk
+        codeSamples:
+            registry:
+                location: registry.speakeasyapi.dev/geobeyond-zd1/anncsu/anncsu-odonimi-api-python-code-samples
             labelOverride:
                 fixedValue: Python (SDK)
             blocking: false
