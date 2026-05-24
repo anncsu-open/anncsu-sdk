@@ -2103,6 +2103,275 @@ The default (without `--auto-resolve`) remains `--progr-civico` explicit — saf
 
 ---
 
+### `anncsu odonimo` - Odonimo CRUD
+
+CRUD operations on ANNCSU street names (odonimi). Three sub-commands map 1:1 to the `tipo_operazione` field of the POST `/odonimi` endpoint:
+
+| Sub-command | `tipo_operazione` | Purpose |
+|---|---|---|
+| `insert` | `I` | Create a new odonimo |
+| `update` | `R` | Replace/update an existing odonimo |
+| `delete` | `S` | Soppressione (logical delete) |
+
+Plus `status` for the GET `/status` health check.
+
+> **ModI headers required**: All write operations require `Agid-JWT-Signature` (INTEGRITY_REST_02) and `Agid-JWT-TrackingEvidence` (AUDIT_REST_02). They are added automatically by the ModI pre-request hook when `PDND_MODI_*` variables are configured.
+
+> **Validation rules**: Inputs are pre-validated by `ValidatedOdonimo` before the API call. Common rules:
+>
+> - `tipo_operazione` must be `I`, `R`, or `S` (enum)
+> - `codcom` is required for every operation
+> - `progr_nazionale` is required for `R`/`S` (assigned by ANNCSU for `I`)
+> - `dug` is required for `I`/`R`, **not allowed for `S`**
+> - If `provvedimento.flag_delibera ∈ {0, 1}`, `provvedimento.data` and `provvedimento.protocollo` are required
+> - `aut_prefettura.data_pref` ↔ `aut_prefettura.protocollo_pref` are mutually required (both or neither)
+> - maxLength enforced on every string field (per OAS spec; e.g. `denom_localita` has the OAS quirk `maxLength: 151` preserved as-is)
+
+#### `anncsu odonimo insert`
+
+Insert a new odonimo (`tipo_operazione='I'`). `--codcom` and `--dug` are required; `--prognaz` is assigned by ANNCSU.
+
+```bash
+# Minimal insert
+anncsu odonimo insert --codcom A062 --dug VIA --denom-delibera "DELLE ORCHIDEE"
+
+# With provvedimento (flag_delibera=1 requires data + protocollo)
+anncsu odonimo insert --codcom A062 --dug VIA --denom-delibera "DEI TIGLI" \
+    --provv-data 10/10/2023 --provv-protocollo "1234567/abc" \
+    --provv-flag-delibera 1
+
+# Full insert with aut_prefettura + multilingua
+anncsu odonimo insert --codcom A062 --dug VIA \
+    --denom-delibera "DELLE ORCHIDEE" \
+    --denom-in-lingua-1 "STRASSE DER ORCHIDEEN" \
+    --denom-localita "CASAL PALOCCO" \
+    --provv-data 10/10/2023 --provv-protocollo "1234/abc" \
+    --provv-flag-delibera 1 \
+    --prefettura-data 11/10/2023 \
+    --prefettura-protocollo "Prot.Gen.1234567" \
+    --data-valid-amm 08/10/2024
+```
+
+Options:
+
+- `--codcom, -c` - Codice comune (Belfiore code, e.g. `A062`) **[required]**
+- `--dug` - DUG (e.g. `VIA`, `PIAZZA`, `STRADA`) **[required for I/R]**
+- `--denom-delibera` - Denominazione delibera (uppercase applied server-side)
+- `--denom-in-lingua-1` / `--denom-in-lingua-2` - Odonimo in lingua (per comuni bi/tri-lingua)
+- `--denom-localita` - Denominazione località (uppercase applied)
+- `--codice-comunale` - Codifica comunale dell'odonimo (no uppercase)
+- `--provv-data` - Data del provvedimento (formato `dd/MM/yyyy`)
+- `--provv-protocollo` - Protocollo del provvedimento (max 70 char, no uppercase)
+- `--provv-flag-delibera` - Flag delibera (`0`-`4`); `0` and `1` make `--provv-data` + `--provv-protocollo` required
+- `--prefettura-data` - Data prefettura (required if `--prefettura-protocollo`)
+- `--prefettura-protocollo` - Protocollo prefettura (required if `--prefettura-data`)
+- `--data-valid-amm` - Data validità amministrativa (formato `dd/MM/yyyy`)
+- `--token-endpoint, -e` - PDND token endpoint URL
+- `--server-url, -s` - API server URL (auto-discovered from voucher if omitted)
+- `--validation/--production` - Use validation (UAT) or production environment
+- `--no-verify-ssl` - Disable SSL certificate verification
+- `--json` - Output as JSON
+- `--raw` - Print raw API response to stderr
+- `--dry-run` - I + S rollback (see `--dry-run` section below)
+
+JSON output:
+
+```json
+{
+  "success": true,
+  "tipo_operazione": "I",
+  "id_richiesta": "5145",
+  "esito": "0",
+  "messaggio": "OK",
+  "dati_count": 1
+}
+```
+
+#### `anncsu odonimo update`
+
+Update/replace an existing odonimo (`tipo_operazione='R'`). Requires `--prognaz` (or `--auto-resolve` + `--denom`) and `--dug`.
+
+```bash
+# Replace denomination of an existing odonimo
+anncsu odonimo update --codcom A062 --prognaz 2000449 \
+    --dug VIA --denom-delibera "DEI TIGLI"
+
+# Update with auto-resolve (lookup prognaz via PA from base64 denom)
+anncsu odonimo update --codcom A062 \
+    --auto-resolve --denom "VklBIERFTEwgT1JDSElERUU=" \
+    --dug VIA --denom-delibera "DEI TIGLI NUOVI"
+```
+
+Options:
+
+- All `insert` options (except `--prognaz` is required, not assigned)
+- `--prognaz, -p` - Progressivo nazionale dell'odonimo (required unless `--auto-resolve`)
+- `--auto-resolve` - Resolve `--prognaz` via PA from `--codcom` + `--denom` (see `--auto-resolve` section)
+- `--denom` - Base64-encoded denomination used with `--auto-resolve`
+
+#### `anncsu odonimo delete`
+
+Soppressione (logical delete) of an odonimo (`tipo_operazione='S'`).
+
+```bash
+# Minimal delete (data_valid_amm defaults to today)
+anncsu odonimo delete --codcom A062 --prognaz 2000449
+
+# With explicit end-of-validity date
+anncsu odonimo delete --codcom A062 --prognaz 2000449 \
+    --data-valid-amm 31/12/2025
+
+# Delete via auto-resolve
+anncsu odonimo delete --codcom A062 \
+    --auto-resolve --denom "VklBIERFTEwgT1JDSElERUU="
+```
+
+Options:
+
+- `--codcom, -c` - Codice comune **[required]**
+- `--prognaz, -p` - Progressivo nazionale (required unless `--auto-resolve`)
+- `--auto-resolve` / `--denom` - Same as `update`
+- `--data-valid-amm` - Data **fine** validità amministrativa (formato `dd/MM/yyyy`)
+- Other shared options (`--token-endpoint`, `--server-url`, `--validation/--production`, `--no-verify-ssl`, `--json`, `--raw`, `--dry-run`)
+
+> **Note**: `delete` does NOT accept `--dug`, `--denom-*`, `--codice-comunale`, `--provv-*`, or `--prefettura-*` — Typer rejects them at parse time as unknown options because they have no meaning for a soppressione.
+
+#### `anncsu odonimo status`
+
+Check the status of the Odonimi API service:
+
+```bash
+anncsu odonimo status
+anncsu odonimo status --production
+anncsu odonimo status --json
+```
+
+#### `anncsu odonimo *` — `--dry-run` flag
+
+All three write commands accept `--dry-run` to execute a full CRUD cycle on a **fictitious odonimo** (generated automatically) so real data is never touched.
+
+Unlike `accesso --dry-run` (which operates on an existing accesso via test+restore), `odonimo --dry-run` **always creates and deletes a temporary odonimo** with a recognizable `TEST SDK <timestamp>-<uuid>` denomination.
+
+| Command | Cycle | API calls |
+|---|---|---|
+| `insert --dry-run` | I (user data) → S (rollback) | 2 |
+| `update --dry-run` | I (fake denom) → R (user data on fake) → S (cleanup) | 3 |
+| `delete --dry-run` | I (fake denom) → S (immediate) | 2 |
+
+**Fictitious odonimo details**:
+
+- `denom_delibera = "TEST SDK <YYYYMMDDHHMMSS>-<short-uuid>"`
+- `dug = "VIA"` (fixed)
+- `codcom` = whichever value the user passes
+- Easily identifiable in audit logs for manual cleanup if a crash occurs
+
+**Crash safety**: before any rollback API call, a JSON file is written to `~/.anncsu/dryrun_pending.json` with all data needed for manual cleanup if the CLI crashes between steps.
+
+**For `update --dry-run`**: `--prognaz` and `--auto-resolve` are ignored (a warning is printed) because the R is always applied to the fake odonimo generated by the preceding I.
+
+Examples:
+
+```bash
+# Insert dry-run — creates the odonimo with user data, then deletes it
+anncsu odonimo insert --codcom A062 --dug VIA \
+    --denom-delibera "DELLE ORCHIDEE" --dry-run
+
+# Update dry-run — fake I → user R on fake → cleanup S
+anncsu odonimo update --codcom A062 --dug VIA \
+    --denom-delibera "DEI TIGLI" --dry-run
+
+# Delete dry-run — fake I → immediate S (smoke-test del flusso S)
+anncsu odonimo delete --codcom A062 --dry-run
+```
+
+JSON output of `--dry-run` (delete example):
+
+```json
+{
+  "success": true,
+  "tipo_operazione": "S",
+  "fake_denom": "TEST SDK 20260524150301-3f8a1b2c",
+  "fake_prognaz": "9999999",
+  "test_op": {
+    "success": true,
+    "tipo_operazione": "I",
+    "id_richiesta": "REQ-I",
+    "esito": "0",
+    "messaggio": "OK",
+    "dati_count": 1
+  },
+  "update_op": null,
+  "rollback": {
+    "success": true,
+    "tipo_operazione": "S",
+    "id_richiesta": "REQ-S",
+    "esito": "0",
+    "messaggio": "OK",
+    "dati_count": 1
+  },
+  "rollback_failed": false,
+  "pending_log_path": "/Users/me/.anncsu/dryrun_pending.json",
+  "error_message": null
+}
+```
+
+For `update --dry-run`, the `update_op` field is populated (R step), and `tipo_operazione` is `"R"`.
+
+##### Recovery from a pending log
+
+If the CLI crashes between the I step and the rollback S, `~/.anncsu/dryrun_pending.json` contains:
+
+```json
+{
+  "timestamp": "2026-05-24T15:03:01.123456+00:00",
+  "tipo_operazione": "I_then_S",
+  "payload": {
+    "codcom": "A062",
+    "fake_prognaz": "9999999",
+    "fake_denom": "TEST SDK 20260524150301-3f8a1b2c"
+  },
+  "note": "Created an odonimo via I; about to delete via S to roll back. If the CLI crashed before deletion, run `anncsu odonimo delete --codcom A062 --prognaz 9999999` manually.",
+  "pid": 12345
+}
+```
+
+Manual cleanup:
+
+```bash
+anncsu odonimo delete --codcom A062 --prognaz 9999999
+rm ~/.anncsu/dryrun_pending.json
+```
+
+#### `anncsu odonimo update/delete` — `--auto-resolve` flag
+
+`update` and `delete` both require `--prognaz` to identify the target odonimo. As an alternative, pass `--auto-resolve` together with `--denom` (base64-encoded denomination) to have the CLI look up the `prognaz` automatically via PA API.
+
+```bash
+# Encode denomination to base64 (full street name including dug)
+echo -n "VIA DELLE ORCHIDEE" | base64
+# VklBIERFTExFIE9SQ0hJREVF
+
+# Update via auto-resolve
+anncsu odonimo update --codcom A062 \
+    --auto-resolve --denom "VklBIERFTExFIE9SQ0hJREVF" \
+    --dug VIA --denom-delibera "DEI TIGLI"
+
+# Delete via auto-resolve
+anncsu odonimo delete --codcom A062 \
+    --auto-resolve --denom "VklBIERFTExFIE9SQ0hJREVF"
+```
+
+Errors:
+
+- `--auto-resolve` without `--denom` → error (lookup needs the base64 denomination)
+- PA lookup returns 0 matches → error (no odonimo found)
+- PA lookup returns >1 matches → error (ambiguous, specify `--prognaz` directly)
+- If both `--prognaz` and `--auto-resolve` are provided → `--prognaz` is ignored with a warning
+
+The default (without `--auto-resolve`) remains `--prognaz` explicit — safer for scripting and CI/CD where you typically already know the identifier.
+
+---
+
 ## Environment Variables
 
 The CLI reads configuration from environment variables (with `PDND_` prefix) or a `.env` file:
