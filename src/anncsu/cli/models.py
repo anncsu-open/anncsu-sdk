@@ -265,6 +265,58 @@ class OdonimoStatusResult(BaseModel):
     environment: str = Field(description="Environment (validation or production)")
 
 
+class OdonimoDryRunResult(BaseModel):
+    """Result of an odonimo ``--dry-run`` CRUD cycle on a fictitious denomination.
+
+    Unlike Accessi's dry-run (which acts on an existing accesso), Odonimi
+    dry-run always operates on a generated denomination (``TEST SDK ...``)
+    to avoid touching real odonimo data:
+
+    * ``insert --dry-run``: I (user data) → S (rollback automatic)
+    * ``update --dry-run``: I (fake denom) → R (user data on fake) → S (cleanup)
+    * ``delete --dry-run``: I (fake denom) → S (immediate, smoke-test)
+    """
+
+    success: bool = Field(description="Whether the full dry-run cycle succeeded")
+    tipo_operazione: str = Field(description="Operation under test (I, R, or S)")
+    fake_denom: str = Field(
+        description="The fictitious denomination used (e.g. 'TEST SDK ...')"
+    )
+    fake_prognaz: str | None = Field(
+        default=None,
+        description=(
+            "The progr_nazionale assigned by ANNCSU to the fictitious odonimo "
+            "(populated after the I step succeeds)."
+        ),
+    )
+    test_op: OdonimoOperationResult = Field(
+        description="Result of the I step (insert of the fictitious odonimo)"
+    )
+    update_op: OdonimoOperationResult | None = Field(
+        default=None,
+        description="Result of the R step (only for ``update --dry-run``)",
+    )
+    rollback: OdonimoOperationResult | None = Field(
+        default=None,
+        description="Result of the final S step (cleanup)",
+    )
+    rollback_failed: bool = Field(
+        default=False,
+        description="Whether the rollback S failed (requires manual cleanup)",
+    )
+    pending_log_path: str | None = Field(
+        default=None,
+        description=(
+            "Path to ~/.anncsu/dryrun_pending.json written before the S step. "
+            "If the CLI crashes between steps, the file contains the data "
+            "needed for manual cleanup."
+        ),
+    )
+    error_message: str | None = Field(
+        default=None, description="Error message if the dry-run failed"
+    )
+
+
 class DryRunResult(BaseModel):
     """Result of a coordinate dry-run operation."""
 

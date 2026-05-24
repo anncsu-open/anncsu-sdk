@@ -27,7 +27,11 @@ from rich.console import Console
 from rich.table import Table
 
 from anncsu.cli.commands.constants import _resolve_token_endpoint
-from anncsu.cli.models import OdonimoOperationResult, OdonimoStatusResult
+from anncsu.cli.models import (
+    OdonimoDryRunResult,
+    OdonimoOperationResult,
+    OdonimoStatusResult,
+)
 from anncsu.common import PDNDAuthManager
 from anncsu.common.auth import extract_voucher_audience
 from anncsu.common.config import APIType, ClientAssertionSettings
@@ -181,6 +185,518 @@ def _ensure_prognaz_resolved(
         )
         raise typer.Exit(1)
     return prognaz
+
+
+def _generate_fake_denom() -> str:
+    """Generate a unique, recognizable fictitious denominazione delibera.
+
+    Format: ``TEST SDK <YYYYMMDDHHMMSS>-<short-uuid>``. Safely under the
+    OAS maxLength of 120 chars for ``denom_delibera``. The prefix
+    ``TEST SDK`` makes the record easy to identify in audit logs for
+    manual cleanup if the cycle crashes.
+    """
+    import datetime
+    import uuid
+
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S")
+    short_uuid = uuid.uuid4().hex[:8]
+    return f"TEST SDK {ts}-{short_uuid}"
+
+
+def _write_pending_log(
+    *,
+    tipo_operazione: str,
+    payload: dict,
+    note: str,
+) -> str:
+    """Write a pending-rollback log file before issuing the rollback call.
+
+    If the CLI crashes between the I step and the rollback S, the user has
+    a JSON file with every detail needed to clean up manually.
+
+    Returns the absolute path to the file written.
+    """
+    import datetime
+    import json
+    import os
+
+    config_dir = get_config_dir()
+    config_dir.mkdir(parents=True, exist_ok=True)
+    pending_path = config_dir / "dryrun_pending.json"
+    record = {
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "tipo_operazione": tipo_operazione,
+        "payload": payload,
+        "note": note,
+        "pid": os.getpid(),
+    }
+    pending_path.write_text(json.dumps(record, indent=2, default=str))
+    return str(pending_path)
+
+
+def _extract_progr_nazionale_from_response(response: object) -> str | None:
+    """Pull the assigned progr_nazionale from a successful I response.
+
+    ANNCSU returns the assigned value inside ``dati[0].progr_nazionale``.
+    Returns None if the response shape is unexpected.
+    """
+    dati = getattr(response, "dati", None) or []
+    if not dati:
+        return None
+    item = dati[0]
+    value = getattr(item, "progr_nazionale", None)
+    return str(value) if value else None
+
+
+def _build_result(response: object, tipo_operazione: str) -> OdonimoOperationResult:
+    """Convert a raw SDK response into an OdonimoOperationResult."""
+    esito = getattr(response, "esito", None)
+    return OdonimoOperationResult(
+        success=esito == "0",
+        tipo_operazione=tipo_operazione,
+        id_richiesta=getattr(response, "id_richiesta", None),
+        esito=esito,
+        messaggio=getattr(response, "messaggio", None),
+        dati_count=len(getattr(response, "dati", []) or []),
+    )
+
+
+def _emit_dry_run_result(result: OdonimoDryRunResult, *, json_output: bool) -> None:
+    """Render a dry-run result as JSON or a Rich summary table."""
+    if json_output:
+        print(result.model_dump_json(indent=2))
+        if not result.success:
+            raise typer.Exit(1)
+        return
+
+    if result.success:
+        console.print(
+            f"[green]Dry-run '{result.tipo_operazione}' succeeded[/green] — "
+            "all steps completed cleanly.\n"
+        )
+    else:
+        console.print(
+            f"[red]Dry-run '{result.tipo_operazione}' failed[/red]"
+            + (f": {result.error_message}\n" if result.error_message else "\n")
+        )
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Step", style="cyan")
+    table.add_column("Outcome")
+    table.add_column("Request ID")
+    table.add_row(
+        "I (fake odonimo)",
+        "[green]OK[/green]" if result.test_op.success else "[red]FAIL[/red]",
+        result.test_op.id_richiesta or "—",
+    )
+    if result.update_op is not None:
+        table.add_row(
+            "R (apply user data)",
+            "[green]OK[/green]" if result.update_op.success else "[red]FAIL[/red]",
+            result.update_op.id_richiesta or "—",
+        )
+    if result.rollback is not None:
+        rollback_label = (
+            "[green]OK[/green]" if result.rollback.success else "[red]FAIL[/red]"
+        )
+        if result.rollback_failed:
+            rollback_label += " — [yellow]MANUAL CLEANUP NEEDED[/yellow]"
+        table.add_row(
+            "S (cleanup)",
+            rollback_label,
+            result.rollback.id_richiesta or "—",
+        )
+    console.print(table)
+
+    if result.fake_prognaz:
+        console.print(f"\n[dim]Fake odonimo prognaz:[/dim] {result.fake_prognaz}")
+    if result.fake_denom:
+        console.print(f"[dim]Fake denomination:[/dim] {result.fake_denom}")
+    if result.pending_log_path:
+        console.print(f"[dim]Pending log:[/dim] {result.pending_log_path}")
+
+    if not result.success:
+        raise typer.Exit(1)
+
+
+def _run_insert_dry_run(
+    *,
+    richiesta: Richiesta,
+    token_endpoint: str,
+    server_url: str,
+    verify_ssl: bool,
+    raw_output: bool,
+    json_output: bool,
+) -> None:
+    """I (user data) → S (rollback) on the newly created odonimo."""
+    try:
+        ValidatedOdonimo.model_validate(richiesta.model_dump(exclude_unset=True))
+    except Exception as e:
+        error_console.print(f"[red]Validation error:[/red] {e}")
+        raise typer.Exit(1) from None
+
+    sdk, _ = _get_sdk(
+        token_endpoint=token_endpoint,
+        server_url=server_url,
+        verify_ssl=verify_ssl,
+        modi_audience=server_url,
+    )
+
+    # Step I (insert)
+    try:
+        insert_response = sdk.anncsu.gestione_anncsu_odonimi_pdnd(richiesta=richiesta)
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Insert API call failed: {e}")
+        raise typer.Exit(1) from None
+
+    if raw_output:
+        _print_raw(insert_response, "Raw insert response")
+
+    test_op = _build_result(insert_response, "I")
+    fake_prognaz = _extract_progr_nazionale_from_response(insert_response)
+
+    if not test_op.success or not fake_prognaz:
+        error_console.print("[red]Insert step failed; no rollback executed.[/red]")
+        result = OdonimoDryRunResult(
+            success=False,
+            tipo_operazione="I",
+            fake_denom=str(richiesta.denom_delibera or ""),
+            fake_prognaz=None,
+            test_op=test_op,
+            error_message=(
+                "Insert did not return a progr_nazionale — cannot roll back."
+                if test_op.success
+                else (test_op.messaggio or "Insert failed")
+            ),
+        )
+        _emit_dry_run_result(result, json_output=json_output)
+        return
+
+    # Pending log before rollback for crash safety
+    pending_log_path = _write_pending_log(
+        tipo_operazione="I_then_S",
+        payload={
+            "codcom": richiesta.codcom,
+            "fake_prognaz": fake_prognaz,
+            "fake_denom": str(richiesta.denom_delibera or ""),
+        },
+        note=(
+            "Created an odonimo via I; about to delete it via S to roll back. "
+            "If the CLI crashed before deletion, run 'anncsu odonimo delete' "
+            "manually with the fake_prognaz to clean up."
+        ),
+    )
+    if not json_output:
+        console.print(f"[dim]Pending log written to {pending_log_path}[/dim]")
+
+    # Step S (rollback)
+    rollback_richiesta = Richiesta(
+        codcom=richiesta.codcom,
+        tipo_operazione="S",
+        progr_nazionale=fake_prognaz,
+    )
+    rollback_failed = False
+    try:
+        rollback_response = sdk.anncsu.gestione_anncsu_odonimi_pdnd(
+            richiesta=rollback_richiesta
+        )
+        rollback = _build_result(rollback_response, "S")
+        if not rollback.success:
+            rollback_failed = True
+    except Exception as e:
+        rollback_failed = True
+        rollback = OdonimoOperationResult(
+            success=False,
+            tipo_operazione="S",
+            esito=None,
+            messaggio=f"Rollback exception: {e}",
+        )
+
+    result = OdonimoDryRunResult(
+        success=test_op.success and not rollback_failed,
+        tipo_operazione="I",
+        fake_denom=str(richiesta.denom_delibera or ""),
+        fake_prognaz=fake_prognaz,
+        test_op=test_op,
+        rollback=rollback,
+        rollback_failed=rollback_failed,
+        pending_log_path=pending_log_path,
+    )
+    _emit_dry_run_result(result, json_output=json_output)
+
+
+def _run_update_dry_run(
+    *,
+    codcom: str,
+    user_richiesta: Richiesta,
+    token_endpoint: str,
+    server_url: str,
+    verify_ssl: bool,
+    raw_output: bool,
+    json_output: bool,
+) -> None:
+    """I (fake denom) → R (user data on fake) → S (cleanup).
+
+    The user's ``Richiesta`` contains the R payload (what they want to test).
+    We construct a fictitious I first, then re-apply the user's R on the
+    fake odonimo, then delete it.
+    """
+    sdk, _ = _get_sdk(
+        token_endpoint=token_endpoint,
+        server_url=server_url,
+        verify_ssl=verify_ssl,
+        modi_audience=server_url,
+    )
+
+    # Step I: insert a fake odonimo with a generated denom_delibera.
+    fake_denom = _generate_fake_denom()
+    insert_richiesta = Richiesta(
+        codcom=codcom,
+        tipo_operazione="I",
+        dug="VIA",
+        denom_delibera=fake_denom,
+    )
+    try:
+        ValidatedOdonimo.model_validate(insert_richiesta.model_dump(exclude_unset=True))
+    except Exception as e:
+        error_console.print(f"[red]Validation error (fake I):[/red] {e}")
+        raise typer.Exit(1) from None
+
+    try:
+        insert_response = sdk.anncsu.gestione_anncsu_odonimi_pdnd(
+            richiesta=insert_richiesta
+        )
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Fake insert API call failed: {e}")
+        raise typer.Exit(1) from None
+
+    if raw_output:
+        _print_raw(insert_response, "Raw insert response")
+
+    test_op = _build_result(insert_response, "I")
+    fake_prognaz = _extract_progr_nazionale_from_response(insert_response)
+
+    if not test_op.success or not fake_prognaz:
+        result = OdonimoDryRunResult(
+            success=False,
+            tipo_operazione="R",
+            fake_denom=fake_denom,
+            test_op=test_op,
+            error_message=(
+                "Fake insert did not return a progr_nazionale — cannot proceed."
+                if test_op.success
+                else (test_op.messaggio or "Fake insert failed")
+            ),
+        )
+        _emit_dry_run_result(result, json_output=json_output)
+        return
+
+    # Step R: apply user's payload on the fake odonimo.
+    user_dump = user_richiesta.model_dump(exclude_unset=True)
+    user_dump["codcom"] = codcom
+    user_dump["tipo_operazione"] = "R"
+    user_dump["progr_nazionale"] = fake_prognaz
+    update_richiesta = Richiesta.model_validate(user_dump)
+
+    try:
+        ValidatedOdonimo.model_validate(update_richiesta.model_dump(exclude_unset=True))
+    except Exception as e:
+        error_console.print(f"[red]Validation error (user R):[/red] {e}")
+        # Still try to roll back the fake odonimo we just created.
+        _emergency_cleanup(sdk, codcom=codcom, fake_prognaz=fake_prognaz)
+        raise typer.Exit(1) from None
+
+    pending_log_path = _write_pending_log(
+        tipo_operazione="I_then_R_then_S",
+        payload={
+            "codcom": codcom,
+            "fake_prognaz": fake_prognaz,
+            "fake_denom": fake_denom,
+        },
+        note=(
+            "Created a fake odonimo via I; will run R then S. If the CLI "
+            "crashed before deletion, delete fake_prognaz manually."
+        ),
+    )
+    if not json_output:
+        console.print(f"[dim]Pending log written to {pending_log_path}[/dim]")
+
+    update_op: OdonimoOperationResult
+    try:
+        update_response = sdk.anncsu.gestione_anncsu_odonimi_pdnd(
+            richiesta=update_richiesta
+        )
+        update_op = _build_result(update_response, "R")
+    except Exception as e:
+        update_op = OdonimoOperationResult(
+            success=False,
+            tipo_operazione="R",
+            esito=None,
+            messaggio=f"Update exception: {e}",
+        )
+
+    # Step S: cleanup the fake odonimo (always attempted).
+    rollback_failed = False
+    rollback_richiesta = Richiesta(
+        codcom=codcom,
+        tipo_operazione="S",
+        progr_nazionale=fake_prognaz,
+    )
+    try:
+        rollback_response = sdk.anncsu.gestione_anncsu_odonimi_pdnd(
+            richiesta=rollback_richiesta
+        )
+        rollback = _build_result(rollback_response, "S")
+        if not rollback.success:
+            rollback_failed = True
+    except Exception as e:
+        rollback_failed = True
+        rollback = OdonimoOperationResult(
+            success=False,
+            tipo_operazione="S",
+            esito=None,
+            messaggio=f"Rollback exception: {e}",
+        )
+
+    result = OdonimoDryRunResult(
+        success=(test_op.success and update_op.success and not rollback_failed),
+        tipo_operazione="R",
+        fake_denom=fake_denom,
+        fake_prognaz=fake_prognaz,
+        test_op=test_op,
+        update_op=update_op,
+        rollback=rollback,
+        rollback_failed=rollback_failed,
+        pending_log_path=pending_log_path,
+    )
+    _emit_dry_run_result(result, json_output=json_output)
+
+
+def _run_delete_dry_run(
+    *,
+    codcom: str,
+    token_endpoint: str,
+    server_url: str,
+    verify_ssl: bool,
+    raw_output: bool,
+    json_output: bool,
+) -> None:
+    """I (fake denom) → S (immediate). Smoke-test of the S flow."""
+    sdk, _ = _get_sdk(
+        token_endpoint=token_endpoint,
+        server_url=server_url,
+        verify_ssl=verify_ssl,
+        modi_audience=server_url,
+    )
+
+    fake_denom = _generate_fake_denom()
+    insert_richiesta = Richiesta(
+        codcom=codcom,
+        tipo_operazione="I",
+        dug="VIA",
+        denom_delibera=fake_denom,
+    )
+    try:
+        ValidatedOdonimo.model_validate(insert_richiesta.model_dump(exclude_unset=True))
+    except Exception as e:
+        error_console.print(f"[red]Validation error (fake I):[/red] {e}")
+        raise typer.Exit(1) from None
+
+    try:
+        insert_response = sdk.anncsu.gestione_anncsu_odonimi_pdnd(
+            richiesta=insert_richiesta
+        )
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Fake insert API call failed: {e}")
+        raise typer.Exit(1) from None
+
+    if raw_output:
+        _print_raw(insert_response, "Raw insert response")
+
+    test_op = _build_result(insert_response, "I")
+    fake_prognaz = _extract_progr_nazionale_from_response(insert_response)
+
+    if not test_op.success or not fake_prognaz:
+        result = OdonimoDryRunResult(
+            success=False,
+            tipo_operazione="S",
+            fake_denom=fake_denom,
+            test_op=test_op,
+            error_message=(
+                "Fake insert did not return a progr_nazionale — cannot proceed."
+                if test_op.success
+                else (test_op.messaggio or "Fake insert failed")
+            ),
+        )
+        _emit_dry_run_result(result, json_output=json_output)
+        return
+
+    pending_log_path = _write_pending_log(
+        tipo_operazione="I_then_S",
+        payload={
+            "codcom": codcom,
+            "fake_prognaz": fake_prognaz,
+            "fake_denom": fake_denom,
+        },
+        note=(
+            "Created a fake odonimo via I; about to delete via S. If the "
+            "CLI crashed before deletion, delete fake_prognaz manually."
+        ),
+    )
+    if not json_output:
+        console.print(f"[dim]Pending log written to {pending_log_path}[/dim]")
+
+    rollback_richiesta = Richiesta(
+        codcom=codcom,
+        tipo_operazione="S",
+        progr_nazionale=fake_prognaz,
+    )
+    rollback_failed = False
+    try:
+        rollback_response = sdk.anncsu.gestione_anncsu_odonimi_pdnd(
+            richiesta=rollback_richiesta
+        )
+        rollback = _build_result(rollback_response, "S")
+        if not rollback.success:
+            rollback_failed = True
+    except Exception as e:
+        rollback_failed = True
+        rollback = OdonimoOperationResult(
+            success=False,
+            tipo_operazione="S",
+            esito=None,
+            messaggio=f"Delete exception: {e}",
+        )
+
+    result = OdonimoDryRunResult(
+        success=test_op.success and not rollback_failed,
+        tipo_operazione="S",
+        fake_denom=fake_denom,
+        fake_prognaz=fake_prognaz,
+        test_op=test_op,
+        rollback=rollback,
+        rollback_failed=rollback_failed,
+        pending_log_path=pending_log_path,
+    )
+    _emit_dry_run_result(result, json_output=json_output)
+
+
+def _emergency_cleanup(sdk: AnncsuOdonimi, *, codcom: str, fake_prognaz: str) -> None:
+    """Best-effort cleanup of a fake odonimo when later steps fail.
+
+    Errors are swallowed — this is the last-ditch attempt before raising
+    to the user; the pending log already contains all data needed for
+    manual cleanup.
+    """
+    try:
+        cleanup_richiesta = Richiesta(
+            codcom=codcom,
+            tipo_operazione="S",
+            progr_nazionale=fake_prognaz,
+        )
+        sdk.anncsu.gestione_anncsu_odonimi_pdnd(richiesta=cleanup_richiesta)
+    except Exception:
+        pass
 
 
 def _get_sdk(
@@ -579,6 +1095,17 @@ def insert(
     raw_output: Annotated[
         bool, typer.Option("--raw", help="Print raw API response to stderr.")
     ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help=(
+                "Insert then immediately delete the new odonimo (S rollback). "
+                "A pending log is written to ~/.anncsu/dryrun_pending.json "
+                "before the rollback so a crash leaves a manual-recovery trail."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Insert a new odonimo (``tipo_operazione='I'``)."""
     token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
@@ -601,6 +1128,17 @@ def insert(
         prefettura_protocollo=prefettura_protocollo,
         data_valid_amm=data_valid_amm,
     )
+
+    if dry_run:
+        _run_insert_dry_run(
+            richiesta=richiesta,
+            token_endpoint=token_endpoint,
+            server_url=resolved_url,
+            verify_ssl=not no_verify_ssl,
+            raw_output=raw_output,
+            json_output=json_output,
+        )
+        return
 
     _execute_operation(
         tipo_operazione="I",
@@ -768,10 +1306,55 @@ def update(
     raw_output: Annotated[
         bool, typer.Option("--raw", help="Print raw API response to stderr.")
     ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help=(
+                "Run the R against a fictitious odonimo: I (fake denom) → R "
+                "(user data on fake) → S (cleanup). ``--prognaz`` and "
+                "``--auto-resolve`` are ignored in dry-run mode."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Update/replace an existing odonimo (``tipo_operazione='R'``)."""
     token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
     resolved_url = _resolve_server_url(server_url, validation_env)
+
+    if dry_run:
+        if prognaz or auto_resolve:
+            error_console.print(
+                "[yellow]Warning:[/yellow] --prognaz/--auto-resolve are "
+                "ignored in --dry-run mode (a fictitious odonimo is generated)."
+            )
+        user_richiesta = _build_richiesta(
+            codcom=codcom,
+            tipo_operazione="R",
+            progr_nazionale=None,  # populated by dry-run helper after fake I
+            codice_comunale=codice_comunale,
+            dug=dug,
+            denom_delibera=denom_delibera,
+            denom_in_lingua_1=denom_in_lingua_1,
+            denom_in_lingua_2=denom_in_lingua_2,
+            denom_localita=denom_localita,
+            provv_data=provv_data,
+            provv_protocollo=provv_protocollo,
+            provv_flag_delibera=provv_flag_delibera,
+            prefettura_data=prefettura_data,
+            prefettura_protocollo=prefettura_protocollo,
+            data_valid_amm=data_valid_amm,
+        )
+        _run_update_dry_run(
+            codcom=codcom,
+            user_richiesta=user_richiesta,
+            token_endpoint=token_endpoint,
+            server_url=resolved_url,
+            verify_ssl=not no_verify_ssl,
+            raw_output=raw_output,
+            json_output=json_output,
+        )
+        return
 
     prognaz_final = _ensure_prognaz_resolved(
         prognaz=prognaz,
@@ -896,6 +1479,16 @@ def delete(
     raw_output: Annotated[
         bool, typer.Option("--raw", help="Print raw API response to stderr.")
     ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help=(
+                "Smoke-test the S flow: I (fake denom) → S (immediate). "
+                "``--prognaz`` and ``--auto-resolve`` are ignored in dry-run."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Delete (soppressione) an odonimo (``tipo_operazione='S'``).
 
@@ -905,6 +1498,23 @@ def delete(
     """
     token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
     resolved_url = _resolve_server_url(server_url, validation_env)
+
+    if dry_run:
+        if prognaz or auto_resolve:
+            error_console.print(
+                "[yellow]Warning:[/yellow] --prognaz/--auto-resolve are "
+                "ignored in --dry-run mode (a fictitious odonimo is generated "
+                "and deleted)."
+            )
+        _run_delete_dry_run(
+            codcom=codcom,
+            token_endpoint=token_endpoint,
+            server_url=resolved_url,
+            verify_ssl=not no_verify_ssl,
+            raw_output=raw_output,
+            json_output=json_output,
+        )
+        return
 
     prognaz_final = _ensure_prognaz_resolved(
         prognaz=prognaz,

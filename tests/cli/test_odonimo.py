@@ -453,5 +453,266 @@ class TestOdonimoAutoResolve:
         assert result.exit_code == 0, result.output
 
 
+# ---------------------------------------------------------------------------
+# --dry-run (ciclo CRUD su denominazione fittizia)
+# ---------------------------------------------------------------------------
+
+
+def _patch_settings_and_auth(stack):
+    """Common stack of patches for dry-run tests (mock settings + auth)."""
+    mock_settings = stack.enter_context(
+        patch("anncsu.cli.commands.odonimo.ClientAssertionSettings")
+    )
+    settings = MagicMock()
+    settings.has_modi_audit_context.return_value = False
+    mock_settings.return_value = settings
+    mock_manager = stack.enter_context(
+        patch("anncsu.cli.commands.odonimo.PDNDAuthManager")
+    )
+    manager = MagicMock()
+    manager.get_access_token.return_value = "mock-token"
+    mock_manager.return_value = manager
+
+
+class TestOdonimoInsertDryRun:
+    """Tests for ``anncsu odonimo insert --dry-run`` (I → S cycle)."""
+
+    def test_insert_dry_run_executes_rollback(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """``--dry-run`` calls I then S to rollback the new odonimo."""
+        import contextlib
+
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+            with contextlib.ExitStack() as stack:
+                _patch_settings_and_auth(stack)
+                mock_sdk_cls = stack.enter_context(
+                    patch("anncsu.cli.commands.odonimo.AnncsuOdonimi")
+                )
+                sdk = MagicMock()
+                insert_resp = _create_mock_response(esito="0")
+                insert_resp.dati = [MagicMock(progr_nazionale="9999991")]
+                delete_resp = _create_mock_response(esito="0")
+                sdk.anncsu.gestione_anncsu_odonimi_pdnd.side_effect = [
+                    insert_resp,
+                    delete_resp,
+                ]
+                mock_sdk_cls.return_value = sdk
+
+                result = cli_runner.invoke(
+                    app,
+                    [
+                        "odonimo",
+                        "insert",
+                        "--codcom",
+                        "A062",
+                        "--dug",
+                        "VIA",
+                        "--denom-delibera",
+                        "DELLE ORCHIDEE",
+                        "--dry-run",
+                    ],
+                )
+
+        assert result.exit_code == 0, result.output
+        assert sdk.anncsu.gestione_anncsu_odonimi_pdnd.call_count == 2
+
+    def test_insert_dry_run_persists_pending_log(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Pending file must be created before the rollback API call."""
+        import contextlib
+
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+            home = tmp_path / "fake-home"
+            home.mkdir()
+            with (
+                patch.dict("os.environ", {"HOME": str(home)}, clear=False),
+                contextlib.ExitStack() as stack,
+            ):
+                _patch_settings_and_auth(stack)
+                stack.enter_context(
+                    patch(
+                        "anncsu.cli.commands.odonimo.get_config_dir",
+                        return_value=home / ".anncsu",
+                    )
+                )
+                mock_sdk_cls = stack.enter_context(
+                    patch("anncsu.cli.commands.odonimo.AnncsuOdonimi")
+                )
+                sdk = MagicMock()
+                insert_resp = _create_mock_response(esito="0")
+                insert_resp.dati = [MagicMock(progr_nazionale="9999991")]
+                delete_resp = _create_mock_response(esito="0")
+                sdk.anncsu.gestione_anncsu_odonimi_pdnd.side_effect = [
+                    insert_resp,
+                    delete_resp,
+                ]
+                mock_sdk_cls.return_value = sdk
+
+                result = cli_runner.invoke(
+                    app,
+                    [
+                        "odonimo",
+                        "insert",
+                        "--codcom",
+                        "A062",
+                        "--dug",
+                        "VIA",
+                        "--denom-delibera",
+                        "DELLE ORCHIDEE",
+                        "--dry-run",
+                    ],
+                )
+
+        assert result.exit_code == 0, result.output
+        pending = home / ".anncsu" / "dryrun_pending.json"
+        assert pending.exists() or "dryrun_pending" in result.output.lower()
+
+
+class TestOdonimoUpdateDryRun:
+    """Tests for ``anncsu odonimo update --dry-run`` (I → R → S cycle)."""
+
+    def test_update_dry_run_executes_three_calls(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """``update --dry-run`` calls I (fake) → R (user data) → S (cleanup)."""
+        import contextlib
+
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+            with contextlib.ExitStack() as stack:
+                _patch_settings_and_auth(stack)
+                mock_sdk_cls = stack.enter_context(
+                    patch("anncsu.cli.commands.odonimo.AnncsuOdonimi")
+                )
+                sdk = MagicMock()
+                insert_resp = _create_mock_response(esito="0")
+                insert_resp.dati = [MagicMock(progr_nazionale="9999992")]
+                update_resp = _create_mock_response(esito="0")
+                delete_resp = _create_mock_response(esito="0")
+                sdk.anncsu.gestione_anncsu_odonimi_pdnd.side_effect = [
+                    insert_resp,
+                    update_resp,
+                    delete_resp,
+                ]
+                mock_sdk_cls.return_value = sdk
+
+                result = cli_runner.invoke(
+                    app,
+                    [
+                        "odonimo",
+                        "update",
+                        "--codcom",
+                        "A062",
+                        "--dug",
+                        "VIA",
+                        "--denom-delibera",
+                        "DEI TIGLI",
+                        "--dry-run",
+                    ],
+                )
+
+        assert result.exit_code == 0, result.output
+        assert sdk.anncsu.gestione_anncsu_odonimi_pdnd.call_count == 3
+
+
+class TestOdonimoDeleteDryRun:
+    """Tests for ``anncsu odonimo delete --dry-run`` (I → S smoke-test)."""
+
+    def test_delete_dry_run_executes_two_calls(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """``delete --dry-run`` creates a fake odonimo and immediately deletes it."""
+        import contextlib
+
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+            with contextlib.ExitStack() as stack:
+                _patch_settings_and_auth(stack)
+                mock_sdk_cls = stack.enter_context(
+                    patch("anncsu.cli.commands.odonimo.AnncsuOdonimi")
+                )
+                sdk = MagicMock()
+                insert_resp = _create_mock_response(esito="0")
+                insert_resp.dati = [MagicMock(progr_nazionale="9999993")]
+                delete_resp = _create_mock_response(esito="0")
+                sdk.anncsu.gestione_anncsu_odonimi_pdnd.side_effect = [
+                    insert_resp,
+                    delete_resp,
+                ]
+                mock_sdk_cls.return_value = sdk
+
+                result = cli_runner.invoke(
+                    app,
+                    [
+                        "odonimo",
+                        "delete",
+                        "--codcom",
+                        "A062",
+                        "--dry-run",
+                    ],
+                )
+
+        assert result.exit_code == 0, result.output
+        assert sdk.anncsu.gestione_anncsu_odonimi_pdnd.call_count == 2
+
+    def test_delete_dry_run_json_output_includes_rollback(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """JSON output of ``delete --dry-run`` must include test_op + rollback."""
+        import contextlib
+        import json as json_lib
+
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+            with contextlib.ExitStack() as stack:
+                _patch_settings_and_auth(stack)
+                mock_sdk_cls = stack.enter_context(
+                    patch("anncsu.cli.commands.odonimo.AnncsuOdonimi")
+                )
+                sdk = MagicMock()
+                insert_resp = _create_mock_response(id_richiesta="REQ-I", esito="0")
+                insert_resp.dati = [MagicMock(progr_nazionale="9999994")]
+                delete_resp = _create_mock_response(id_richiesta="REQ-S", esito="0")
+                sdk.anncsu.gestione_anncsu_odonimi_pdnd.side_effect = [
+                    insert_resp,
+                    delete_resp,
+                ]
+                mock_sdk_cls.return_value = sdk
+
+                result = cli_runner.invoke(
+                    app,
+                    [
+                        "odonimo",
+                        "delete",
+                        "--codcom",
+                        "A062",
+                        "--dry-run",
+                        "--json",
+                    ],
+                )
+
+        assert result.exit_code == 0, result.output
+        data = json_lib.loads(result.output)
+        assert data["success"] is True
+        assert data["tipo_operazione"] == "S"
+        assert data["test_op"]["id_richiesta"] == "REQ-I"
+        assert data["rollback"]["id_richiesta"] == "REQ-S"
+        assert data["fake_prognaz"] == "9999994"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
