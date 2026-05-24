@@ -7,6 +7,18 @@ from ._version import (
     __user_agent__,
     __version__,
 )
+from .errors.odonimo_validation import (
+    CodcomRequiredError,
+    DugNotAllowedForDeleteError,
+    DugRequiredError,
+    FlagDeliberaMissingFieldsError,
+    OdonimoMaxLengthError,
+    OdonimoValidationError,
+    PrefetturaMutexError,
+    ProgrNazionaleRequiredError,
+    TipoOperazioneError,
+)
+from .models.validated import ValidatedOdonimo
 from .sdk import AnncsuOdonimi
 from .sdkconfiguration import SDKConfiguration
 
@@ -22,7 +34,17 @@ __all__ = [
     "__gen_version__",
     "__user_agent__",
     "AnncsuOdonimi",
+    "CodcomRequiredError",
+    "DugNotAllowedForDeleteError",
+    "DugRequiredError",
+    "FlagDeliberaMissingFieldsError",
+    "OdonimoMaxLengthError",
+    "OdonimoValidationError",
+    "PrefetturaMutexError",
+    "ProgrNazionaleRequiredError",
     "SDKConfiguration",
+    "TipoOperazioneError",
+    "ValidatedOdonimo",
     "VERSION",
     "OPENAPI_DOC_VERSION",
     "SPEAKEASY_GENERATOR_VERSION",
