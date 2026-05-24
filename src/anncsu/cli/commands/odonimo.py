@@ -34,6 +34,7 @@ from anncsu.common.config import APIType, ClientAssertionSettings
 from anncsu.common.errors import AudienceMismatchError
 from anncsu.common.hooks import SDKHooks, register_modi_hook
 from anncsu.common.modi import AuditContext, ModIConfig
+from anncsu.common.security import Security as PASecurity
 from anncsu.common.session import get_config_dir
 from anncsu.odonimi import AnncsuOdonimi
 from anncsu.odonimi.models import Security
@@ -43,6 +44,7 @@ from anncsu.odonimi.models.richiestaoperazione import (
     Richiesta,
 )
 from anncsu.odonimi.models.validated import ValidatedOdonimo
+from anncsu.pa import AnncsuConsultazione
 
 odonimo_app = typer.Typer(
     name="odonimo",
@@ -64,6 +66,121 @@ SERVERS = {
         "AgenziaEntrate-PDND/anncsu-aggiornamento-odonimi/v1"
     ),
 }
+
+
+def _get_consult_sdk(
+    token_endpoint: str,
+    verify_ssl: bool = True,
+) -> AnncsuConsultazione:
+    """Build a read-only PA Consultazione SDK for odonimo lookups.
+
+    Used by ``--auto-resolve`` (to resolve progr_nazionale from
+    ``codcom`` + ``denom``). Auto-discovers the server URL from the
+    voucher audience.
+    """
+    try:
+        settings = ClientAssertionSettings()
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] Configuration not found: {e}")
+        raise typer.Exit(1) from None
+
+    try:
+        manager = PDNDAuthManager(
+            api_type=APIType.PA,
+            settings=settings,
+            token_endpoint=token_endpoint,
+            session_persistence=True,
+            config_dir=get_config_dir(),
+        )
+        access_token = manager.get_access_token()
+    except Exception as e:
+        error_console.print(
+            f"[red]Error:[/red] PA Consultazione authentication failed: {e}"
+        )
+        raise typer.Exit(1) from None
+
+    server_url = extract_voucher_audience(access_token)
+
+    def security_provider() -> PASecurity:
+        return PASecurity(bearer=manager.get_access_token())
+
+    client = httpx.Client(verify=verify_ssl)
+    return AnncsuConsultazione(
+        security=security_provider,
+        server_url=server_url,
+        client=client,
+    )
+
+
+def _resolve_prognaz_via_pa(
+    consult_sdk: AnncsuConsultazione,
+    *,
+    codcom: str,
+    denom: str,
+) -> str:
+    """Resolve ``progr_nazionale`` from ``codcom`` + ``denom`` (base64) via PA API.
+
+    Used by ``--auto-resolve``. Errors out if zero or multiple matches are
+    found, since either case is a setup error the user must address.
+    """
+    try:
+        response = consult_sdk.queryparam.elencoodonimiprog_get_query_param(
+            codcom=codcom, denom=denom
+        )
+    except Exception as e:
+        error_console.print(f"[red]Error:[/red] PA odonimo lookup failed: {e}")
+        raise typer.Exit(1) from None
+
+    matches = list(response.data or [])
+    if not matches:
+        error_console.print(
+            f"[red]Error:[/red] No odonimo found for codcom={codcom} "
+            f"denom={denom}. Cannot auto-resolve prognaz."
+        )
+        raise typer.Exit(1)
+    if len(matches) > 1:
+        error_console.print(
+            f"[red]Error:[/red] Ambiguous lookup: {len(matches)} matches for "
+            f"codcom={codcom} denom={denom}. Specify --prognaz explicitly "
+            f"to disambiguate."
+        )
+        raise typer.Exit(1)
+
+    return str(matches[0].prognaz)
+
+
+def _ensure_prognaz_resolved(
+    *,
+    prognaz: str | None,
+    auto_resolve: bool,
+    denom: str | None,
+    codcom: str,
+    token_endpoint: str,
+    verify_ssl: bool,
+) -> str:
+    """Return the final ``progr_nazionale``: explicit or resolved via PA."""
+    if auto_resolve:
+        if not denom:
+            error_console.print(
+                "[red]Error:[/red] --auto-resolve requires --denom "
+                "(base64-encoded odonimo denomination)."
+            )
+            raise typer.Exit(1)
+        if prognaz:
+            error_console.print(
+                "[yellow]Warning:[/yellow] --prognaz is ignored when "
+                "--auto-resolve is set."
+            )
+        consult_sdk = _get_consult_sdk(token_endpoint, verify_ssl)
+        return _resolve_prognaz_via_pa(consult_sdk, codcom=codcom, denom=denom)
+
+    if not prognaz:
+        error_console.print(
+            "[red]Error:[/red] --prognaz is required (or use --auto-resolve "
+            "with --denom)."
+        )
+        raise typer.Exit(1)
+    return prognaz
 
 
 def _get_sdk(
@@ -511,14 +628,6 @@ def update(
             help="Codice comune (Belfiore code, e.g. A062).",
         ),
     ],
-    prognaz: Annotated[
-        str,
-        typer.Option(
-            "--prognaz",
-            "-p",
-            help="Progressivo nazionale dell'odonimo (required for update).",
-        ),
-    ],
     dug: Annotated[
         str,
         typer.Option(
@@ -526,6 +635,37 @@ def update(
             help="DUG (e.g. 'VIA', 'PIAZZA'). Required for I/R.",
         ),
     ],
+    prognaz: Annotated[
+        str | None,
+        typer.Option(
+            "--prognaz",
+            "-p",
+            help=(
+                "Progressivo nazionale dell'odonimo. Required unless "
+                "--auto-resolve + --denom are used."
+            ),
+        ),
+    ] = None,
+    auto_resolve: Annotated[
+        bool,
+        typer.Option(
+            "--auto-resolve",
+            help=(
+                "Resolve --prognaz via PA consultation from --codcom + "
+                "--denom. Errors out if zero or multiple matches."
+            ),
+        ),
+    ] = False,
+    denom: Annotated[
+        str | None,
+        typer.Option(
+            "--denom",
+            help=(
+                "Base64-encoded odonimo denomination (used by "
+                "--auto-resolve to resolve prognaz)."
+            ),
+        ),
+    ] = None,
     denom_delibera: Annotated[
         str | None,
         typer.Option(
@@ -633,10 +773,19 @@ def update(
     token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
     resolved_url = _resolve_server_url(server_url, validation_env)
 
+    prognaz_final = _ensure_prognaz_resolved(
+        prognaz=prognaz,
+        auto_resolve=auto_resolve,
+        denom=denom,
+        codcom=codcom,
+        token_endpoint=token_endpoint,
+        verify_ssl=not no_verify_ssl,
+    )
+
     richiesta = _build_richiesta(
         codcom=codcom,
         tipo_operazione="R",
-        progr_nazionale=prognaz,
+        progr_nazionale=prognaz_final,
         codice_comunale=codice_comunale,
         dug=dug,
         denom_delibera=denom_delibera,
@@ -678,13 +827,36 @@ def delete(
         ),
     ],
     prognaz: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--prognaz",
             "-p",
-            help="Progressivo nazionale dell'odonimo (required for delete).",
+            help=(
+                "Progressivo nazionale dell'odonimo. Required unless "
+                "--auto-resolve + --denom are used."
+            ),
         ),
-    ],
+    ] = None,
+    auto_resolve: Annotated[
+        bool,
+        typer.Option(
+            "--auto-resolve",
+            help=(
+                "Resolve --prognaz via PA consultation from --codcom + "
+                "--denom. Errors out if zero or multiple matches."
+            ),
+        ),
+    ] = False,
+    denom: Annotated[
+        str | None,
+        typer.Option(
+            "--denom",
+            help=(
+                "Base64-encoded odonimo denomination (used by "
+                "--auto-resolve to resolve prognaz)."
+            ),
+        ),
+    ] = None,
     data_valid_amm: Annotated[
         str | None,
         typer.Option(
@@ -734,10 +906,19 @@ def delete(
     token_endpoint = _resolve_token_endpoint(token_endpoint, validation_env)
     resolved_url = _resolve_server_url(server_url, validation_env)
 
+    prognaz_final = _ensure_prognaz_resolved(
+        prognaz=prognaz,
+        auto_resolve=auto_resolve,
+        denom=denom,
+        codcom=codcom,
+        token_endpoint=token_endpoint,
+        verify_ssl=not no_verify_ssl,
+    )
+
     richiesta = _build_richiesta(
         codcom=codcom,
         tipo_operazione="S",
-        progr_nazionale=prognaz,
+        progr_nazionale=prognaz_final,
         codice_comunale=None,
         dug=None,
         denom_delibera=None,
