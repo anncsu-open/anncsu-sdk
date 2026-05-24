@@ -16,6 +16,7 @@ from anncsu.cli.commands import (
     auth_app,
     config_app,
     coordinate_app,
+    odonimo_app,
     pa_app,
 )
 
@@ -47,6 +48,11 @@ app.add_typer(
     accesso_app,
     name="accesso",
     help="Accesso CRUD (insert/update/delete) and status",
+)
+app.add_typer(
+    odonimo_app,
+    name="odonimo",
+    help="Odonimo CRUD (insert/update/delete) and status",
 )
 
 console = Console()

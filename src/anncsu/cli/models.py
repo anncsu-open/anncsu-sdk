@@ -237,6 +237,34 @@ class AccessoDryRunResult(BaseModel):
     )
 
 
+class OdonimoOperationResult(BaseModel):
+    """Result of an odonimo CRUD operation (insert/update/delete).
+
+    The ``tipo_operazione`` field distinguishes the operation type
+    (``I``=insert, ``R``=update/replace, ``S``=delete/soppression).
+    """
+
+    success: bool = Field(description="Whether the operation was successful")
+    tipo_operazione: str = Field(description="I (insert), R (update), or S (delete)")
+    id_richiesta: str | None = Field(
+        default=None, description="Request ID assigned by the API"
+    )
+    esito: str | None = Field(default=None, description="Operation outcome (0=success)")
+    messaggio: str | None = Field(
+        default=None, description="Message associated with the outcome"
+    )
+    dati_count: int = Field(default=0, description="Number of data records returned")
+
+
+class OdonimoStatusResult(BaseModel):
+    """Result of an odonimo API status check."""
+
+    available: bool = Field(description="Whether the API is available")
+    status: str = Field(description="Status message from the API")
+    server_url: str = Field(description="Server URL being checked")
+    environment: str = Field(description="Environment (validation or production)")
+
+
 class DryRunResult(BaseModel):
     """Result of a coordinate dry-run operation."""
 

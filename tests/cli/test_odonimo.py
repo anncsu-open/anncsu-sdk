@@ -1,0 +1,362 @@
+# SPDX-FileCopyrightText: 2025-present Geobeyond <info@geobeyond.it>
+# SPDX-License-Identifier: MIT
+"""Tests for ``anncsu odonimo`` CLI command group."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+if TYPE_CHECKING:
+    from typer.testing import CliRunner
+
+
+@pytest.fixture(autouse=True)
+def _mock_pdnd_env(monkeypatch):
+    """Provide mock PDND credentials so ClientAssertionSettings validates.
+
+    All ``PDND_PURPOSE_ID_*`` vars must be present (can be empty) — see
+    the ``ClientAssertionSettings`` validator.
+    """
+    monkeypatch.setenv("PDND_KID", "test-kid")
+    monkeypatch.setenv("PDND_ISSUER", "test-issuer")
+    monkeypatch.setenv("PDND_SUBJECT", "test-subject")
+    monkeypatch.setenv("PDND_AUDIENCE", "auth.uat.interop.pagopa.it/client-assertion")
+    monkeypatch.setenv("PDND_KEY_PATH", "/tmp/dummy.pem")
+    monkeypatch.setenv("PDND_PURPOSE_ID_PA", "")
+    monkeypatch.setenv("PDND_PURPOSE_ID_COORDINATE", "")
+    monkeypatch.setenv("PDND_PURPOSE_ID_COORDINATE_BULK", "")
+    monkeypatch.setenv("PDND_PURPOSE_ID_ACCESSI", "")
+    monkeypatch.setenv("PDND_PURPOSE_ID_INTERNI", "")
+    monkeypatch.setenv("PDND_PURPOSE_ID_ODONIMI", "test-purpose-id-odonimi")
+
+
+def _create_mock_response(
+    id_richiesta: str = "REQ-321",
+    esito: str = "0",
+    messaggio: str | None = "OK",
+    dati: list | None = None,
+) -> MagicMock:
+    """Mock RispostaOperazione (esito='0' = success per ANNCSU convention)."""
+    response = MagicMock()
+    response.id_richiesta = id_richiesta
+    response.esito = esito
+    response.messaggio = messaggio
+    response.dati = dati or []
+    response.model_dump.return_value = {
+        "idRichiesta": id_richiesta,
+        "esito": esito,
+        "messaggio": messaggio,
+        "dati": dati or [],
+    }
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Group help
+# ---------------------------------------------------------------------------
+
+
+class TestOdonimoGroupHelp:
+    """Tests for ``anncsu odonimo`` group help."""
+
+    def test_odonimo_group_registered(self, cli_runner: CliRunner) -> None:
+        """Test that odonimo command group appears in main help."""
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert "odonimo" in result.output.lower()
+
+    def test_odonimo_help_shows_subcommands(self, cli_runner: CliRunner) -> None:
+        """Test that ``anncsu odonimo --help`` lists all subcommands."""
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(app, ["odonimo", "--help"])
+        assert result.exit_code == 0
+        output_lower = result.output.lower()
+        for subcmd in ("insert", "update", "delete", "status"):
+            assert subcmd in output_lower
+
+
+# ---------------------------------------------------------------------------
+# Insert (tipo_operazione='I')
+# ---------------------------------------------------------------------------
+
+
+class TestOdonimoInsert:
+    """Tests for ``anncsu odonimo insert`` command."""
+
+    def test_insert_requires_codcom(self, cli_runner: CliRunner) -> None:
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(app, ["odonimo", "insert"])
+        assert result.exit_code != 0
+
+    def test_insert_requires_dug(self, cli_runner: CliRunner) -> None:
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(app, ["odonimo", "insert", "--codcom", "A062"])
+        assert result.exit_code != 0
+
+    def test_insert_success(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Insert with minimum valid args succeeds end-to-end."""
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+            with patch(
+                "anncsu.cli.commands.odonimo.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.has_modi_audit_context.return_value = False
+                mock_settings.return_value = settings
+                with patch(
+                    "anncsu.cli.commands.odonimo.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-token"
+                    mock_manager.return_value = manager
+                    with patch("anncsu.cli.commands.odonimo.AnncsuOdonimi") as mock_sdk:
+                        sdk = MagicMock()
+                        sdk.anncsu.gestione_anncsu_odonimi_pdnd.return_value = (
+                            _create_mock_response(esito="0")
+                        )
+                        mock_sdk.return_value = sdk
+
+                        result = cli_runner.invoke(
+                            app,
+                            [
+                                "odonimo",
+                                "insert",
+                                "--codcom",
+                                "A062",
+                                "--dug",
+                                "VIA",
+                                "--denom-delibera",
+                                "DELLE ORCHIDEE",
+                            ],
+                        )
+
+        assert result.exit_code == 0, result.output
+
+
+# ---------------------------------------------------------------------------
+# Update (tipo_operazione='R')
+# ---------------------------------------------------------------------------
+
+
+class TestOdonimoUpdate:
+    """Tests for ``anncsu odonimo update`` command."""
+
+    def test_update_requires_prognaz(self, cli_runner: CliRunner) -> None:
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(
+            app, ["odonimo", "update", "--codcom", "A062", "--dug", "VIA"]
+        )
+        assert result.exit_code != 0
+
+    def test_update_requires_dug(self, cli_runner: CliRunner) -> None:
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(
+            app,
+            ["odonimo", "update", "--codcom", "A062", "--prognaz", "2000449"],
+        )
+        assert result.exit_code != 0
+
+    def test_update_success(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+            with patch(
+                "anncsu.cli.commands.odonimo.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.has_modi_audit_context.return_value = False
+                mock_settings.return_value = settings
+                with patch(
+                    "anncsu.cli.commands.odonimo.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-token"
+                    mock_manager.return_value = manager
+                    with patch("anncsu.cli.commands.odonimo.AnncsuOdonimi") as mock_sdk:
+                        sdk = MagicMock()
+                        sdk.anncsu.gestione_anncsu_odonimi_pdnd.return_value = (
+                            _create_mock_response(esito="0")
+                        )
+                        mock_sdk.return_value = sdk
+
+                        result = cli_runner.invoke(
+                            app,
+                            [
+                                "odonimo",
+                                "update",
+                                "--codcom",
+                                "A062",
+                                "--prognaz",
+                                "2000449",
+                                "--dug",
+                                "VIA",
+                                "--denom-delibera",
+                                "DEI TIGLI",
+                            ],
+                        )
+
+        assert result.exit_code == 0, result.output
+
+
+# ---------------------------------------------------------------------------
+# Delete (tipo_operazione='S')
+# ---------------------------------------------------------------------------
+
+
+class TestOdonimoDelete:
+    """Tests for ``anncsu odonimo delete`` command."""
+
+    def test_delete_requires_prognaz(self, cli_runner: CliRunner) -> None:
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(app, ["odonimo", "delete", "--codcom", "A062"])
+        assert result.exit_code != 0
+
+    def test_delete_rejects_dug_flag(self, cli_runner: CliRunner) -> None:
+        """Typer must reject ``--dug`` for delete (not in its signature).
+
+        This is the operation-aware validation: ``delete`` does not expose
+        --dug at all, so Typer fails at parse time before any API call.
+        """
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "odonimo",
+                "delete",
+                "--codcom",
+                "A062",
+                "--prognaz",
+                "2000449",
+                "--dug",
+                "VIA",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "no such option" in result.output.lower()
+
+    def test_delete_success(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+            with patch(
+                "anncsu.cli.commands.odonimo.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.has_modi_audit_context.return_value = False
+                mock_settings.return_value = settings
+                with patch(
+                    "anncsu.cli.commands.odonimo.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-token"
+                    mock_manager.return_value = manager
+                    with patch("anncsu.cli.commands.odonimo.AnncsuOdonimi") as mock_sdk:
+                        sdk = MagicMock()
+                        sdk.anncsu.gestione_anncsu_odonimi_pdnd.return_value = (
+                            _create_mock_response(esito="0")
+                        )
+                        mock_sdk.return_value = sdk
+
+                        result = cli_runner.invoke(
+                            app,
+                            [
+                                "odonimo",
+                                "delete",
+                                "--codcom",
+                                "A062",
+                                "--prognaz",
+                                "2000449",
+                            ],
+                        )
+
+        assert result.exit_code == 0, result.output
+
+
+# ---------------------------------------------------------------------------
+# JSON output
+# ---------------------------------------------------------------------------
+
+
+class TestOdonimoJsonOutput:
+    """Tests for ``--json`` flag on insert."""
+
+    def test_insert_json_output(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """``--json`` outputs structured JSON parseable by other tools."""
+        import json as json_lib
+
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+            with patch(
+                "anncsu.cli.commands.odonimo.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.has_modi_audit_context.return_value = False
+                mock_settings.return_value = settings
+                with patch(
+                    "anncsu.cli.commands.odonimo.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-token"
+                    mock_manager.return_value = manager
+                    with patch("anncsu.cli.commands.odonimo.AnncsuOdonimi") as mock_sdk:
+                        sdk = MagicMock()
+                        sdk.anncsu.gestione_anncsu_odonimi_pdnd.return_value = (
+                            _create_mock_response(
+                                id_richiesta="REQ-J1",
+                                esito="0",
+                                messaggio="OK",
+                            )
+                        )
+                        mock_sdk.return_value = sdk
+
+                        result = cli_runner.invoke(
+                            app,
+                            [
+                                "odonimo",
+                                "insert",
+                                "--codcom",
+                                "A062",
+                                "--dug",
+                                "VIA",
+                                "--denom-delibera",
+                                "DELLE ORCHIDEE",
+                                "--json",
+                            ],
+                        )
+
+        assert result.exit_code == 0
+        data = json_lib.loads(result.output)
+        assert data["success"] is True
+        assert data["tipo_operazione"] == "I"
+        assert data["id_richiesta"] == "REQ-J1"
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
