@@ -358,5 +358,100 @@ class TestOdonimoJsonOutput:
         assert data["id_richiesta"] == "REQ-J1"
 
 
+# ---------------------------------------------------------------------------
+# --auto-resolve (lookup prognaz via PA)
+# ---------------------------------------------------------------------------
+
+
+class TestOdonimoAutoResolve:
+    """Tests for ``--auto-resolve`` flag on update/delete."""
+
+    def test_update_auto_resolve_requires_denom(self, cli_runner: CliRunner) -> None:
+        """``--auto-resolve`` without ``--denom`` is a setup error."""
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "odonimo",
+                "update",
+                "--codcom",
+                "A062",
+                "--dug",
+                "VIA",
+                "--auto-resolve",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--denom" in result.output.lower()
+
+    def test_delete_auto_resolve_requires_denom(self, cli_runner: CliRunner) -> None:
+        from anncsu.cli import app
+
+        result = cli_runner.invoke(
+            app,
+            ["odonimo", "delete", "--codcom", "A062", "--auto-resolve"],
+        )
+        assert result.exit_code != 0
+        assert "--denom" in result.output.lower()
+
+    def test_update_auto_resolve_success(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """``--auto-resolve`` resolves prognaz via PA, then proceeds with R."""
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+            with patch(
+                "anncsu.cli.commands.odonimo.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.has_modi_audit_context.return_value = False
+                mock_settings.return_value = settings
+                with patch(
+                    "anncsu.cli.commands.odonimo.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-token"
+                    mock_manager.return_value = manager
+                    # Mock the PA consult SDK used by --auto-resolve
+                    with patch(
+                        "anncsu.cli.commands.odonimo.AnncsuConsultazione"
+                    ) as mock_consult:
+                        match = MagicMock()
+                        match.prognaz = "2000449"
+                        pa_response = MagicMock()
+                        pa_response.data = [match]
+                        consult = MagicMock()
+                        consult.queryparam.elencoodonimiprog_get_query_param.return_value = pa_response
+                        mock_consult.return_value = consult
+                        with patch(
+                            "anncsu.cli.commands.odonimo.AnncsuOdonimi"
+                        ) as mock_sdk:
+                            sdk = MagicMock()
+                            sdk.anncsu.gestione_anncsu_odonimi_pdnd.return_value = (
+                                _create_mock_response(esito="0")
+                            )
+                            mock_sdk.return_value = sdk
+
+                            result = cli_runner.invoke(
+                                app,
+                                [
+                                    "odonimo",
+                                    "update",
+                                    "--codcom",
+                                    "A062",
+                                    "--auto-resolve",
+                                    "--denom",
+                                    "VklBIERFTCBDT1JTTw==",
+                                    "--dug",
+                                    "VIA",
+                                ],
+                            )
+
+        assert result.exit_code == 0, result.output
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
