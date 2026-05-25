@@ -964,10 +964,17 @@ class TestCoordinateDryRun:
             )
             assert call_kwargs[1]["accparz"] == "10"
 
-    def test_dry_run_access_without_coordinates_uses_test_values(
+    def test_dry_run_skips_access_without_metodo_via_search(
         self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
     ) -> None:
-        """Test that dry-run uses test coordinates when access has no existing coordinates."""
+        """Access with NULL ``metodo`` reached via --codcom/--denom search must
+        be skipped — no test coordinates are invented, no API write occurs.
+
+        This replaces the prior ``..._uses_test_values`` test (the Colosseo
+        fallback) which violated the "dry-run = zero changes" guarantee
+        because the eventual restore to NULL metodo always failed with
+        ANNCSU error 130.
+        """
         from anncsu.cli import app
 
         with cli_runner.isolated_filesystem(temp_dir=tmp_path):
@@ -990,21 +997,20 @@ class TestCoordinateDryRun:
                         "anncsu.cli.commands.coordinate.AnncsuConsultazione"
                     ) as mock_consult_sdk:
                         consult_sdk = MagicMock()
-                        # Mock odonimo response
                         odonimo_response = MagicMock()
                         odonimo_response.data = [MagicMock()]
                         odonimo_response.data[0].prognaz = "987654"
                         odonimo_response.data[0].dug = "VIA"
                         odonimo_response.data[0].denomuff = "ROMA"
                         consult_sdk.queryparam.elencoodonimiprog_get_query_param.return_value = odonimo_response
-                        # Mock access response - NO COORDINATES
+                        # Access with NO metodo (legacy data)
                         search_response = MagicMock()
                         search_response.data = [MagicMock()]
                         search_response.data[0].prognazacc = "5256880"
-                        search_response.data[0].coord_x = None  # No X
-                        search_response.data[0].coord_y = None  # No Y
+                        search_response.data[0].coord_x = None
+                        search_response.data[0].coord_y = None
                         search_response.data[0].quota = None
-                        search_response.data[0].metodo = None  # No metodo
+                        search_response.data[0].metodo = None
                         search_response.data[0].civico = "1"
                         consult_sdk.queryparam.elencoaccessiprog_get_query_param.return_value = search_response
                         mock_consult_sdk.return_value = consult_sdk
@@ -1013,22 +1019,6 @@ class TestCoordinateDryRun:
                             "anncsu.cli.commands.coordinate.AnncsuCoordinate"
                         ) as mock_coord_sdk:
                             coord_sdk = MagicMock()
-                            # Test update succeeds
-                            update_response = create_mock_response(
-                                id_richiesta="REQ-TEST-123",
-                                esito="0",
-                                messaggio="Test update OK",
-                            )
-                            # Restore succeeds
-                            restore_response = create_mock_response(
-                                id_richiesta="REQ-RESTORE-456",
-                                esito="0",
-                                messaggio="Restore OK",
-                            )
-                            coord_sdk.json_post.gestionecoordinate.side_effect = [
-                                update_response,
-                                restore_response,
-                            ]
                             mock_coord_sdk.return_value = coord_sdk
 
                             result = cli_runner.invoke(
@@ -1043,23 +1033,195 @@ class TestCoordinateDryRun:
                                 ],
                             )
 
-            assert result.exit_code == 0
-            # Should show note about using test coordinates
-            assert "no coordinates" in result.output.lower()
-            # Verify gestionecoordinate was called twice (test + restore)
-            assert coord_sdk.json_post.gestionecoordinate.call_count == 2
-            # Verify test update used Roma Colosseo test coordinates
-            test_call = coord_sdk.json_post.gestionecoordinate.call_args_list[0]
-            test_richiesta = test_call[1]["richiesta"]
-            assert test_richiesta.accesso.coordinate.x == "12.4922309"
-            assert test_richiesta.accesso.coordinate.y == "41.8902102"
-            assert test_richiesta.accesso.coordinate.metodo == "4"
-            # Verify restore uses original empty values
-            restore_call = coord_sdk.json_post.gestionecoordinate.call_args_list[1]
-            restore_richiesta = restore_call[1]["richiesta"]
-            assert restore_richiesta.accesso.coordinate.x is None
-            assert restore_richiesta.accesso.coordinate.y is None
-            assert restore_richiesta.accesso.coordinate.metodo is None
+            assert result.exit_code == 0, result.output
+            # Critical: no API write was attempted
+            assert coord_sdk.json_post.gestionecoordinate.call_count == 0
+            # User informed about the skip
+            assert "skip" in result.output.lower()
+
+    def test_dry_run_skips_when_original_metodo_is_null(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Single dry-run must skip records whose original ``metodo`` is NULL.
+
+        The dry-run guarantee is "zero changes": if the original record has
+        no valid metodo (1-4), the restore step would fail and leave the
+        update committed. The CLI must:
+
+        - emit a warning explaining the skip
+        - perform zero ``gestionecoordinate`` calls (no write whatsoever)
+        - exit 0 (the dry-run completed as designed)
+        """
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                mock_settings.return_value = MagicMock()
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager_cls:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "tok"
+                    mock_manager_cls.return_value = manager
+                    with patch(
+                        "anncsu.cli.commands.coordinate.AnncsuConsultazione"
+                    ) as mock_consult_cls:
+                        consult_sdk = MagicMock()
+                        resp = MagicMock()
+                        d = MagicMock()
+                        d.prognazacc = "5256880"
+                        d.prognaz = "907156"
+                        d.dug = "VIA"
+                        d.denomuff = "ROMA"
+                        d.civico = "1"
+                        d.coord_x = None
+                        d.coord_y = None
+                        d.quota = None
+                        d.metodo = None
+                        resp.data = [d]
+                        consult_sdk.queryparam.prognazacc_get_query_param.return_value = resp
+                        mock_consult_cls.return_value = consult_sdk
+                        with patch(
+                            "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                        ) as mock_coord_cls:
+                            coord_sdk = MagicMock()
+                            mock_coord_cls.return_value = coord_sdk
+
+                            result = cli_runner.invoke(
+                                app,
+                                [
+                                    "coordinate",
+                                    "dry-run",
+                                    "--prognazacc",
+                                    "5256880",
+                                ],
+                            )
+
+        assert result.exit_code == 0, result.output
+        # The whole point: no API write was attempted
+        assert coord_sdk.json_post.gestionecoordinate.call_count == 0
+        # User must be informed why we did nothing
+        assert "skip" in result.output.lower() or "metodo" in result.output.lower()
+
+    def test_dry_run_skip_emits_json_output(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """``--json`` flag during a skip must produce a structured payload
+        with ``skipped: true`` and a machine-readable ``skip_reason``."""
+        import json as json_lib
+
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                mock_settings.return_value = MagicMock()
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager_cls:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "tok"
+                    mock_manager_cls.return_value = manager
+                    with patch(
+                        "anncsu.cli.commands.coordinate.AnncsuConsultazione"
+                    ) as mock_consult_cls:
+                        consult_sdk = MagicMock()
+                        resp = MagicMock()
+                        d = MagicMock()
+                        d.prognazacc = "5256880"
+                        d.prognaz = "907156"
+                        d.dug = "VIA"
+                        d.denomuff = "ROMA"
+                        d.civico = "1"
+                        d.coord_x = "12.0"
+                        d.coord_y = "42.0"
+                        d.quota = None
+                        d.metodo = ""  # empty string also non-restorable
+                        resp.data = [d]
+                        consult_sdk.queryparam.prognazacc_get_query_param.return_value = resp
+                        mock_consult_cls.return_value = consult_sdk
+                        with patch(
+                            "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                        ) as mock_coord_cls:
+                            coord_sdk = MagicMock()
+                            mock_coord_cls.return_value = coord_sdk
+
+                            result = cli_runner.invoke(
+                                app,
+                                [
+                                    "coordinate",
+                                    "dry-run",
+                                    "--prognazacc",
+                                    "5256880",
+                                    "--json",
+                                ],
+                            )
+
+        assert result.exit_code == 0, result.output
+        assert coord_sdk.json_post.gestionecoordinate.call_count == 0
+        payload = json_lib.loads(result.output)
+        assert payload.get("skipped") is True
+        assert payload.get("skip_reason") == "original_metodo_null_or_invalid", payload
+
+    def test_dry_run_skips_when_original_metodo_out_of_range(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """metodo values outside {"1","2","3","4"} are non-restorable."""
+        from anncsu.cli import app
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+            with patch(
+                "anncsu.cli.commands.coordinate.ClientAssertionSettings"
+            ) as mock_settings:
+                mock_settings.return_value = MagicMock()
+                with patch(
+                    "anncsu.cli.commands.coordinate.PDNDAuthManager"
+                ) as mock_manager_cls:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "tok"
+                    mock_manager_cls.return_value = manager
+                    with patch(
+                        "anncsu.cli.commands.coordinate.AnncsuConsultazione"
+                    ) as mock_consult_cls:
+                        consult_sdk = MagicMock()
+                        resp = MagicMock()
+                        d = MagicMock()
+                        d.prognazacc = "5256880"
+                        d.prognaz = "907156"
+                        d.dug = "VIA"
+                        d.denomuff = "ROMA"
+                        d.civico = "1"
+                        d.coord_x = "12.0"
+                        d.coord_y = "42.0"
+                        d.quota = None
+                        d.metodo = "5"
+                        resp.data = [d]
+                        consult_sdk.queryparam.prognazacc_get_query_param.return_value = resp
+                        mock_consult_cls.return_value = consult_sdk
+                        with patch(
+                            "anncsu.cli.commands.coordinate.AnncsuCoordinate"
+                        ) as mock_coord_cls:
+                            coord_sdk = MagicMock()
+                            mock_coord_cls.return_value = coord_sdk
+
+                            result = cli_runner.invoke(
+                                app,
+                                [
+                                    "coordinate",
+                                    "dry-run",
+                                    "--prognazacc",
+                                    "5256880",
+                                ],
+                            )
+
+        assert result.exit_code == 0, result.output
+        assert coord_sdk.json_post.gestionecoordinate.call_count == 0
 
     def test_dry_run_with_prognazacc_skips_search(
         self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path

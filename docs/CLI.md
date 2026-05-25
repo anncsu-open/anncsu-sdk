@@ -877,22 +877,40 @@ Original coordinates to restore manually:
   metodo: 4
 ```
 
-**Handling Access Points Without Coordinates**: When an access point has no existing coordinates (X, Y, and metodo are all empty), the dry-run uses temporary test coordinates for the update test:
+**Safety skip on legacy NULL `metodo`**: a dry-run **guarantees zero changes** in production. If the target record has an original `metodo` that is not one of the valid OAS values (`"1"`, `"2"`, `"3"`, `"4"`) — typically legacy data imported before the validation rule was enforced — the restore step would fail (ANNCSU error 130, *"Il metodo deve essere obbligatorio e compreso tra 1 e 4"*) and the test update would remain committed permanently.
 
-| Field | Test Value | Description |
-|-------|------------|-------------|
-| X | `12.4922309` | Longitude (Roma Colosseo area) |
-| Y | `41.8902102` | Latitude (Roma Colosseo area) |
-| Z | `null` | Altitude not specified |
-| metodo | `4` | "Altro" (other method) |
+To preserve the dry-run guarantee, the CLI **skips** such records **before any API write call**:
 
-After the test update, the command restores the original empty state. A note is displayed when test coordinates are used:
+- No `gestionecoordinate` request is sent.
+- A warning is printed (or, with `--json`, a structured payload with `"skipped": true` and `"skip_reason": "original_metodo_null_or_invalid"`).
+- Exit code is `0` (the dry-run completed as designed, the record was simply not testable).
 
+JSON output when a record is skipped:
+
+```json
+{
+  "success": true,
+  "original_coordinates": {
+    "prognazacc": "5256880",
+    "codcom": "H501",
+    "civico": "1",
+    "coord_x": null,
+    "coord_y": null,
+    "quota": null,
+    "metodo": null
+  },
+  "test_update": null,
+  "restore": null,
+  "restore_failed": false,
+  "skipped": true,
+  "skip_reason": "original_metodo_null_or_invalid",
+  "error_message": null
+}
 ```
-Note: Access has no coordinates. Using test coordinates (will be cleared after test).
-```
 
-**Note**: If the API does not allow restoring an access point without valid coordinates, the restore operation may fail. In this case, manual intervention may be needed.
+> **Removed in this release**: the prior fallback that injected Roma Colosseo coordinates (`X=12.4922309`, `Y=41.8902102`, `metodo=4`) when the access had no original coordinates. That fallback violated the "dry-run = zero changes" guarantee because the eventual restore to `metodo=NULL` could not succeed. Skip is now the only behaviour.
+
+**Warning Handling (legacy)**: if a restore fails for any *other* reason (e.g. transient network error during the round-trip on a record that did pass the safety check), the command will still display original values for manual recovery — same as before.
 
 ---
 
@@ -1225,12 +1243,13 @@ Dry-Run Results:
 ┌──────────────────────┬───────┐
 │ Metric               │ Value │
 ├──────────────────────┼───────┤
-│ Total tested         │ 10    │
-│ Updates succeeded    │ 10    │
+│ Total tested         │ 8     │
+│ Updates succeeded    │ 8     │
 │ Updates failed       │ 0     │
-│ Restores succeeded   │ 10    │
+│ Restores succeeded   │ 8     │
 │ Restores failed      │ 0     │
 │ Lookup failures      │ 0     │
+│ Metodo NULL skipped  │ 2     │
 └──────────────────────┴───────┘
 ```
 
@@ -1238,12 +1257,13 @@ JSON output:
 ```json
 {
   "run_id": "abc123-def456",
-  "total_tested": 10,
-  "updates_succeeded": 8,
+  "total_tested": 8,
+  "updates_succeeded": 6,
   "updates_failed": 2,
-  "restores_succeeded": 8,
+  "restores_succeeded": 6,
   "restores_failed": 0,
   "lookup_failures": 0,
+  "metodo_null_skipped": 2,
   "errors": [
     {
       "row_id": 4,
@@ -1258,15 +1278,24 @@ JSON output:
       "operation": "dryrun_update",
       "http_status": 400,
       "error_detail": "body.richiesta.accesso.coordinate.x: Max length is '12', found '14'"
+    },
+    {
+      "row_id": 12,
+      "progr_civico": "33013500",
+      "operation": "dryrun_skip",
+      "http_status": null,
+      "error_detail": "original_metodo_null_or_invalid: None"
     }
   ]
 }
 ```
 
+**Safety skip on legacy NULL `metodo`**: same semantics as `coordinate dry-run` — records whose original `metodo` is not in `{"1", "2", "3", "4"}` are skipped **before any API write** to preserve the "dry-run = zero changes" guarantee. Counted in the dedicated `metodo_null_skipped` field; logged in `bulk_results` with `operation = 'dryrun_skip'` and `error_detail = 'original_metodo_null_or_invalid: <value>'`, so they appear in the **Error Details** section alongside other failures (distinguishable by the `operation` column).
+
 When there are errors, the text output also includes an **Error Details** table showing
 row, progr_civico, operation, HTTP status, and error message for each failed operation.
 
-Exits with code 1 if any restores failed (manual intervention may be needed).
+Exits with code 1 if any restores failed (manual intervention may be needed). Skipped records do NOT cause a non-zero exit.
 
 #### `anncsu coordinate bulk resume`
 

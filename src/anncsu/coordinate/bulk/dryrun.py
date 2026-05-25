@@ -13,6 +13,7 @@ from anncsu.coordinate.models.richiestaoperazione import (
 )
 
 DEFAULT_MAX_RECORDS = 10
+VALID_METODO_VALUES = frozenset({"1", "2", "3", "4"})
 
 
 def _extract_http_error(e: Exception) -> tuple[int | None, str]:
@@ -20,6 +21,20 @@ def _extract_http_error(e: Exception) -> tuple[int | None, str]:
     http_status = getattr(e, "status_code", None)
     error_detail = getattr(e, "body", None) or str(e)
     return http_status, error_detail
+
+
+def _is_safely_restorable(metodo: str | None) -> bool:
+    """A record can be safely dry-run-tested only if its original ``metodo``
+    is one of the valid OAS values (``"1".."4"``).
+
+    Records with NULL / empty / out-of-range ``metodo`` are legacy data
+    that pre-date the current API validation rule. The update would
+    succeed (the new CSV value is valid) but the restore would fail with
+    ANNCSU error 130 — leaving the record permanently overwritten. To
+    preserve the "dry-run = zero changes" guarantee, such records are
+    skipped before any write call.
+    """
+    return metodo in VALID_METODO_VALUES
 
 
 @dataclass
@@ -33,6 +48,7 @@ class DryRunResult:
     restores_failed: int
     lookup_failures: int
     run_id: str
+    metodo_null_skipped: int = 0
 
 
 class BulkDryRunner:
@@ -77,6 +93,7 @@ class BulkDryRunner:
         restores_succeeded = 0
         restores_failed = 0
         lookup_failures = 0
+        metodo_null_skipped = 0
 
         # Track which rows were successfully updated (need restore)
         rows_to_restore: list[dict] = []
@@ -129,6 +146,21 @@ class BulkDryRunner:
                 original_z=lookup_data.quota,
                 original_metodo=lookup_data.metodo,
             )
+
+            # Step 2b: Pre-flight — skip records whose original metodo is not
+            # one of {"1","2","3","4"}. Otherwise the restore would fail
+            # (ANNCSU error 130) and leave the record permanently overwritten.
+            if not _is_safely_restorable(lookup_data.metodo):
+                metodo_null_skipped += 1
+                self.db.insert_result(
+                    row_id=row_id,
+                    run_id=self.run_id,
+                    operation="dryrun_skip",
+                    error_detail=(
+                        f"original_metodo_null_or_invalid: {lookup_data.metodo!r}"
+                    ),
+                )
+                continue
 
             # Step 3: Update with new coordinates from CSV
             try:
@@ -216,6 +248,7 @@ class BulkDryRunner:
             restores_succeeded=restores_succeeded,
             restores_failed=restores_failed,
             lookup_failures=lookup_failures,
+            metodo_null_skipped=metodo_null_skipped,
             run_id=self.run_id,
         )
 

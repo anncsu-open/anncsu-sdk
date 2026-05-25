@@ -572,6 +572,7 @@ def bulk_dry_run(
                     "restores_succeeded": dry_result.restores_succeeded,
                     "restores_failed": dry_result.restores_failed,
                     "lookup_failures": dry_result.lookup_failures,
+                    "metodo_null_skipped": dry_result.metodo_null_skipped,
                     "errors": [
                         {
                             "row_id": e[0],
@@ -605,6 +606,10 @@ def bulk_dry_run(
                     "Restores failed", f"[red]{dry_result.restores_failed}[/red]"
                 )
                 table.add_row("Lookup failures", str(dry_result.lookup_failures))
+                table.add_row(
+                    "Metodo NULL skipped",
+                    f"[yellow]{dry_result.metodo_null_skipped}[/yellow]",
+                )
                 console.print(table)
 
                 if errors:
