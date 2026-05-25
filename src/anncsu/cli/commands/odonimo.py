@@ -756,7 +756,10 @@ def _get_sdk(
     def security_provider() -> Security:
         return Security(bearer_auth=manager.get_access_token())
 
-    client = httpx.Client(verify=verify_ssl)
+    # UAT odonimi endpoint is slow — raise httpx timeout to 30s (default is 5s)
+    # so the client doesn't disconnect before the server finishes the I/R/S
+    # operation.
+    client = httpx.Client(verify=verify_ssl, timeout=httpx.Timeout(30.0))
 
     hooks = SDKHooks()
 
@@ -807,11 +810,15 @@ def _get_sdk(
             )
             error_console.print("Continuing without ModI headers (API calls may fail).")
 
+    # UAT odonimi endpoint is slow — raise SDK timeout to 30s to avoid
+    # client-side timeouts that leave orphaned dry-run records (server
+    # commits but client never sees the response).
     sdk = AnncsuOdonimi(
         security=security_provider,
         server_url=server_url,
         client=client,
         hooks=hooks,
+        timeout_ms=30000,
     )
     return sdk, manager
 
