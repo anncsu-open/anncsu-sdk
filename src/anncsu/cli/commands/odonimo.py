@@ -478,12 +478,16 @@ def _run_update_dry_run(
     )
 
     # Step I: insert a fake odonimo with a generated denom_delibera.
+    # ``flag_delibera="2"`` (non-delibera) avoids the server requirement that
+    # ``data`` + ``protocollo`` be populated when ``flag_delibera ∈ {0,1}``
+    # (server default is 0/1 if omitted, triggering error code 235).
     fake_denom = _generate_fake_denom()
     insert_richiesta = Richiesta(
         codcom=codcom,
         tipo_operazione="I",
         dug="VIA",
         denom_delibera=fake_denom,
+        provvedimento=Provvedimento(flag_delibera="2"),
     )
     try:
         ValidatedOdonimo.model_validate(insert_richiesta.model_dump(exclude_unset=True))
@@ -622,12 +626,17 @@ def _run_delete_dry_run(
         modi_audience=server_url,
     )
 
+    # Step I: insert a fake odonimo with a generated denom_delibera.
+    # ``flag_delibera="2"`` (non-delibera) avoids the server requirement that
+    # ``data`` + ``protocollo`` be populated when ``flag_delibera ∈ {0,1}``
+    # (server default is 0/1 if omitted, triggering error code 235).
     fake_denom = _generate_fake_denom()
     insert_richiesta = Richiesta(
         codcom=codcom,
         tipo_operazione="I",
         dug="VIA",
         denom_delibera=fake_denom,
+        provvedimento=Provvedimento(flag_delibera="2"),
     )
     try:
         ValidatedOdonimo.model_validate(insert_richiesta.model_dump(exclude_unset=True))
