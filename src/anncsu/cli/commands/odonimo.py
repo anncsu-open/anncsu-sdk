@@ -249,15 +249,42 @@ def _extract_progr_nazionale_from_response(response: object) -> str | None:
 
 
 def _build_result(response: object, tipo_operazione: str) -> OdonimoOperationResult:
-    """Convert a raw SDK response into an OdonimoOperationResult."""
+    """Convert a raw SDK response into an OdonimoOperationResult.
+
+    The Odonimi API has an asymmetry between I/R and S responses:
+
+    * I and R always populate ``esito="0"`` on success
+    * S omits ``esito`` entirely but populates ``data_FINE`` /
+      ``data_fine_valid_amm`` on the returned ``dati`` record as the
+      soppressione markers (verified empirically against UAT 2026-05-25)
+
+    For S responses we therefore infer success from the presence of the
+    soppression markers when ``esito`` is missing. If ``esito`` is set
+    explicitly (any value), it takes precedence — supporting both the
+    common case and any future server-side change that aligns S with I/R.
+    """
     esito = getattr(response, "esito", None)
+    dati = getattr(response, "dati", []) or []
+
+    if esito is not None:
+        success = esito == "0"
+    elif tipo_operazione == "S" and dati:
+        first = dati[0]
+        # Pydantic-side ``data_fine`` is aliased to OAS ``data_FINE``.
+        success = bool(
+            getattr(first, "data_fine", None)
+            or getattr(first, "data_fine_valid_amm", None)
+        )
+    else:
+        success = False
+
     return OdonimoOperationResult(
-        success=esito == "0",
+        success=success,
         tipo_operazione=tipo_operazione,
         id_richiesta=getattr(response, "id_richiesta", None),
         esito=esito,
         messaggio=getattr(response, "messaggio", None),
-        dati_count=len(getattr(response, "dati", []) or []),
+        dati_count=len(dati),
     )
 
 
@@ -400,6 +427,8 @@ def _run_insert_dry_run(
         rollback_response = sdk.anncsu.gestione_anncsu_odonimi_pdnd(
             richiesta=rollback_richiesta
         )
+        if raw_output:
+            _print_raw(rollback_response, "Raw rollback (S) response")
         rollback = _build_result(rollback_response, "S")
         if not rollback.success:
             rollback_failed = True
@@ -526,6 +555,8 @@ def _run_update_dry_run(
         update_response = sdk.anncsu.gestione_anncsu_odonimi_pdnd(
             richiesta=update_richiesta
         )
+        if raw_output:
+            _print_raw(update_response, "Raw update (R) response")
         update_op = _build_result(update_response, "R")
     except Exception as e:
         update_op = OdonimoOperationResult(
@@ -546,6 +577,8 @@ def _run_update_dry_run(
         rollback_response = sdk.anncsu.gestione_anncsu_odonimi_pdnd(
             richiesta=rollback_richiesta
         )
+        if raw_output:
+            _print_raw(rollback_response, "Raw rollback (S) response")
         rollback = _build_result(rollback_response, "S")
         if not rollback.success:
             rollback_failed = True
@@ -656,6 +689,8 @@ def _run_delete_dry_run(
         rollback_response = sdk.anncsu.gestione_anncsu_odonimi_pdnd(
             richiesta=rollback_richiesta
         )
+        if raw_output:
+            _print_raw(rollback_response, "Raw rollback (S) response")
         rollback = _build_result(rollback_response, "S")
         if not rollback.success:
             rollback_failed = True
