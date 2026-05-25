@@ -16,7 +16,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # Required for softprops/action-gh-release to create GitHub Releases on tag pushes
       id-token: write # Required for trusted publishing (optional but recommended)
 
     steps:
