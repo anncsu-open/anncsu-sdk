@@ -2236,6 +2236,8 @@ Options:
 
 > **Note**: `delete` does NOT accept `--dug`, `--denom-*`, `--codice-comunale`, `--provv-*`, or `--prefettura-*` — Typer rejects them at parse time as unknown options because they have no meaning for a soppressione.
 
+> **Note on the S response shape**: the server response for a soppressione **does not** carry `esito` (it is `null`). The CLI infers success from the presence of `data_FINE` and `data_fine_valid_amm` in the `dati` payload — those mark the closure timestamp of the odonimo. When the CLI shows `Operation 'S' successful!`, this is the path that was taken. The behaviour is identical between the real `delete` and `delete --dry-run` since both call the same `_build_result` helper.
+
 #### `anncsu odonimo status`
 
 Check the status of the Odonimi API service:

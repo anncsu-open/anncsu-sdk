@@ -972,17 +972,8 @@ def _execute_operation(
     if raw_output:
         _print_raw(response)
 
-    esito = getattr(response, "esito", None)
-    success = esito == "0"
-
-    result = OdonimoOperationResult(
-        success=success,
-        tipo_operazione=tipo_operazione,
-        id_richiesta=getattr(response, "id_richiesta", None),
-        esito=esito,
-        messaggio=getattr(response, "messaggio", None),
-        dati_count=len(getattr(response, "dati", []) or []),
-    )
+    result = _build_result(response, tipo_operazione)
+    success = result.success
 
     if json_output:
         print(result.model_dump_json(indent=2))

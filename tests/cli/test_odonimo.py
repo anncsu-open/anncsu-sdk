@@ -294,6 +294,63 @@ class TestOdonimoDelete:
 
         assert result.exit_code == 0, result.output
 
+    def test_delete_success_with_s_marker_response(
+        self, cli_runner: CliRunner, tmp_path: Path, mock_private_key: Path
+    ) -> None:
+        """Real (non-dry-run) ``delete`` must treat an S response that omits
+        ``esito`` but carries ``data_FINE`` / ``data_fine_valid_amm`` markers
+        as success — same logic as ``_build_result`` already applies in the
+        dry-run helpers.
+
+        Regression: ``_execute_operation`` used to evaluate ``success =
+        esito == "0"`` directly, producing a false-negative ``Operation 'S'
+        failed`` on UAT even when the server had committed the cancellation.
+        """
+        from anncsu.cli import app
+
+        item = MagicMock()
+        item.data_fine = "25/05/2026"
+        item.data_fine_valid_amm = "25/05/2026"
+        response = MagicMock()
+        response.id_richiesta = "REQ-S-MARKER"
+        response.esito = None
+        response.messaggio = None
+        response.dati = [item]
+
+        with cli_runner.isolated_filesystem(temp_dir=tmp_path):
+            Path("private_key.pem").write_text(mock_private_key.read_text())
+            with patch(
+                "anncsu.cli.commands.odonimo.ClientAssertionSettings"
+            ) as mock_settings:
+                settings = MagicMock()
+                settings.has_modi_audit_context.return_value = False
+                mock_settings.return_value = settings
+                with patch(
+                    "anncsu.cli.commands.odonimo.PDNDAuthManager"
+                ) as mock_manager:
+                    manager = MagicMock()
+                    manager.get_access_token.return_value = "mock-token"
+                    mock_manager.return_value = manager
+                    with patch("anncsu.cli.commands.odonimo.AnncsuOdonimi") as mock_sdk:
+                        sdk = MagicMock()
+                        sdk.anncsu.gestione_anncsu_odonimi_pdnd.return_value = response
+                        mock_sdk.return_value = sdk
+
+                        result = cli_runner.invoke(
+                            app,
+                            [
+                                "odonimo",
+                                "delete",
+                                "--codcom",
+                                "H501",
+                                "--prognaz",
+                                "1342672",
+                            ],
+                        )
+
+        assert result.exit_code == 0, result.output
+        assert "successful" in result.output.lower()
+
 
 # ---------------------------------------------------------------------------
 # JSON output

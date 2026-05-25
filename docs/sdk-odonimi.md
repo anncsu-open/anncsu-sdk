@@ -199,6 +199,64 @@ L'operazione effettiva è determinata dal campo `Richiesta.tipo_operazione`:
 |--------|-------------|
 | `show_status` | Verifica stato del servizio |
 
+## Response shape (asimmetria fra I/R e S)
+
+Le tre operazioni **non** rispondono con la stessa forma. Verificato empiricamente su UAT 2026-05-25.
+
+### I e R — `esito` valorizzato
+
+```json
+{
+  "idRichiesta": "316768",
+  "esito": "0",
+  "messaggio": "OK",
+  "dati": [{"codcom": "H501", "progr_nazionale": "1342677", ...}]
+}
+```
+
+Detection di successo: `esito == "0"`.
+
+### S — `esito` omesso, marker `data_FINE`
+
+```json
+{
+  "idRichiesta": "316775",
+  "dati": [{
+    "codcom": "H501",
+    "progr_nazionale": "1342672",
+    "dug": "VIA",
+    "denom_delibera": "TEST SDK INSERT 20260525",
+    "data_inizio": "25/05/2026",
+    "data_FINE": "25/05/2026",
+    "data_ini_valid_amm": "25/05/2026",
+    "data_fine_valid_amm": "25/05/2026"
+  }]
+}
+```
+
+`esito` e `messaggio` sono assenti / `null`. Il marker di successo per S è la presenza di `data_FINE` (alias Speakeasy: `data_fine`) o di `data_fine_valid_amm` nel primo elemento di `dati`.
+
+### Detection lato client (programmatic)
+
+Se usi l'SDK direttamente, replica questo pattern (è esattamente quello che usa la CLI `_build_result`):
+
+```python
+def is_success(response, tipo_operazione: str) -> bool:
+    esito = getattr(response, "esito", None)
+    dati = getattr(response, "dati", []) or []
+    if esito is not None:
+        return esito == "0"
+    if tipo_operazione == "S" and dati:
+        first = dati[0]
+        return bool(
+            getattr(first, "data_fine", None)              # alias per data_FINE
+            or getattr(first, "data_fine_valid_amm", None)
+        )
+    return False
+```
+
+Una check ingenua `esito == "0"` produce un **false-negative** sulle S che vanno a buon fine — è una causa nota di errori in codice cliente.
+
 ## Validazione Odonimo
 
 L'SDK fornisce un modello `ValidatedOdonimo` con validazione delle business rules ANNCSU. Va sempre usato prima della chiamata API per intercettare errori a livello locale.
