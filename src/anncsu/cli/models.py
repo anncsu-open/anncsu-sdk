@@ -324,13 +324,33 @@ class DryRunResult(BaseModel):
     original_coordinates: OriginalCoordinates = Field(
         description="Original coordinates before the test"
     )
-    test_update: CoordinateUpdateResult = Field(description="Result of the test update")
+    test_update: CoordinateUpdateResult | None = Field(
+        default=None,
+        description=(
+            "Result of the test update. ``None`` when the dry-run was skipped "
+            "(see ``skipped`` / ``skip_reason``) because no API write was attempted."
+        ),
+    )
     restore: CoordinateUpdateResult | None = Field(
         default=None, description="Result of the restore operation"
     )
     restore_failed: bool = Field(
         default=False,
         description="Whether restore failed (requires manual intervention)",
+    )
+    skipped: bool = Field(
+        default=False,
+        description=(
+            "Whether the dry-run was skipped before any API write because the "
+            "original record cannot be safely restored (e.g. legacy NULL metodo)."
+        ),
+    )
+    skip_reason: str | None = Field(
+        default=None,
+        description=(
+            "Machine-readable reason when ``skipped`` is ``True``. "
+            "Currently the only value is ``original_metodo_null_or_invalid``."
+        ),
     )
     error_message: str | None = Field(
         default=None, description="Error message if operation failed"

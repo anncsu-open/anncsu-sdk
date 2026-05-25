@@ -413,7 +413,112 @@ class TestDryRunResult:
             restores_succeeded=8,
             restores_failed=0,
             lookup_failures=0,
+            metodo_null_skipped=0,
             run_id="test-run",
         )
         assert result.total_tested == 10
         assert result.updates_succeeded == 8
+
+    def test_result_exposes_metodo_null_skipped_counter(self):
+        """DryRunResult must expose a dedicated counter for records skipped
+        because their original ``metodo`` was NULL / empty / out-of-range
+        (i.e. not restorable safely)."""
+        result = DryRunResult(
+            total_tested=0,
+            updates_succeeded=0,
+            updates_failed=0,
+            restores_succeeded=0,
+            restores_failed=0,
+            lookup_failures=0,
+            metodo_null_skipped=3,
+            run_id="test-run",
+        )
+        assert result.metodo_null_skipped == 3
+
+
+class TestBulkDryRunSkipMetodoNull:
+    """Pre-flight skip when original.metodo is NULL/empty/out-of-range.
+
+    The dry-run guarantees "zero changes in production". If the original
+    record has no valid ``metodo`` (legacy data prior to API validation),
+    the restore step would fail with ANNCSU error 130 — but the update
+    would already have committed. To preserve the guarantee, the runner
+    must skip these records entirely: no update, no restore.
+    """
+
+    def _build_runner(self, tmp_path, *, lookup_metodo):
+        csv = "codcom,progr_civico,x,y,z,metodo\nA062,1370588,14.0,42.0,,2\n"
+        db, result = _setup_db_with_csv(tmp_path, csv)
+
+        mock_consult_sdk = MagicMock()
+        mock_consult_sdk.queryparam.prognazacc_get_query_param.return_value = (
+            _make_lookup_response(coord_x="13.0", coord_y="41.0", metodo=lookup_metodo)
+        )
+
+        mock_coord_sdk = MagicMock()
+        mock_coord_sdk.json_post.gestionecoordinate.return_value = (
+            _make_success_response()
+        )
+
+        runner = BulkDryRunner(
+            db=db,
+            run_id=result.run_id,
+            coord_sdk=mock_coord_sdk,
+            consult_sdk=mock_consult_sdk,
+        )
+        return runner, mock_coord_sdk, db, result.run_id
+
+    def test_skip_when_original_metodo_is_none(self, tmp_path):
+        runner, coord_sdk, db, run_id = self._build_runner(tmp_path, lookup_metodo=None)
+        dry_result = runner.execute()
+
+        assert dry_result.metodo_null_skipped == 1
+        assert dry_result.total_tested == 0
+        assert dry_result.updates_succeeded == 0
+        assert dry_result.updates_failed == 0
+        assert dry_result.restores_succeeded == 0
+        assert dry_result.restores_failed == 0
+        # Critical: no API writes touched the record
+        assert coord_sdk.json_post.gestionecoordinate.call_count == 0
+
+        # DB has the skip logged
+        rows = db.con.execute(
+            "SELECT operation, error_detail FROM bulk_results WHERE run_id = ?",
+            [run_id],
+        ).fetchall()
+        ops = [r[0] for r in rows]
+        assert "dryrun_skip" in ops
+        skip_row = next(r for r in rows if r[0] == "dryrun_skip")
+        assert "metodo" in (skip_row[1] or "").lower()
+        db.close()
+
+    def test_skip_when_original_metodo_is_empty_string(self, tmp_path):
+        runner, coord_sdk, db, _ = self._build_runner(tmp_path, lookup_metodo="")
+        dry_result = runner.execute()
+        assert dry_result.metodo_null_skipped == 1
+        assert coord_sdk.json_post.gestionecoordinate.call_count == 0
+        db.close()
+
+    def test_skip_when_original_metodo_out_of_range(self, tmp_path):
+        """Valid metodo values per OAS are '1'..'4'. Anything else (e.g. '5',
+        '0', 'X') must be treated as non-restorable."""
+        for invalid in ("0", "5", "9", "X"):
+            runner, coord_sdk, db, _ = self._build_runner(
+                tmp_path, lookup_metodo=invalid
+            )
+            dry_result = runner.execute()
+            assert dry_result.metodo_null_skipped == 1, (
+                f"metodo={invalid!r} should be treated as non-restorable"
+            )
+            assert coord_sdk.json_post.gestionecoordinate.call_count == 0
+            db.close()
+
+    def test_no_skip_when_original_metodo_is_valid(self, tmp_path):
+        """Regression: valid metodo (1-4) still goes through the full cycle."""
+        runner, coord_sdk, db, _ = self._build_runner(tmp_path, lookup_metodo="3")
+        dry_result = runner.execute()
+        assert dry_result.metodo_null_skipped == 0
+        assert dry_result.total_tested == 1
+        # Update + restore = 2 calls
+        assert coord_sdk.json_post.gestionecoordinate.call_count == 2
+        db.close()

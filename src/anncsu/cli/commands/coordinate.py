@@ -40,6 +40,7 @@ from anncsu.common.modi import AuditContext, ModIConfig
 from anncsu.common.security import Security as PASecurity
 from anncsu.common.session import get_config_dir
 from anncsu.coordinate import AnncsuCoordinate
+from anncsu.coordinate.bulk.dryrun import _is_safely_restorable
 from anncsu.coordinate.models import Accesso, Coordinate, Richiesta, Security
 from anncsu.coordinate.models.validated import ValidatedRispostaOperazione
 from anncsu.pa import AnncsuConsultazione
@@ -829,6 +830,32 @@ def dry_run(
         console.print(f"  Quota: {original.quota or 'N/A'}")
         console.print(f"  Metodo: {original.metodo or 'N/A'}\n")
 
+    # Pre-flight safety check: skip records whose original ``metodo`` is not
+    # one of the valid OAS values (``"1".."4"``). For such legacy records the
+    # update would succeed but the restore would fail with ANNCSU code 130,
+    # leaving the production data permanently overwritten. The dry-run
+    # guarantees "zero changes", so we bail out before any API write.
+    if not _is_safely_restorable(original.metodo):
+        if not json_output:
+            console.print(
+                "[yellow]Skipped:[/yellow] original ``metodo`` is "
+                f"{original.metodo!r}, which is not a valid restorable value "
+                "(expected '1', '2', '3', or '4'). No update or restore was "
+                "attempted to preserve the dry-run guarantee.\n"
+            )
+        skip_result = DryRunResult(
+            success=True,
+            original_coordinates=original,
+            test_update=None,
+            restore=None,
+            restore_failed=False,
+            skipped=True,
+            skip_reason="original_metodo_null_or_invalid",
+        )
+        if json_output:
+            print(skip_result.model_dump_json(indent=2))
+        return
+
     # Step 2: Perform test update
     if not json_output:
         console.print("[bold]Step 2:[/bold] Performing test update...\n")
@@ -841,31 +868,13 @@ def dry_run(
         modi_audience=coord_server,
     )
 
-    # Check if access has existing coordinates
-    has_coordinates = original.coord_x and original.coord_y and original.metodo
-
-    if has_coordinates:
-        # Use existing coordinates for test
-        test_coordinate = Coordinate(
-            x=original.coord_x,
-            y=original.coord_y,
-            z=original.quota,
-            metodo=original.metodo,
-        )
-    else:
-        # Access has no coordinates - use test values (Roma Colosseo area)
-        # These will be restored to empty after the test
-        if not json_output:
-            console.print(
-                "[yellow]Note:[/yellow] Access has no coordinates. "
-                "Using test coordinates (will be cleared after test).\n"
-            )
-        test_coordinate = Coordinate(
-            x="12.4922309",  # Roma - Colosseo longitude
-            y="41.8902102",  # Roma - Colosseo latitude
-            z=None,
-            metodo="4",  # Metodo 4 = Altro
-        )
+    # Use the original coordinates as test payload (round-trip).
+    test_coordinate = Coordinate(
+        x=original.coord_x,
+        y=original.coord_y,
+        z=original.quota,
+        metodo=original.metodo,
+    )
 
     test_richiesta = Richiesta(
         accesso=Accesso(
