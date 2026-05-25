@@ -2305,8 +2305,8 @@ JSON output of `--dry-run` (delete example):
     "success": true,
     "tipo_operazione": "S",
     "id_richiesta": "REQ-S",
-    "esito": "0",
-    "messaggio": "OK",
+    "esito": null,
+    "messaggio": null,
     "dati_count": 1
   },
   "rollback_failed": false,
@@ -2314,6 +2314,8 @@ JSON output of `--dry-run` (delete example):
   "error_message": null
 }
 ```
+
+> **Note on `esito` for S operations**: the server response for S (delete/cleanup) does **not** carry `esito` (it is `null`). Success is detected by the presence of `data_FINE` / `data_fine_valid_amm` in the `dati` payload, which mark the closure timestamp of the odonimo. The CLI maps this into `"success": true` even though `esito` stays `null` — this is by design.
 
 For `update --dry-run`, the `update_op` field is populated (R step), and `tipo_operazione` is `"R"`.
 
