@@ -410,12 +410,126 @@ def fix_unmarshal_import(package_path: Path, dry_run: bool = False) -> list[str]
     return fixed
 
 
+# Speakeasy 1.7+ omits the ``hooks`` Dependency Injection parameter from the
+# generated SDK ``__init__``. Without it, the CLI cannot inject ``ModIHook``
+# / ``HooksProvider`` and crashes with ``TypeError: __init__() got an
+# unexpected keyword argument 'hooks'``. The accessi/coordinate packages
+# were manually patched in their first CLI commit; this transformation
+# automates the same fix for every package on every regeneration.
+#
+# Transformations applied (5 in total, all idempotent):
+#   1. import: ``SDKHooks`` → ``HooksProvider, SDKHooks``
+#   2. ``__init__`` signature: append ``hooks: Optional[HooksProvider] = None,``
+#   3. ``BaseSDK.__init__(..., parent_ref=self,)`` → drop ``parent_ref=self,``
+#   4. ``hooks = SDKHooks()`` block → DI pattern (``sdk_hooks``)
+#   5. ``klass(self.sdk_configuration, parent_ref=self)`` → drop the kwarg
+
+_HOOKS_IMPORT_BAD = "from anncsu.common.hooks import SDKHooks"
+_HOOKS_IMPORT_GOOD = "from anncsu.common.hooks import HooksProvider, SDKHooks"
+
+_HOOKS_INIT_PARAM_PATTERN = re.compile(
+    r"(        debug_logger: Optional\[Logger\] = None,\n)(    \) -> None:)"
+)
+_HOOKS_INIT_PARAM_REPL = r"\1        hooks: Optional[HooksProvider] = None,\n\2"
+
+_BASE_SDK_PARENT_REF_PATTERN = re.compile(
+    r"(            \),\n)            parent_ref=self,\n(        \))"
+)
+_BASE_SDK_PARENT_REF_REPL = r"\1\2"
+
+_HOOKS_BLOCK_BAD = (
+    "        hooks = SDKHooks()\n"
+    "\n"
+    "        # pylint: disable=protected-access\n"
+    '        self.sdk_configuration.__dict__["_hooks"] = hooks\n'
+    "\n"
+    "        self.sdk_configuration = hooks.sdk_init(self.sdk_configuration)"
+)
+_HOOKS_BLOCK_GOOD = (
+    "        # Use injected hooks or create new ones (dependency injection pattern).\n"
+    "        sdk_hooks = hooks if hooks is not None else SDKHooks()\n"
+    "\n"
+    "        # pylint: disable=protected-access\n"
+    '        self.sdk_configuration.__dict__["_hooks"] = sdk_hooks\n'
+    "\n"
+    "        self.sdk_configuration = sdk_hooks.sdk_init(self.sdk_configuration)"
+)
+
+_GETATTR_PARENT_REF_BAD = "klass(self.sdk_configuration, parent_ref=self)"
+_GETATTR_PARENT_REF_GOOD = "klass(self.sdk_configuration)"
+
+
+def fix_hooks_di(package_path: Path, dry_run: bool = False) -> list[str]:
+    """Rewrite Speakeasy 1.7+ ``__init__`` to support ``hooks`` DI parameter.
+
+    Applies five idempotent transformations to ``sdk.py`` files. A file
+    is considered "fixed" if any of the five produced a change. Re-running
+    on an already-patched file yields zero changes.
+    """
+    fixed: list[str] = []
+
+    for py_file in package_path.rglob("sdk.py"):
+        if "__pycache__" in str(py_file):
+            continue
+
+        original = py_file.read_text()
+        content = original
+        changes = 0
+
+        # 1. Import HooksProvider alongside SDKHooks (skip if already present)
+        if "HooksProvider" not in content and _HOOKS_IMPORT_BAD in content:
+            content = content.replace(_HOOKS_IMPORT_BAD, _HOOKS_IMPORT_GOOD, 1)
+            changes += 1
+
+        # 2. Append ``hooks`` param to __init__ signature
+        if "hooks: Optional[HooksProvider]" not in content:
+            new_content, n = _HOOKS_INIT_PARAM_PATTERN.subn(
+                _HOOKS_INIT_PARAM_REPL, content
+            )
+            if n:
+                content = new_content
+                changes += n
+
+        # 3. Drop ``parent_ref=self,`` from BaseSDK.__init__
+        new_content, n = _BASE_SDK_PARENT_REF_PATTERN.subn(
+            _BASE_SDK_PARENT_REF_REPL, content
+        )
+        if n:
+            content = new_content
+            changes += n
+
+        # 4. Rewrite the unconditional ``hooks = SDKHooks()`` block to the DI pattern
+        if (
+            _HOOKS_BLOCK_BAD in content
+            and "sdk_hooks = hooks if hooks is not None" not in content
+        ):
+            content = content.replace(_HOOKS_BLOCK_BAD, _HOOKS_BLOCK_GOOD, 1)
+            changes += 1
+
+        # 5. Drop ``parent_ref=self`` from __getattr__'s klass(...) call
+        if _GETATTR_PARENT_REF_BAD in content:
+            content = content.replace(_GETATTR_PARENT_REF_BAD, _GETATTR_PARENT_REF_GOOD)
+            changes += 1
+
+        if changes > 0 and content != original:
+            if not dry_run:
+                py_file.write_text(content)
+            rel_path = py_file.relative_to(package_path)
+            fixed.append(str(rel_path))
+            console.print(
+                f"  [green]Fixed hooks DI ({changes} edits):[/green] {rel_path}"
+            )
+
+    return fixed
+
+
 def process_package(
     package_name: str, dry_run: bool = False
-) -> tuple[int, int, int, int, int]:
+) -> tuple[int, int, int, int, int, int]:
     """Process a single API package.
 
-    Returns (deleted, modified, fixed, do_request_fixed, unmarshal_fixed).
+    Returns (deleted, modified, fixed, do_request_fixed, unmarshal_fixed,
+    hooks_di_fixed).
     """
     package_path = SDK_ROOT / package_name
 
@@ -458,12 +572,19 @@ def process_package(
     if not unmarshal_fixed:
         console.print("  [dim]No unmarshal_json_response imports to fix[/dim]")
 
+    # Step 6: Fix hooks DI parameter in sdk.py (Speakeasy 1.7+ regression)
+    console.print("\n[bold]6. Fixing hooks DI parameter in sdk.py...[/bold]")
+    hooks_di_fixed = fix_hooks_di(package_path, dry_run)
+    if not hooks_di_fixed:
+        console.print("  [dim]No hooks DI fixes needed[/dim]")
+
     return (
         len(deleted),
         len(modified),
         len(fixed),
         len(do_request_fixed),
         len(unmarshal_fixed),
+        len(hooks_di_fixed),
     )
 
 
@@ -512,6 +633,7 @@ def main(
     total_fixed = 0
     total_do_request_fixed = 0
     total_unmarshal_fixed = 0
+    total_hooks_di_fixed = 0
 
     if all_packages:
         # Process all known API packages
@@ -522,12 +644,14 @@ def main(
                 fixed,
                 do_request_fixed,
                 unmarshal_fixed,
+                hooks_di_fixed,
             ) = process_package(pkg, dry_run)
             total_deleted += deleted
             total_modified += modified
             total_fixed += fixed
             total_do_request_fixed += do_request_fixed
             total_unmarshal_fixed += unmarshal_fixed
+            total_hooks_di_fixed += hooks_di_fixed
     else:
         (
             deleted,
@@ -535,12 +659,14 @@ def main(
             fixed,
             do_request_fixed,
             unmarshal_fixed,
+            hooks_di_fixed,
         ) = process_package(package, dry_run)
         total_deleted = deleted
         total_modified = modified
         total_fixed = fixed
         total_do_request_fixed = do_request_fixed
         total_unmarshal_fixed = unmarshal_fixed
+        total_hooks_di_fixed = hooks_di_fixed
 
     # Summary
     console.print("\n" + "=" * 50)
@@ -550,6 +676,7 @@ def main(
     console.print(f"  Fields fixed:        {total_fixed}")
     console.print(f"  do_request fixed:    {total_do_request_fixed}")
     console.print(f"  unmarshal fixed:     {total_unmarshal_fixed}")
+    console.print(f"  hooks DI fixed:      {total_hooks_di_fixed}")
 
     if dry_run:
         console.print(

@@ -205,3 +205,178 @@ class TestUnmarshalImportResolvesToFunction:
             "anncsu.accessi.status.unmarshal_json_response must be a "
             "function, not a module — see issue #28."
         )
+
+
+# Speakeasy 1.7+ omits the ``hooks`` Dependency Injection parameter from the
+# generated SDK ``__init__``. This blocks users from injecting custom hooks
+# (e.g. ModI signing) — the CLI ends up doing ``AnncsuOdonimi(hooks=...)``
+# and crashes with ``TypeError: unexpected keyword argument 'hooks'``.
+#
+# The accessi/coordinate packages were fixed manually in their first commit;
+# odonimi was missed and only surfaced at runtime (status command). The fix
+# in the post-gen script automates the transformation so it survives every
+# regeneration.
+
+_SPEAKEASY_17_HOOKS_BAD = """\
+from anncsu.common.sdk import BaseSDK
+from anncsu.common.hooks import SDKHooks
+from typing import Callable, Dict, Optional, TYPE_CHECKING, Union, cast
+
+
+class AnncsuExample(BaseSDK):
+    def __init__(
+        self,
+        security: Optional[str] = None,
+        debug_logger: Optional[Logger] = None,
+    ) -> None:
+        BaseSDK.__init__(
+            self,
+            SDKConfiguration(
+                client=client,
+                debug_logger=debug_logger,
+            ),
+            parent_ref=self,
+        )
+
+        hooks = SDKHooks()
+
+        # pylint: disable=protected-access
+        self.sdk_configuration.__dict__["_hooks"] = hooks
+
+        self.sdk_configuration = hooks.sdk_init(self.sdk_configuration)
+
+    def __getattr__(self, name: str):
+        if name in self._sub_sdk_map:
+            module_path, class_name = self._sub_sdk_map[name]
+            module = self.dynamic_import(module_path)
+            klass = getattr(module, class_name)
+            instance = klass(self.sdk_configuration, parent_ref=self)
+            return instance
+"""
+
+
+class TestFixHooksDi:
+    """Speakeasy 1.7+ regression: ``__init__`` omits the ``hooks`` DI param.
+
+    The post-gen script must rewrite the file so users can pass a custom
+    ``HooksProvider`` (e.g. one with ``ModIPreRequestHook`` registered).
+    """
+
+    def test_adds_hooks_provider_import(self, post_gen_module, tmp_path):
+        pkg_dir = tmp_path / "fake_pkg"
+        pkg_dir.mkdir()
+        target = pkg_dir / "sdk.py"
+        target.write_text(_SPEAKEASY_17_HOOKS_BAD)
+
+        fixed = post_gen_module.fix_hooks_di(pkg_dir, dry_run=False)
+
+        assert "sdk.py" in fixed
+        content = target.read_text()
+        assert "from anncsu.common.hooks import HooksProvider, SDKHooks" in content
+
+    def test_adds_hooks_init_param(self, post_gen_module, tmp_path):
+        pkg_dir = tmp_path / "fake_pkg"
+        pkg_dir.mkdir()
+        target = pkg_dir / "sdk.py"
+        target.write_text(_SPEAKEASY_17_HOOKS_BAD)
+
+        post_gen_module.fix_hooks_di(pkg_dir, dry_run=False)
+
+        content = target.read_text()
+        assert "hooks: Optional[HooksProvider] = None," in content
+
+    def test_removes_parent_ref_from_base_sdk_init(self, post_gen_module, tmp_path):
+        pkg_dir = tmp_path / "fake_pkg"
+        pkg_dir.mkdir()
+        target = pkg_dir / "sdk.py"
+        target.write_text(_SPEAKEASY_17_HOOKS_BAD)
+
+        post_gen_module.fix_hooks_di(pkg_dir, dry_run=False)
+
+        content = target.read_text()
+        # The parent_ref=self,\n        ) pattern at end of BaseSDK.__init__
+        # must be removed (the closing `)` becomes the line after debug_logger).
+        assert "parent_ref=self,\n        )" not in content
+
+    def test_rewrites_hooks_block_to_di_pattern(self, post_gen_module, tmp_path):
+        pkg_dir = tmp_path / "fake_pkg"
+        pkg_dir.mkdir()
+        target = pkg_dir / "sdk.py"
+        target.write_text(_SPEAKEASY_17_HOOKS_BAD)
+
+        post_gen_module.fix_hooks_di(pkg_dir, dry_run=False)
+
+        content = target.read_text()
+        # New DI line replaces the unconditional ``hooks = SDKHooks()``.
+        assert "sdk_hooks = hooks if hooks is not None else SDKHooks()" in content
+        # And the dict assignment uses the new name.
+        assert 'self.sdk_configuration.__dict__["_hooks"] = sdk_hooks' in content
+        assert (
+            "self.sdk_configuration = sdk_hooks.sdk_init(self.sdk_configuration)"
+            in content
+        )
+
+    def test_removes_parent_ref_from_getattr(self, post_gen_module, tmp_path):
+        pkg_dir = tmp_path / "fake_pkg"
+        pkg_dir.mkdir()
+        target = pkg_dir / "sdk.py"
+        target.write_text(_SPEAKEASY_17_HOOKS_BAD)
+
+        post_gen_module.fix_hooks_di(pkg_dir, dry_run=False)
+
+        content = target.read_text()
+        assert "klass(self.sdk_configuration, parent_ref=self)" not in content
+        assert "klass(self.sdk_configuration)" in content
+
+    def test_idempotent_on_already_fixed_file(self, post_gen_module, tmp_path):
+        """Running on a file that already matches the target produces no changes."""
+        pkg_dir = tmp_path / "fake_pkg"
+        pkg_dir.mkdir()
+        target = pkg_dir / "sdk.py"
+        target.write_text(_SPEAKEASY_17_HOOKS_BAD)
+
+        # First pass: fixes the file.
+        first = post_gen_module.fix_hooks_di(pkg_dir, dry_run=False)
+        assert "sdk.py" in first
+        fixed_content = target.read_text()
+
+        # Second pass: no changes.
+        second = post_gen_module.fix_hooks_di(pkg_dir, dry_run=False)
+        assert second == []
+        assert target.read_text() == fixed_content
+
+    def test_dry_run_does_not_modify_file(self, post_gen_module, tmp_path):
+        pkg_dir = tmp_path / "fake_pkg"
+        pkg_dir.mkdir()
+        target = pkg_dir / "sdk.py"
+        target.write_text(_SPEAKEASY_17_HOOKS_BAD)
+
+        post_gen_module.fix_hooks_di(pkg_dir, dry_run=True)
+
+        assert target.read_text() == _SPEAKEASY_17_HOOKS_BAD
+
+
+class TestAnncsuOdonimiAcceptsHooksParam:
+    """Integration check: the generated ``AnncsuOdonimi.__init__`` must accept
+    a ``hooks`` keyword argument so the CLI dependency-injection pattern
+    works. Mirrors the issue surfaced by ``anncsu odonimo status``."""
+
+    def test_anncsu_odonimi_accepts_hooks_kwarg(self):
+        import inspect
+
+        from anncsu.odonimi import AnncsuOdonimi
+
+        sig = inspect.signature(AnncsuOdonimi.__init__)
+        assert "hooks" in sig.parameters, (
+            "AnncsuOdonimi.__init__ must accept a ``hooks`` parameter for "
+            "dependency injection of HooksProvider (e.g. ModIPreRequestHook)."
+        )
+
+    def test_anncsu_accessi_accepts_hooks_kwarg(self):
+        """Regression: ensure the existing fix in Accessi stays in place."""
+        import inspect
+
+        from anncsu.accessi import AnncsuAccessi
+
+        sig = inspect.signature(AnncsuAccessi.__init__)
+        assert "hooks" in sig.parameters

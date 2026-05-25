@@ -12,7 +12,7 @@ from anncsu.common.sdk.utils import Logger, get_default_logger
 from anncsu.common.sdk.utils import RetryConfig
 from . import models
 from anncsu.common.sdk import utils
-from anncsu.common.hooks import SDKHooks
+from anncsu.common.hooks import HooksProvider, SDKHooks
 from anncsu.common.sdk.types import OptionalNullable, UNSET
 import httpx
 import importlib
@@ -54,6 +54,7 @@ class AnncsuOdonimi(BaseSDK):
         retry_config: OptionalNullable[RetryConfig] = UNSET,
         timeout_ms: Optional[int] = None,
         debug_logger: Optional[Logger] = None,
+        hooks: Optional[HooksProvider] = None,
     ) -> None:
         r"""Instantiates the SDK configuring it with the provided parameters.
 
@@ -105,15 +106,15 @@ class AnncsuOdonimi(BaseSDK):
                 timeout_ms=timeout_ms,
                 debug_logger=debug_logger,
             ),
-            parent_ref=self,
         )
 
-        hooks = SDKHooks()
+        # Use injected hooks or create new ones (dependency injection pattern).
+        sdk_hooks = hooks if hooks is not None else SDKHooks()
 
         # pylint: disable=protected-access
-        self.sdk_configuration.__dict__["_hooks"] = hooks
+        self.sdk_configuration.__dict__["_hooks"] = sdk_hooks
 
-        self.sdk_configuration = hooks.sdk_init(self.sdk_configuration)
+        self.sdk_configuration = sdk_hooks.sdk_init(self.sdk_configuration)
 
         weakref.finalize(
             self,
@@ -142,7 +143,7 @@ class AnncsuOdonimi(BaseSDK):
             try:
                 module = self.dynamic_import(module_path)
                 klass = getattr(module, class_name)
-                instance = klass(self.sdk_configuration, parent_ref=self)
+                instance = klass(self.sdk_configuration)
                 setattr(self, name, instance)
                 return instance
             except ImportError as e:
