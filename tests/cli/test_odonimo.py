@@ -714,5 +714,131 @@ class TestOdonimoDeleteDryRun:
         assert data["fake_prognaz"] == "9999994"
 
 
+# ---------------------------------------------------------------------------
+# _build_result — S response Odonimi handling (esito=null asymmetry)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildResultSResponse:
+    """Odonimi S responses omit ``esito`` but populate ``data_FINE`` /
+    ``data_fine_valid_amm`` as soppressione markers. ``_build_result`` must
+    consider the S successful when those markers are present, otherwise
+    ``--dry-run`` mistakenly reports ``rollback_failed=true`` and writes a
+    pending log even when the cleanup actually succeeded server-side.
+
+    Verified empirically against UAT 2026-05-25:
+
+        {
+          "idRichiesta": "316752",
+          "dati": [{
+            "codcom": "H501",
+            "progr_nazionale": "1342677",
+            "dug": "VIA",
+            "data_inizio": "25/05/2026",
+            "data_FINE": "25/05/2026",
+            "data_fine_valid_amm": "25/05/2026"
+          }]
+        }
+    """
+
+    def _mock_s_response(
+        self,
+        *,
+        esito: str | None = None,
+        id_richiesta: str = "REQ-S",
+        data_fine: str | None = None,
+        data_fine_valid_amm: str | None = None,
+    ) -> MagicMock:
+        item = MagicMock()
+        item.data_fine = data_fine
+        item.data_fine_valid_amm = data_fine_valid_amm
+        response = MagicMock()
+        response.esito = esito
+        response.messaggio = None
+        response.id_richiesta = id_richiesta
+        response.dati = [item]
+        return response
+
+    def test_s_with_data_fine_marker_is_success(self) -> None:
+        from anncsu.cli.commands.odonimo import _build_result
+
+        response = self._mock_s_response(
+            esito=None,
+            id_richiesta="REQ-S-1",
+            data_fine="25/05/2026",
+        )
+        result = _build_result(response, "S")
+        assert result.success is True
+        assert result.tipo_operazione == "S"
+        assert result.id_richiesta == "REQ-S-1"
+
+    def test_s_with_data_fine_valid_amm_marker_is_success(self) -> None:
+        from anncsu.cli.commands.odonimo import _build_result
+
+        response = self._mock_s_response(
+            esito=None,
+            id_richiesta="REQ-S-2",
+            data_fine_valid_amm="25/05/2026",
+        )
+        result = _build_result(response, "S")
+        assert result.success is True
+
+    def test_s_without_markers_remains_failure(self) -> None:
+        """Defensive: if the server returns neither esito nor soppression
+        markers, we cannot infer success and must report failure."""
+        from anncsu.cli.commands.odonimo import _build_result
+
+        response = self._mock_s_response(esito=None)
+        result = _build_result(response, "S")
+        assert result.success is False
+
+    def test_s_with_explicit_esito_zero_is_success(self) -> None:
+        """If the server eventually returns esito='0' for S (like Accessi),
+        the standard logic still applies."""
+        from anncsu.cli.commands.odonimo import _build_result
+
+        response = self._mock_s_response(esito="0")
+        result = _build_result(response, "S")
+        assert result.success is True
+
+    def test_s_with_explicit_esito_nonzero_is_failure(self) -> None:
+        """If the server returns esito='1' (or any non-zero value), the
+        soppression markers are ignored — esito takes precedence."""
+        from anncsu.cli.commands.odonimo import _build_result
+
+        response = self._mock_s_response(
+            esito="1",
+            data_fine="25/05/2026",
+            data_fine_valid_amm="25/05/2026",
+        )
+        result = _build_result(response, "S")
+        assert result.success is False
+
+    def test_i_with_esito_zero_unchanged(self) -> None:
+        """Regression: I responses still use the esito='0' check exclusively
+        (no soppression-marker logic applies)."""
+        from anncsu.cli.commands.odonimo import _build_result
+
+        response = MagicMock()
+        response.esito = "0"
+        response.messaggio = "OK"
+        response.id_richiesta = "REQ-I"
+        response.dati = [MagicMock(progr_nazionale="9999")]
+        result = _build_result(response, "I")
+        assert result.success is True
+
+    def test_r_with_esito_zero_unchanged(self) -> None:
+        """Regression: R responses also use the standard esito='0' check."""
+        from anncsu.cli.commands.odonimo import _build_result
+
+        response = MagicMock()
+        response.esito = "0"
+        response.messaggio = "OK"
+        response.id_richiesta = "REQ-R"
+        response.dati = [MagicMock()]
+        result = _build_result(response, "R")
+        assert result.success is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
